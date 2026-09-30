@@ -1,0 +1,124 @@
+@import "tailwindcss";
+
+/*
+ * Tokens — a ledger on white paper.
+ * ink: text levels · rule: hairlines · wash: quiet surfaces
+ * ledger: the single accent (links, focus, chart line)
+ * up / down / caution: meaning only (price up, price down, needs review)
+ */
+@theme {
+  --color-canvas: #ffffff;
+  --color-wash: #f7f7f6;
+  --color-well: #fafaf9;
+
+  --color-ink: #111113;
+  --color-ink-2: #45454b;
+  --color-ink-3: #6f6f76;
+  --color-ink-4: #a3a3aa;
+
+  --color-rule: rgb(17 17 19 / 0.08);
+  --color-rule-strong: rgb(17 17 19 / 0.15);
+
+  --color-ledger: #2443a6;
+  --color-ledger-wash: #eef1fa;
+
+  --color-up: #b42318;
+  --color-up-wash: #fdf1f0;
+  --color-down: #067647;
+  --color-down-wash: #edf8f1;
+  --color-caution: #a84a06;
+  --color-caution-wash: #fdf6e7;
+
+  --radius-sm: 5px;
+  --radius-md: 7px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+
+  --ease-out-quint: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@theme inline {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+h1,
+h2,
+h3 {
+  text-wrap: balance;
+}
+
+p {
+  text-wrap: pretty;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Native dialog: fade + slight rise, never from scale(0). */
+dialog.sheet {
+  opacity: 0;
+  transform: translateY(6px) scale(0.985);
+  transition:
+    opacity 180ms var(--ease-out-quint),
+    transform 220ms var(--ease-out-quint),
+    overlay 220ms allow-discrete,
+    display 220ms allow-discrete;
+}
+dialog.sheet[open] {
+  opacity: 1;
+  transform: none;
+}
+@starting-style {
+  dialog.sheet[open] {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+}
+dialog.sheet::backdrop {
+  background: rgb(17 17 19 / 0);
+  transition:
+    background 200ms ease,
+    overlay 200ms allow-discrete,
+    display 200ms allow-discrete;
+}
+dialog.sheet[open]::backdrop {
+  background: rgb(17 17 19 / 0.28);
+}
+@starting-style {
+  dialog.sheet[open]::backdrop {
+    background: rgb(17 17 19 / 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  dialog.sheet,
+  dialog.sheet[open] {
+    transform: none;
+  }
+}
+
+/* Stretched link: makes a whole table row clickable through its main link. */
+tr.row-link {
+  position: relative;
+}
+tr.row-link a.stretched::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}

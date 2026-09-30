@@ -1,0 +1,83 @@
+/** Display formatting. Numbers in Italian style (1.234,56), labels in English. */
+
+const LOCALE = "it-IT";
+// it-IT skips grouping below 10.000 by default ("6000"); we always want "6.000".
+const GROUP = { useGrouping: "always" } as const;
+const SYMBOLS: Record<string, string> = { EUR: "€", USD: "$", GBP: "£", CHF: "CHF ", TRY: "₺", PLN: "zł " };
+
+function withSymbol(n: number, body: string, currency = "EUR") {
+  const symbol = SYMBOLS[currency] ?? `${currency} `;
+  return `${n < 0 ? "−" : ""}${symbol}${body}`;
+}
+
+/** Amounts: €31.600 — decimals only when there are cents. */
+export function money(n: number | null | undefined, currency = "EUR") {
+  if (n == null || !Number.isFinite(n)) return "—";
+  const abs = Math.abs(n);
+  const hasCents = Math.abs(Math.round(abs * 100) - Math.round(abs) * 100) > 0;
+  const body = abs.toLocaleString(LOCALE, {
+    ...GROUP,
+    minimumFractionDigits: hasCents && abs < 10_000 ? 2 : 0,
+    maximumFractionDigits: hasCents && abs < 10_000 ? 2 : 0,
+  });
+  return withSymbol(n, body, currency);
+}
+
+/** Unit prices: €1,58 · €0,074 · €31,00 */
+export function price(n: number | null | undefined, currency = "EUR") {
+  if (n == null || !Number.isFinite(n)) return "—";
+  const body = Math.abs(n).toLocaleString(LOCALE, {
+    ...GROUP,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 4,
+  });
+  return withSymbol(n, body, currency);
+}
+
+export function pct(n: number | null | undefined, digits = 1) {
+  if (n == null || !Number.isFinite(n)) return "—";
+  const rounded = Number(n.toFixed(digits));
+  const body = Math.abs(rounded).toLocaleString(LOCALE, {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+  if (rounded === 0) return `${body}%`;
+  return `${rounded > 0 ? "+" : "−"}${body}%`;
+}
+
+export function number(n: number | null | undefined, maxDigits = 2) {
+  if (n == null || !Number.isFinite(n)) return "—";
+  return n.toLocaleString(LOCALE, { ...GROUP, maximumFractionDigits: maxDigits });
+}
+
+export function quantity(n: number | null | undefined, unit?: string) {
+  if (n == null) return "—";
+  return unit ? `${number(n)} ${unit}` : number(n);
+}
+
+/** 2026-09-15 → 15/09/2026 */
+export function date(iso: string | null | undefined) {
+  if (!iso) return "—";
+  const [y, m, d] = iso.split("-");
+  return `${d}/${m}/${y}`;
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** 2026-09-15 → Sep 2026 */
+export function month(iso: string | null | undefined) {
+  if (!iso) return "—";
+  const [y, m] = iso.split("-");
+  return `${MONTHS[Number(m) - 1]} ${y}`;
+}
+
+export function days(n: number | null | undefined) {
+  if (n == null) return "—";
+  const r = Math.round(n);
+  return `${r} ${r === 1 ? "day" : "days"}`;
+}
+
+export function paymentTerms(n: number | null | undefined) {
+  if (n == null) return "—";
+  return n === 0 ? "Advance" : `${n} days`;
+}

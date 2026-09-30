@@ -1,0 +1,3 @@
+date,supplier,supplier_country,sku,product,category,unit,quantity,unit_price,currency,fx_rate,freight,other_costs,invoice_reference,notes
+2026-09-15,ABC Srl,Italy,PAR-5860,Paraffina 58/60,Wax,kg,2000,1.58,EUR,,0,0,FT 2026/0142,
+2026-09-22,Vetreria Rossi,Italy,GLS-300,Vetro Trasparente 300 ml,Glass,pcs,6000,1.18,EUR,,95,0,FT 2026/0877,
