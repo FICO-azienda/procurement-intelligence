@@ -98,7 +98,7 @@ src/
   lib/anomalies.ts    Regole su prezzi e quantità dei nuovi acquisti
   server/imports.ts   Servizi DB dell'import (usati da server actions e test)
   app/actions.ts      Tutte le scritture (Server Actions)
-  app/…/page.tsx      Pagine: Today, Products, Suppliers, Purchases, Compare, Import
+  app/…/page.tsx      Pagine: Today, Products, Suppliers, Purchases, Compare, Opportunities, Overview, Import
   components/         UI (tabelle, dialog, grafico, filtri)
 drizzle/              Migrazioni SQL (valide anche su Supabase)
 ```
@@ -190,13 +190,40 @@ I dati demo sono solo fixture di test: il motore è testato su dataset generici 
 - Acquisti in valuta estera senza cambio: esclusi da prezzi e totali EUR, mai convertiti 1:1.
 - Scala: una lettura per tabella + calcolo indicizzato in memoria (10.000 acquisti, 1.000 prodotti, 500 fornitori in meno di mezzo secondo, vedi test "scale"). Aggregazioni SQL solo quando servirà.
 
+## Overview: la sintesi per il titolare
+
+Pagina `/overview` ("Purchasing overview"): prodotto per prodotto, cosa paghi, a chi, come si è mosso il prezzo, con cosa si può confrontare, quali alternative esistono, quanto c'è in gioco, cosa manca e cosa controllare per primo. In linguaggio semplice; i termini tecnici stanno nei tooltip.
+
+**Summary Engine** — `src/lib/intel/decision.ts`, puro e testato (`decision.test.ts`). Non ricalcola nulla: seleziona, ordina e mette in parole ciò che `analyze()` ha già prodotto. I componenti React si limitano a mostrare.
+
+- `purchasingOverview(intel)` → tutta la pagina (totali, executive summary, top opportunità, cosa è cambiato, rischi di fornitura, concentrazione, "cosa controllo per primo", prodotti in ordine di priorità).
+- `productDecision()` / `decisionFor(intel, productId)` → la scheda di un prodotto (`ProductDecision`).
+- `filterDecisions()` → filtri (stato, fornitore, categoria, testo) e ordinamenti.
+
+| Concetto | Regola |
+|---|---|
+| **Action** | Saving potenziale ad alta confidenza, almeno `overview.minMaterialSaving` (250 €/anno) |
+| **Review** | Saving a confidenza media/bassa, aumento prezzo oltre soglia, o prezzo attuale segnalato come possibile errore |
+| **Data needed** | Nessun prezzo, ultimo acquisto oltre 6 mesi, nessun preventivo comparabile, o solo preventivi vecchi |
+| **Good** | Nessuno dei casi sopra: c'è un confronto recente e il prezzo regge |
+| Rischio fornitura | Separato dal costo: `high` = fornitore unico su un prodotto ad alta spesa |
+| Ordine della pagina | 1) Action per € · 2) fornitore unico ad alta spesa · 3) Review · 4) Data needed · 5) Good. Punteggio interno, mai mostrato |
+| Ordine delle alternative | Quella scelta dal motore, poi comparabilità, confidenza, prezzo. Mai solo il prezzo quotato; se la quota più bassa non è prima, la scheda spiega perché |
+| "Compared with" | Oggi solo `Quotes on file` (range dei preventivi interni comparabili) o `Not available`. I tipi market / trade / cost driver esistono nel modello ma non sono alimentati |
+| Validated | Opportunità che l'utente ha segnato come *validated* nella pagina Opportunities |
+
+**Cosa la pagina NON mostra, perché non esiste ancora nel software:** costo reale (landed cost: trasporto, dazi, cambio, scorte, qualità), benchmark di mercato esterni, puntualità e difettosità dei fornitori, saving realizzato. Ogni alternativa riporta "True cost: not estimated yet"; il campo `estimatedTrueCost` è già nel modello e, quando verrà calcolato, entra nell'ordinamento senza cambiare la pagina.
+
+Simple / Detail view (`?view=detail`), stampa o PDF dal pulsante Print (la pagina ha uno stile per la carta). Con molti prodotti vengono mostrate le prime 24 schede, poi "Show all".
+
 ## Dove si innesta il futuro
 
 | Modulo | Punto di aggancio |
 |---|---|
 | Document AI (OCR, layout complessi) | Sostituisce un "finder" alla volta in `lib/import/extract/document.ts`; il resto della pipeline (revisione, approvazione) non cambia |
 | Email intelligence | Allegati e testo delle email → stessa pipeline (`import_sessions` con `source = email`) → Review |
-| True landed cost (Fase 4) | Estende `ComparisonRow` e `Opportunity` in `lib/intel/` (prezzo → + trasporto, dazi, FX, scorte, qualità); la lista "missing information" di ogni opportunità indica già cosa manca |
+| True landed cost (Fase 4) | Estende `ComparisonRow` e `Opportunity` in `lib/intel/` (prezzo → + trasporto, dazi, FX, scorte, qualità); la lista "missing information" di ogni opportunità indica già cosa manca. Nella Overview riempie `estimatedTrueCost` di ogni alternativa |
+| Benchmark esterni | Alimentano `MarketReference` (`direct_market`, `market_range`, `trade`, `cost_driver`) in `lib/intel/decision.ts`, accanto a `internal_quotes` |
 | Market intelligence | Tabella `market_prices` (serie esterne), confrontata con lo storico acquisti |
 | RFQ engine | Tabelle `rfqs` / `rfq_recipients`; le risposte diventano `quotes` |
 | AI analysis | `analyze()` e le funzioni di `lib/intel/` diventano gli strumenti dell'AI ("quanto abbiamo speso in vetro?") |

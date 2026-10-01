@@ -122,3 +122,17 @@ tr.row-link a.stretched::after {
   position: absolute;
   inset: 0;
 }
+
+/* Printed reports (Overview → Print): paper margins, no card split across pages. */
+@media print {
+  @page {
+    margin: 14mm;
+  }
+  body {
+    font-size: 12px;
+  }
+  article,
+  section {
+    break-inside: avoid;
+  }
+}

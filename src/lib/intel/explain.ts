@@ -6,6 +6,7 @@ import { INTEL_CONFIG, type IntelConfig } from "./config";
 
 export function explanations(cfg: IntelConfig = INTEL_CONFIG) {
   const a = cfg.alerts;
+  const o = cfg.overview;
   return {
     currentPrice: "The last price paid to the current supplier, per unit, in EUR. The source document is shown below it.",
     previousPrice: "The price of the comparable purchase just before the current one.",
@@ -37,6 +38,20 @@ export function explanations(cfg: IntelConfig = INTEL_CONFIG) {
     distribution: `Shown with at least ${cfg.distributionMinObservations} prices. Half of your purchases were priced between the 25th and 75th percentile.`,
     pareto: "Products ranked by spend in the last 12 months, with the cumulative share of the total.",
     priceDifference: "Alternative price minus the current price, in % of the current price. Purchase and quote prices only.",
+    // ---- Overview page: the technical term lives here, the page speaks plainly
+    decisionStatus: `Action: a comparable, recent offer is below what you pay, worth at least ${o.minMaterialSaving.toLocaleString("it-IT")} EUR a year. Review: a lower offer that is not fully comparable, a price increase above ${a.moderate}%, or a price that may be a data error. Data needed: no purchase price, no purchase in 6 months, or no recent comparable quote. Good: none of these.`,
+    quotesOnFile:
+      "The range of comparable prices offered by other suppliers, taken from your own quotes. It is a comparison, not a market price: external benchmarks are not connected yet.",
+    trueCost:
+      "What a unit really costs once transport, duties, exchange rate, stock and payment terms are added (landed cost, or TCO). Not estimated yet: figures on this page compare prices only.",
+    moneyView: "Your volume of the last 12 months at today's price, and the same volume at the alternative's quoted price. The difference is the potential saving, on price alone.",
+    supplyRisk: `Single source: every purchase in the last 12 months came from one supplier. The risk is high when the product is among those making up the first ${Math.round(cfg.paretoShare * 100)}% of your spend. Shown apart from cost: a product can be well priced and still risky.`,
+    priorityOrder:
+      "Order: high-confidence opportunities by size, then high-spend products bought from a single supplier, then other opportunities and price increases, then products that need data, then fairly priced ones.",
+    highConfidence: `Savings where the alternative is comparable on every check: same unit and currency, no conflicting specifications, offer no older than ${cfg.quoteAge.recentDays} days, MOQ within your typical order.`,
+    funnel:
+      "Potential: calculated from prices. High-confidence: the comparison passes every check. Validated: you marked the opportunity as validated after checking quote and specifications. Realised: observed on invoices after a change — not tracked yet.",
+    recentChanges: `Price changes on your purchases and quotes received from other suppliers in the last ${o.recentDays} days.`,
     opportunityImpact:
       "Potential saving: (current − alternative price) × annual volume. Price increase: annual volume × increase over 12 months. Above average: annual volume × gap to your historical weighted average. Only the first is a potential saving.",
   };

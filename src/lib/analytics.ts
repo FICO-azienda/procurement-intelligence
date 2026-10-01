@@ -352,6 +352,7 @@ export interface SupplierMetrics {
   supplierId: string;
   annualSpend: number;
   purchaseCount: number;
+  firstPurchaseDate: string | null;
   lastPurchaseDate: string | null;
   /** Products bought from (ever) or currently assigned to this supplier. */
   productIds: string[];
@@ -382,6 +383,7 @@ export function supplierMetrics(supplier: SupplierData, data: Dataset, asOf: str
     supplierId: supplier.id,
     annualSpend: sum(inWindow.filter(isPriced).map(baseTotal)),
     purchaseCount: own.length,
+    firstPurchaseDate: own[0]?.date ?? null,
     lastPurchaseDate: own.at(-1)?.date ?? null,
     productIds: [...productIds],
     quotedProductIds,

@@ -21,6 +21,7 @@ import {
   suppliers,
 } from "@/db/schema";
 import { todayISO, type Dataset, type SourceDoc } from "./analytics";
+import { purchasingOverview, type PurchasingOverview } from "./intel/decision";
 import { analyze, type Intel, type OpportunityState } from "./intel/engine";
 
 const num = (v: string) => Number(v);
@@ -182,3 +183,6 @@ export const getIntel = cache(async (): Promise<Intel> => {
   const [data, learning, states] = await Promise.all([getDataset(), getLearning(), getOpportunityStates()]);
   return analyze(data, learning.supplierProducts, states, todayISO());
 });
+
+/** The Overview page's decision summaries: one pass over the intelligence, once per request. */
+export const getOverview = cache(async (): Promise<PurchasingOverview> => purchasingOverview(await getIntel()));

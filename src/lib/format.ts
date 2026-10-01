@@ -34,6 +34,23 @@ export function price(n: number | null | undefined, currency = "EUR") {
   return withSymbol(n, body, currency);
 }
 
+/** Unit prices for plain-language views: €1,44 · €0,074 — no false precision. */
+export function priceShort(n: number | null | undefined) {
+  if (n == null || !Number.isFinite(n)) return "—";
+  const digits = Math.abs(n) < 1 ? 3 : 2;
+  const body = Math.abs(n).toLocaleString(LOCALE, { ...GROUP, minimumFractionDigits: 2, maximumFractionDigits: digits });
+  return withSymbol(n, body);
+}
+
+/** Estimates, rounded to two significant figures: 1.837 → €1.800 · 9.760 → €9.800. */
+export function moneyApprox(n: number | null | undefined) {
+  if (n == null || !Number.isFinite(n)) return "—";
+  const abs = Math.abs(n);
+  if (abs < 100) return money(Math.round(n));
+  const step = 10 ** (Math.floor(Math.log10(abs)) - 1);
+  return money(Math.round(n / step) * step);
+}
+
 export function pct(n: number | null | undefined, digits = 1) {
   if (n == null || !Number.isFinite(n)) return "—";
   const rounded = Number(n.toFixed(digits));

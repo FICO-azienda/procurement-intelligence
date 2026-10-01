@@ -125,7 +125,7 @@ export function estimateSaving(row: ComparisonRow, ctx: SavingContext, cfg: Inte
 const fmt = (n: number) => n.toLocaleString("it-IT", { useGrouping: "always", maximumFractionDigits: 2 });
 
 /** Incoterms where the seller delivers to destination: transport is in the price. */
-const DELIVERED_INCOTERMS = new Set(["DAP", "DPU", "DDP"]);
+export const DELIVERED_INCOTERMS = new Set(["DAP", "DPU", "DDP"]);
 
 /** What is still unknown before a decision (prepares the landed-cost phase). */
 export function missingInformation(row: ComparisonRow, current: ComparisonRow | null): string[] {

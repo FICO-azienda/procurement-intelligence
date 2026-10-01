@@ -7,6 +7,7 @@ import {
   Boxes,
   Building2,
   CalendarDays,
+  ClipboardCheck,
   Inbox,
   Lightbulb,
   ReceiptText,
@@ -22,6 +23,7 @@ const NAV: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/purchases", label: "Purchases", icon: ReceiptText },
   { href: "/compare", label: "Compare", icon: ArrowLeftRight },
   { href: "/opportunities", label: "Opportunities", icon: Lightbulb },
+  { href: "/overview", label: "Overview", icon: ClipboardCheck },
 ];
 
 const DATA_NAV = [
@@ -63,7 +65,7 @@ function NavLink({ href, label, icon: Icon, badge }: { href: string; label: stri
 
 export function Sidebar({ reviewCount = 0 }: { reviewCount?: number }) {
   return (
-    <aside className="sticky top-0 z-20 border-b border-rule bg-canvas md:h-dvh md:border-r md:border-b-0">
+    <aside className="sticky top-0 z-20 border-b border-rule bg-canvas md:h-dvh md:border-r md:border-b-0 print:hidden">
       <div className="flex h-full flex-col md:px-3 md:py-5">
         <Link href="/" className="flex items-center gap-2.5 px-4 pt-4 pb-3 md:px-2.5 md:pt-0 md:pb-6">
           <span

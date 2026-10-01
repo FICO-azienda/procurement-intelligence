@@ -29,7 +29,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
       <body className="min-h-dvh">
-        <div className="md:grid md:min-h-dvh md:grid-cols-[232px_minmax(0,1fr)]">
+        <div className="md:grid md:min-h-dvh md:grid-cols-[232px_minmax(0,1fr)] print:block">
           <Sidebar reviewCount={review} />
           <main className="min-w-0">
             <div className="mx-auto max-w-[1240px] px-4 pt-6 pb-16 sm:px-8 md:pt-9 lg:px-10">

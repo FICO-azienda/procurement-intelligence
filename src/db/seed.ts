@@ -28,7 +28,8 @@ type SupplierKey =
   | "pack"
   | "def"
   | "turkish"
-  | "szklo";
+  | "szklo"
+  | "stoppini";
 
 const SUPPLIERS: Record<SupplierKey, typeof suppliers.$inferInsert> = {
   abc: {
@@ -105,6 +106,15 @@ const SUPPLIERS: Record<SupplierKey, typeof suppliers.$inferInsert> = {
     email: "export@szklonova.example",
     paymentTermsDays: 30,
     defaultLeadTimeDays: 35,
+  },
+  stoppini: {
+    name: "Stoppini Lombardi",
+    country: "Italy",
+    city: "Busto Arsizio",
+    contactName: "Elena Riva",
+    email: "commerciale@stoppinilombardi.example",
+    paymentTermsDays: 60,
+    defaultLeadTimeDays: 12,
   },
 };
 
@@ -227,6 +237,8 @@ const QUOTES: QuoteRow[] = [
   { product: "par", supplier: "def", date: "2026-09-10", unitPrice: 1.49, moq: 2000, leadTimeDays: 18, paymentTermsDays: 30, incoterm: "DAP", validUntil: "2026-10-31" },
   { product: "par", supplier: "turkish", date: "2026-09-18", unitPrice: 1.31, moq: 5000, leadTimeDays: 30, paymentTermsDays: 0, incoterm: "FOB", validUntil: "2026-10-31", notes: "FOB Izmir. Freight, duties and insurance excluded." },
   { product: "gls", supplier: "szklo", date: "2026-09-12", unitPrice: 1.02, moq: 20000, leadTimeDays: 35, paymentTermsDays: 30, incoterm: "FCA", validUntil: "2026-11-30", notes: "FCA Kraków." },
+  // An alternative that is not cheaper: a product can simply be fairly priced.
+  { product: "wck", supplier: "stoppini", date: "2026-09-08", unitPrice: 0.076, moq: 20000, leadTimeDays: 12, paymentTermsDays: 60, incoterm: "DAP", validUntil: "2026-12-31" },
 ];
 
 export async function seedDemo(db: DB) {

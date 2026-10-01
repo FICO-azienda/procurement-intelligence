@@ -35,6 +35,21 @@ export interface IntelConfig {
   headlineConfidence: ("high" | "medium" | "low")[];
   /** How many items "Top N products represent X%" refers to. */
   paretoTopN: number;
+  /** Overview page: how the decision summary is cut down to what matters. */
+  overview: {
+    /** A potential saving below this (EUR/year) is "not material": it changes no status. */
+    minMaterialSaving: number;
+    /** Alternatives shown per product. */
+    maxAlternatives: number;
+    /** Checks suggested per product. */
+    maxActions: number;
+    /** "What changed recently" looks back this many days. */
+    recentDays: number;
+    /** "Top N products represent X% of spend". */
+    concentrationTopN: number;
+    /** A lead time longer than the current one by up to this many days is not worth a warning. */
+    leadTimeToleranceDays: number;
+  };
 }
 
 export const INTEL_CONFIG: IntelConfig = {
@@ -52,4 +67,5 @@ export const INTEL_CONFIG: IntelConfig = {
   requireSpecsForHighConfidence: false,
   headlineConfidence: ["high", "medium"],
   paretoTopN: 10,
+  overview: { minMaterialSaving: 250, maxAlternatives: 3, maxActions: 4, recentDays: 30, concentrationTopN: 5, leadTimeToleranceDays: 7 },
 };

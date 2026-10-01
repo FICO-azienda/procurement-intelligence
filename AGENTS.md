@@ -23,3 +23,5 @@ Procurement Intelligence prototype for manufacturing SMEs. See README.md (Italia
 - Price intelligence lives in `src/lib/intel/` (pure, tested): thresholds only in `config.ts`, explanations in `explain.ts`. Demo data is a test fixture — never shape logic around it; add generic cases to `src/lib/intel/fixtures.ts` tests instead.
 - Savings vocabulary is strict: "price difference" (nominal) vs "potential saving" (estimate, price only) — never "saving realised", never "best supplier". No saving for non-comparable offers.
 - Opportunities are computed by the engine; the `opportunities` table stores only the user's status/note/snapshot.
+- The Overview page (`/overview`) renders `src/lib/intel/decision.ts` (summary engine: status, alternatives, next actions, plain-language text, priority). It selects and words what `analyze()` computed — no new price/saving formulas there, and no status or sentence worked out inside a React component.
+- Landed cost, external benchmarks and supplier quality data do not exist yet: never show them as numbers (`estimatedTrueCost` stays null, market reference is `internal_quotes` or `not_available`).
