@@ -22,6 +22,7 @@ import {
 } from "@/components/ui";
 import {
   basePrice,
+  isPriced,
   compareRows,
   currentSupplierId,
   pctChange,
@@ -29,7 +30,8 @@ import {
   supplierTermsFor,
   todayISO,
 } from "@/lib/analytics";
-import { getDataset } from "@/lib/data";
+import { getDataset, getLearning } from "@/lib/data";
+import { SourceTag, sourceLabel } from "@/components/import/labels";
 import * as f from "@/lib/format";
 import { lookups, plural } from "@/lib/lookups";
 
@@ -41,7 +43,7 @@ export async function generateMetadata({ params }: PageProps<"/products/[id]">):
 
 export default async function ProductPage({ params }: PageProps<"/products/[id]">) {
   const { id } = await params;
-  const data = await getDataset();
+  const [data, learning] = await Promise.all([getDataset(), getLearning()]);
   const product = data.products.find((p) => p.id === id);
   if (!product) notFound();
 
@@ -56,8 +58,22 @@ export default async function ProductPage({ params }: PageProps<"/products/[id]"
   const productQuotes = data.quotes.filter((q) => q.productId === product.id);
   const alternatives = compareRows(product, data, asOf);
   const lastFromSupplier = supplier
-    ? history.filter((p) => p.supplierId === supplier.id).at(-1)
+    ? history.filter((p) => p.supplierId === supplier.id).filter(isPriced).at(-1)
     : undefined;
+  const currentPurchase = history.find((p) => p.id === m.currentPurchaseId);
+  const link = supplier ? learning.supplierProducts.find((sp) => sp.supplierId === supplier.id && sp.productId === product.id) : undefined;
+  const aliases = learning.productAliases.filter((a) => a.productId === product.id);
+  const codes = learning.supplierProducts.filter((sp) => sp.productId === product.id && (sp.supplierSku || sp.supplierProductName));
+  // Where the numbers on this page come from.
+  const sourceCounts = new Map<string, number>();
+  for (const r of [...history, ...productQuotes]) sourceCounts.set(r.source, (sourceCounts.get(r.source) ?? 0) + 1);
+  const docs = new Map<string, { filename: string; documentId: string | null; sessionId: string; importedAt: string; count: number }>();
+  for (const r of [...history, ...productQuotes]) {
+    if (!r.sourceDoc) continue;
+    const d = docs.get(r.sourceDoc.sessionId);
+    if (d) d.count++;
+    else docs.set(r.sourceDoc.sessionId, { ...r.sourceDoc, count: 1 });
+  }
 
   const common = { products: l.productOptions, suppliers: l.supplierOptions };
 
@@ -111,6 +127,20 @@ export default async function ProductPage({ params }: PageProps<"/products/[id]"
               "No purchases yet"
             )}
           </FigureNote>
+          {currentPurchase && (
+            <div className="mt-1.5 truncate text-[12px] text-ink-3" title="Why this is the current price">
+              Source: {sourceLabel(currentPurchase.source)}
+              {currentPurchase.invoiceReference ? ` ${currentPurchase.invoiceReference}` : ""}
+              {currentPurchase.sourceDoc?.documentId && (
+                <>
+                  {" · "}
+                  <a href={`/documents/${currentPurchase.sourceDoc.documentId}`} target="_blank" className="font-medium text-ledger hover:underline">
+                    View source
+                  </a>
+                </>
+              )}
+            </div>
+          )}
         </Figure>
 
         <Figure label="12M change">
@@ -135,6 +165,13 @@ export default async function ProductPage({ params }: PageProps<"/products/[id]"
               </span>
             ) : (
               "No purchases in the last 12 months"
+            )}
+          </FigureNote>
+          <FigureNote>
+            {m.unpricedCount > 0 && (
+              <span className="text-caution">
+                {m.unpricedCount} purchase{m.unpricedCount > 1 ? "s" : ""} in other currencies not included — exchange rate missing
+              </span>
             )}
           </FigureNote>
         </Figure>
@@ -162,13 +199,13 @@ export default async function ProductPage({ params }: PageProps<"/products/[id]"
             m.previousPrice != null && (
               <span className="text-[12.5px] text-ink-3">
                 Last change{" "}
-                <Delta value={pctChange(m.previousPrice, m.currentPrice)} /> on {f.date(m.currentDate)}
+                <Delta value={pctChange(m.previousPrice, m.currentPrice)} /> on {f.date(m.changedOn)}
               </span>
             )
           }
         >
           <PriceChart
-            points={history.map((p) => ({
+            points={history.filter(isPriced).map((p) => ({
               date: p.date,
               price: basePrice(p),
               supplier: l.supplierName(p.supplierId),
@@ -195,8 +232,9 @@ export default async function ProductPage({ params }: PageProps<"/products/[id]"
                     "—"
                   )}
                 </Row>
-                <Row label="MOQ">{terms.moq != null ? f.quantity(terms.moq, product.unit) : "—"}</Row>
-                <Row label="Lead time">{f.days(terms.leadTimeDays)}</Row>
+                <Row label="MOQ">{(terms.moq ?? link?.moq) != null ? f.quantity(terms.moq ?? link!.moq, product.unit) : "—"}</Row>
+                <Row label="Lead time">{f.days(terms.fromDefaults && link?.leadTimeDays != null ? link.leadTimeDays : terms.leadTimeDays)}</Row>
+                {link?.supplierSku && <Row label="Supplier code">{link.supplierSku}</Row>}
                 <Row label="Payment terms">{f.paymentTerms(terms.paymentTermsDays)}</Row>
                 <Row label="Last purchase">{f.date(lastFromSupplier?.date)}</Row>
               </dl>
@@ -237,6 +275,7 @@ export default async function ProductPage({ params }: PageProps<"/products/[id]"
                 <Th align="right">Total</Th>
                 <Th>Currency</Th>
                 <Th>Invoice</Th>
+                <Th>Source</Th>
                 <Th className="w-10" />
               </tr>
             </thead>
@@ -251,6 +290,9 @@ export default async function ProductPage({ params }: PageProps<"/products/[id]"
                   <Td align="right">{f.money(p.totalAmount, p.currency)}</Td>
                   <Td muted>{p.currency}</Td>
                   <Td muted>{p.invoiceReference ?? "—"}</Td>
+                  <Td>
+                    <SourceTag source={p.source} doc={p.sourceDoc} />
+                  </Td>
                   <Td>
                     <PurchaseDialog {...common} purchase={p} trigger={{ label: "Edit purchase", iconOnly: true }} />
                   </Td>
@@ -315,6 +357,78 @@ export default async function ProductPage({ params }: PageProps<"/products/[id]"
           Quoted prices only. Freight, duties, FX, quality, MOQ and payment terms can change the real cost — no
           alternative is ranked as cheaper until landed cost is calculated.
         </p>
+      </Section>
+
+      <Section className="mt-6" title="Data sources" description="Where the purchases and quotes of this product come from, and the names it is recognised by">
+        <div className="grid gap-6 lg:grid-cols-3">
+          <div>
+            <Label>Records by source</Label>
+            {sourceCounts.size === 0 ? (
+              <p className="mt-1 text-[13px] text-ink-3">No purchases or quotes yet.</p>
+            ) : (
+              <ul className="mt-1.5 space-y-1 text-[13px]">
+                {[...sourceCounts.entries()].map(([src, n]) => (
+                  <li key={src} className="flex justify-between gap-4">
+                    <span className="text-ink-2">{sourceLabel(src)}</span>
+                    <span className="num text-ink-3">{n}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {docs.size > 0 && (
+              <>
+                <div className="mt-4">
+                  <Label>Documents</Label>
+                </div>
+                <ul className="mt-1.5 space-y-1 text-[13px]">
+                  {[...docs.values()].map((d) => (
+                    <li key={d.sessionId} className="flex items-center justify-between gap-3">
+                      <Link href={`/import/${d.sessionId}`} className="min-w-0 truncate hover:text-ledger" title={d.filename}>
+                        {d.filename}
+                      </Link>
+                      {d.documentId && (
+                        <a href={`/documents/${d.documentId}`} target="_blank" className="shrink-0 text-[12px] font-medium text-ledger hover:underline">
+                          View
+                        </a>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
+          <div>
+            <Label>Also known as</Label>
+            {aliases.length === 0 ? (
+              <p className="mt-1 text-[13px] text-ink-3">Names confirmed during imports appear here and are recognised automatically next time.</p>
+            ) : (
+              <ul className="mt-1.5 flex flex-wrap gap-1.5">
+                {aliases.map((a) => (
+                  <li key={a.id} className="rounded-md bg-wash px-2 py-0.5 text-[12.5px] text-ink-2">
+                    {a.alias}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div>
+            <Label>Supplier codes</Label>
+            {codes.length === 0 ? (
+              <p className="mt-1 text-[13px] text-ink-3">How each supplier codes this product, learned from their documents.</p>
+            ) : (
+              <ul className="mt-1.5 space-y-1 text-[13px]">
+                {codes.map((c) => (
+                  <li key={c.id} className="flex justify-between gap-3">
+                    <span className="text-ink-2">{l.supplierName(c.supplierId)}</span>
+                    <span className="truncate font-mono text-[12px] text-ink-3" title={c.supplierProductName ?? undefined}>
+                      {c.supplierSku ?? c.supplierProductName}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
       </Section>
 
       {(product.description || product.technicalSpecifications) && (

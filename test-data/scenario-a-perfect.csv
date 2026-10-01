@@ -1,0 +1,11 @@
+Date,Supplier,SKU,Product,Quantity,Unit,Unit Price,Currency,Invoice
+2026-09-24,ABC Srl,PAR-5860,Paraffina 58/60,1000,kg,1.58,EUR,FT 2026/0901
+2026-09-24,ABC Srl,PAR-5860,Paraffina 58/60,1000,kg,1.58,EUR,FT 2026/0902
+2026-09-25,Vetreria Rossi,GLS-300,Vetro Trasparente 300 ml,5000,pcs,1.18,EUR,FT 2026/0903
+2026-09-25,Vetreria Rossi,GLS-300,Vetro Trasparente 300 ml,4000,pcs,1.18,EUR,FT 2026/0904
+2026-09-26,Filati Italia,WCK-120,Stoppino Cotone 120 mm,30000,pcs,0.074,EUR,FT 2026/0905
+2026-09-26,Essenza Italia,FRG-INC,Fragranza Incenso,100,kg,31.00,EUR,FT 2026/0906
+2026-09-27,Essenza Italia,FRG-INC,Fragranza Incenso,75,kg,31.00,EUR,FT 2026/0907
+2026-09-28,Pack Solutions,BOX-HC,Scatola Home Collection,8000,pcs,0.46,EUR,FT 2026/0908
+2026-09-28,Pack Solutions,BOX-HC,Scatola Home Collection,6000,pcs,0.46,EUR,FT 2026/0909
+2026-09-29,ABC Srl,PAR-5860,Paraffina 58/60,1500,kg,1.58,EUR,FT 2026/0910

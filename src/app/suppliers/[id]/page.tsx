@@ -15,8 +15,9 @@ import {
   Th,
   rowClass,
 } from "@/components/ui";
-import { basePrice, priceChange, supplierMetrics, todayISO } from "@/lib/analytics";
-import { getDataset } from "@/lib/data";
+import { basePrice, isPriced, priceChange, supplierMetrics, supplierOrderStats, todayISO } from "@/lib/analytics";
+import { getDataset, getLearning } from "@/lib/data";
+import { SourceTag } from "@/components/import/labels";
 import * as f from "@/lib/format";
 import { lookups, plural } from "@/lib/lookups";
 
@@ -28,13 +29,15 @@ export async function generateMetadata({ params }: PageProps<"/suppliers/[id]">)
 
 export default async function SupplierPage({ params }: PageProps<"/suppliers/[id]">) {
   const { id } = await params;
-  const data = await getDataset();
+  const [data, learning] = await Promise.all([getDataset(), getLearning()]);
   const supplier = data.suppliers.find((s) => s.id === id);
   if (!supplier) notFound();
 
   const asOf = todayISO();
   const l = lookups(data);
   const m = supplierMetrics(supplier, data, asOf);
+  const stats = supplierOrderStats(supplier.id, data.purchases, asOf);
+  const aliases = learning.supplierAliases.filter((a) => a.supplierId === supplier.id);
   const own = data.purchases
     .filter((p) => p.supplierId === supplier.id)
     .sort((a, b) => (a.date < b.date ? 1 : -1));
@@ -85,6 +88,7 @@ export default async function SupplierPage({ params }: PageProps<"/suppliers/[id
         <Section title="Details">
           <dl className="divide-y divide-rule text-[13px]">
             <Row label="Country">{supplier.country ?? "—"}</Row>
+            <Row label="VAT number">{supplier.vatNumber ?? "—"}</Row>
             <Row label="Contact">{supplier.contactName ?? "—"}</Row>
             <Row label="Email">
               {supplier.email ? (
@@ -101,12 +105,39 @@ export default async function SupplierPage({ params }: PageProps<"/suppliers/[id
             <Row label="Currency">{supplier.currency}</Row>
           </dl>
           {supplier.notes && <p className="mt-3 text-[12.5px] text-ink-3">{supplier.notes}</p>}
+          {aliases.length > 0 && (
+            <div className="mt-3 text-[12.5px] text-ink-3">
+              Also written as: <span className="text-ink-2">{aliases.map((a) => a.alias).join(" · ")}</span>
+            </div>
+          )}
         </Section>
 
-        <div className="grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-rule bg-rule sm:grid-cols-3 lg:grid-rows-[auto_1fr]">
+        <div className="grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-rule bg-rule sm:grid-cols-3 lg:grid-rows-[auto_auto_auto_1fr]">
           <Figure label="Annual spend" value={f.money(m.annualSpend)} note="Last 12 months, paid" />
+          <Figure label="Purchases" value={String(stats.purchasesLast12m)} note={`lines in 12 months · ${stats.ordersLast12m} orders`} />
+          <Figure label="Orders YTD" value={String(stats.ordersYtd)} note={`invoices in ${asOf.slice(0, 4)}`} />
+          <Figure label="Average order" value={f.money(stats.averageOrderValue)} note="12-month spend ÷ orders" small />
           <Figure label="Products" value={String(m.productIds.length)} note={`${m.quotedProductIds.length} with quotes`} />
-          <Figure label="Last purchase" value={f.date(m.lastPurchaseDate)} note={plural(m.purchaseCount, "purchase") + " in total"} small />
+          <Figure
+            label="Price increases"
+            value={String(stats.priceIncreases)}
+            note="products up in 12 months"
+            tone={stats.priceIncreases > 0 ? "up" : undefined}
+          />
+          <div className="bg-canvas px-5 py-3.5 sm:col-span-3">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px]">
+              <span className="text-[12px] font-medium tracking-[0.02em] text-ink-3 uppercase">Last invoice</span>
+              {stats.lastInvoice ? (
+                <>
+                  <span className="font-medium">{stats.lastInvoice.reference ?? "No number"}</span>
+                  <span className="num text-ink-3">{f.date(stats.lastInvoice.date)}</span>
+                  <SourceTag source={stats.lastInvoice.purchase.source} doc={stats.lastInvoice.purchase.sourceDoc} />
+                </>
+              ) : (
+                <span className="text-ink-3">None yet</span>
+              )}
+            </div>
+          </div>
           <div className="bg-canvas p-5 sm:col-span-3">
             <div className="mb-3 text-[12px] font-medium tracking-[0.02em] text-ink-3 uppercase">Price changes</div>
             {changes.length === 0 ? (
@@ -189,6 +220,7 @@ export default async function SupplierPage({ params }: PageProps<"/suppliers/[id
                 <Th align="right">Unit price</Th>
                 <Th align="right">Total</Th>
                 <Th>Invoice</Th>
+                <Th>Source</Th>
                 <Th className="w-10" />
               </tr>
             </thead>
@@ -205,6 +237,9 @@ export default async function SupplierPage({ params }: PageProps<"/suppliers/[id
                   <Td align="right" className="font-medium">{f.price(p.unitPrice, p.currency)}</Td>
                   <Td align="right">{f.money(p.totalAmount, p.currency)}</Td>
                   <Td muted>{p.invoiceReference ?? "—"}</Td>
+                  <Td>
+                    <SourceTag source={p.source} doc={p.sourceDoc} />
+                  </Td>
                   <Td>
                     <PurchaseDialog {...common} purchase={p} trigger={{ label: "Edit purchase", iconOnly: true }} />
                   </Td>
@@ -242,7 +277,7 @@ export default async function SupplierPage({ params }: PageProps<"/suppliers/[id
                     <Td>{product?.name}</Td>
                     <Td align="right" className="font-medium">
                       {f.price(q.unitPrice, q.currency)}
-                      {q.currency !== "EUR" && <span className="ml-1 text-ink-3">({f.price(basePrice(q))})</span>}
+                      {q.currency !== "EUR" && isPriced(q) && <span className="ml-1 text-ink-3">({f.price(basePrice(q))})</span>}
                     </Td>
                     <Td align="right" muted>{q.moq != null ? f.quantity(q.moq, product?.unit) : "—"}</Td>
                     <Td align="right" muted>{f.days(q.leadTimeDays)}</Td>
@@ -263,11 +298,11 @@ export default async function SupplierPage({ params }: PageProps<"/suppliers/[id
   );
 }
 
-function Figure({ label, value, note, small }: { label: string; value: string; note?: string; small?: boolean }) {
+function Figure({ label, value, note, small, tone }: { label: string; value: string; note?: string; small?: boolean; tone?: "up" }) {
   return (
     <div className="bg-canvas p-5">
       <div className="mb-2 text-[12px] font-medium tracking-[0.02em] text-ink-3 uppercase">{label}</div>
-      <div className={`num leading-none font-semibold tracking-[-0.02em] ${small ? "text-[20px]" : "text-[24px]"}`}>{value}</div>
+      <div className={`num leading-none font-semibold tracking-[-0.02em] ${small ? "text-[20px]" : "text-[24px]"} ${tone === "up" ? "text-up" : ""}`}>{value}</div>
       {note && <div className="mt-2 text-[12.5px] text-ink-3">{note}</div>}
     </div>
   );

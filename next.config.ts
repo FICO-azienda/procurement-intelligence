@@ -4,8 +4,8 @@ const nextConfig: NextConfig = {
   // Embedded Postgres ships WASM + data files; load it from node_modules as-is.
   serverExternalPackages: ["@electric-sql/pglite"],
   experimental: {
-    // CSV imports are sent to a Server Action; a year of purchases fits easily.
-    serverActions: { bodySizeLimit: "10mb" },
+    // Uploaded files go through a Server Action (20 MB per file, a few per batch).
+    serverActions: { bodySizeLimit: "60mb" },
   },
 };
 

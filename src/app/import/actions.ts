@@ -1,105 +1,99 @@
 "use server";
 
-import { eq, isNull, and } from "drizzle-orm";
+/**
+ * Server actions for the import flow — thin wrappers around server/imports.ts.
+ * They never throw to the browser: errors come back as plain messages.
+ */
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
-import { products, purchases, suppliers } from "@/db/schema";
-import { getDataset } from "@/lib/data";
-import { planPurchaseImport, type PreviewRow } from "@/lib/import/purchases-csv";
+import type { ItemData } from "@/lib/import/types";
+import * as svc from "@/server/imports";
 
-const MAX_PREVIEW_ROWS = 300;
+export type ActionResult = { ok: boolean; error?: string };
 
-export type ImportPreview = {
-  fatal?: string;
-  total: number;
-  valid: number;
-  invalid: number;
-  newSuppliers: string[];
-  newProducts: { sku: string; name: string; unit: string }[];
-  rows: PreviewRow[];
-  truncated: boolean;
+const done = (): ActionResult => {
+  revalidatePath("/", "layout");
+  return { ok: true };
 };
 
-export async function previewPurchaseImport(csv: string): Promise<ImportPreview> {
-  const plan = planPurchaseImport(csv, await getDataset());
-  // Show problem rows first so they can't be missed.
-  const ordered = [...plan.rows].sort((a, b) => Number(b.errors.length > 0) - Number(a.errors.length > 0) || a.line - b.line);
-  return {
-    fatal: plan.fatal,
-    total: plan.rows.length,
-    valid: plan.validRows.length,
-    invalid: plan.rows.length - plan.validRows.length,
-    newSuppliers: plan.newSuppliers,
-    newProducts: plan.newProducts,
-    rows: ordered.slice(0, MAX_PREVIEW_ROWS),
-    truncated: ordered.length > MAX_PREVIEW_ROWS,
-  };
+async function run(fn: () => Promise<void | { error?: string }>): Promise<ActionResult> {
+  try {
+    const res = await fn();
+    if (res && "error" in res && res.error) return { ok: false, error: res.error };
+    return done();
+  } catch (err) {
+    console.error("[import action]", err);
+    return { ok: false, error: "Something went wrong. Your data is unchanged — please try again." };
+  }
 }
 
-export async function commitPurchaseImport(csv: string): Promise<{ imported: number; skipped: number; error?: string }> {
-  const data = await getDataset();
-  const plan = planPurchaseImport(csv, data);
-  if (plan.fatal) return { imported: 0, skipped: 0, error: plan.fatal };
-  if (plan.validRows.length === 0) return { imported: 0, skipped: plan.rows.length, error: "No valid rows to import." };
-
+export async function uploadFiles(formData: FormData): Promise<{ sessionIds: string[]; error?: string }> {
+  const kind = String(formData.get("kind") ?? "spreadsheet") as svc.UploadKind;
+  const files = formData.getAll("files").filter((f): f is File => f instanceof File && f.size >= 0);
+  if (!files.length) return { sessionIds: [], error: "Choose at least one file." };
   const db = await getDb();
-  await db.transaction(async (tx) => {
-    const supplierIds = new Map(data.suppliers.map((s) => [s.name.trim().toLowerCase(), s.id]));
-    for (const name of plan.newSuppliers) {
-      const country = plan.validRows.find((r) => r.supplier.toLowerCase() === name.toLowerCase() && r.country)?.country ?? null;
-      const [row] = await tx.insert(suppliers).values({ name, country }).returning({ id: suppliers.id });
-      supplierIds.set(name.toLowerCase(), row.id);
+  const sessionIds: string[] = [];
+  try {
+    for (const f of files) {
+      // PDFs dropped in the generic area: a quote if the name says so.
+      const k: svc.UploadKind =
+        kind === "spreadsheet" && /\.pdf$/i.test(f.name)
+          ? /(offerta|preventivo|quot|listino|price)/i.test(f.name)
+            ? "quote"
+            : "invoice"
+          : kind !== "spreadsheet" && !/\.pdf$/i.test(f.name)
+            ? "spreadsheet"
+            : kind;
+      const { sessionId } = await svc.createUpload(db, { name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) }, k);
+      sessionIds.push(sessionId);
     }
-
-    // Latest supplier per SKU becomes the current supplier for new products.
-    const latestSupplierBySku = new Map<string, { date: string; supplierId: string }>();
-    for (const r of plan.validRows) {
-      const sid = supplierIds.get(r.supplier.toLowerCase())!;
-      const prev = latestSupplierBySku.get(r.sku);
-      if (!prev || r.date! >= prev.date) latestSupplierBySku.set(r.sku, { date: r.date!, supplierId: sid });
-    }
-
-    const productIds = new Map(data.products.map((p) => [p.sku.toUpperCase(), p.id]));
-    for (const p of plan.newProducts) {
-      const category = plan.validRows.find((r) => r.sku === p.sku && r.category)?.category ?? null;
-      const [row] = await tx
-        .insert(products)
-        .values({ ...p, category, currentSupplierId: latestSupplierBySku.get(p.sku)?.supplierId ?? null })
-        .returning({ id: products.id });
-      productIds.set(p.sku, row.id);
-    }
-
-    await tx.insert(purchases).values(
-      plan.validRows.map((r) => ({
-        productId: productIds.get(r.sku)!,
-        supplierId: supplierIds.get(r.supplier.toLowerCase())!,
-        date: r.date!,
-        quantity: String(r.quantity),
-        unit: r.unit,
-        unitPrice: String(r.unitPrice),
-        currency: r.currency,
-        fxRate: String(r.fxRate),
-        freightCost: String(r.freight),
-        otherCosts: String(r.other),
-        totalAmount: String(r.total),
-        invoiceReference: r.invoice,
-        notes: r.notes,
-        source: "csv" as const,
-      })),
-    );
-
-    // Existing products without a current supplier get one from the import.
-    for (const [sku, { supplierId }] of latestSupplierBySku) {
-      const pid = productIds.get(sku);
-      if (pid) {
-        await tx
-          .update(products)
-          .set({ currentSupplierId: supplierId })
-          .where(and(eq(products.id, pid), isNull(products.currentSupplierId)));
-      }
-    }
-  });
-
+  } catch (err) {
+    console.error("[upload]", err);
+    return { sessionIds, error: "Some files couldn't be uploaded. Please try again." };
+  }
   revalidatePath("/", "layout");
-  return { imported: plan.validRows.length, skipped: plan.rows.length - plan.validRows.length };
+  return { sessionIds };
+}
+
+export async function saveMapping(sessionId: string, mapping: svc.MappingInfo) {
+  return run(async () => svc.applyMapping(await getDb(), sessionId, mapping));
+}
+
+export async function resolveSupplierAction(sessionId: string, groupKey: string, decision: svc.SupplierDecision) {
+  return run(async () => svc.resolveSupplier(await getDb(), sessionId, groupKey, decision));
+}
+
+export async function resolveProductAction(sessionId: string, groupKey: string, decision: svc.ProductDecision) {
+  return run(async () => svc.resolveProduct(await getDb(), sessionId, groupKey, decision));
+}
+
+export async function updateItemAction(itemId: string, patch: Partial<ItemData>) {
+  return run(async () => svc.updateItem(await getDb(), itemId, patch));
+}
+
+export async function updateSessionFieldsAction(sessionId: string, patch: Partial<ItemData>) {
+  return run(async () => svc.updateSessionFields(await getDb(), sessionId, patch));
+}
+
+export async function acknowledgeAction(target: { itemId: string } | { sessionId: string }) {
+  return run(async () => svc.acknowledge(await getDb(), target));
+}
+
+export async function duplicateAction(target: { itemId: string } | { sessionId: string }, decision: "skip" | "import") {
+  return run(async () => svc.decideDuplicate(await getDb(), target, decision));
+}
+
+export async function skipItemAction(itemId: string, skipped: boolean) {
+  return run(async () => svc.setSkipped(await getDb(), itemId, skipped));
+}
+
+export async function duplicateFileAction(sessionId: string, decision: "skip" | "continue") {
+  return run(async () => svc.decideDuplicateFile(await getDb(), sessionId, decision));
+}
+
+export async function approveAction(sessionId: string) {
+  return run(async () => {
+    const res = await svc.approveSession(await getDb(), sessionId);
+    return res.error ? { error: res.error } : undefined;
+  });
 }

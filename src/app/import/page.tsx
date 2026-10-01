@@ -1,38 +1,26 @@
+import Link from "next/link";
 import type { Metadata } from "next";
-import { Download, FileSpreadsheet, FileText, Mail, ReceiptText } from "lucide-react";
-import { CsvImport, DataControls } from "@/components/csv-import";
-import { Basis, PageHeader, Section } from "@/components/ui";
+import { connection } from "next/server";
+import { Download } from "lucide-react";
+import { getDb } from "@/db";
+import { DataControls } from "@/components/data-controls";
+import { ImportStatusBadge, fileKindLabel } from "@/components/import/labels";
+import { ImportUploader } from "@/components/import/uploader";
+import { Empty, PageHeader, Section, Table, Td, Th, rowClass } from "@/components/ui";
 import { getDataset } from "@/lib/data";
-import { TEMPLATE_COLUMNS } from "@/lib/import/purchases-csv";
 import { plural } from "@/lib/lookups";
+import { listSessions } from "@/server/imports";
 
 export const metadata: Metadata = { title: "Import" };
 
-const NEXT = [
-  {
-    icon: FileSpreadsheet,
-    title: "Excel (.xlsx)",
-    body: "Upload the spreadsheet directly. Today: in Excel use File → Save as → CSV, then import above.",
-  },
-  {
-    icon: ReceiptText,
-    title: "PDF invoice",
-    body: "Supplier, product, quantity, unit price, freight and payment terms extracted from the invoice.",
-  },
-  {
-    icon: FileText,
-    title: "PDF quote / price list",
-    body: "Offers and price lists become quotes, with MOQ, lead time and validity.",
-  },
-  {
-    icon: Mail,
-    title: "Supplier emails",
-    body: "Price increases, quotes and lead-time changes detected in Gmail or Outlook.",
-  },
-];
+function when(d: Date) {
+  return d.toLocaleString("it-IT", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
 
 export default async function ImportPage() {
-  const data = await getDataset();
+  await connection();
+  const db = await getDb();
+  const [sessions, data] = await Promise.all([listSessions(db), getDataset()]);
   const demoPurchases = data.purchases.filter((p) => p.source === "demo").length;
   const counts = [
     plural(data.products.length, "product"),
@@ -43,49 +31,68 @@ export default async function ImportPage() {
 
   return (
     <>
-      <PageHeader title="Import" meta="Bring in your real purchasing data. Every import is previewed before anything is saved." />
-
-      <Section
-        title="Purchases from CSV"
-        description="Export purchase lines from your accounting software or ERP and import them here. Missing suppliers and products are created automatically."
-        actions={
-          <a href="/templates/purchases-template.csv" download className="inline-flex items-center gap-1.5 text-[13px] font-medium text-ledger hover:underline">
-            <Download size={14} /> Template
-          </a>
+      <PageHeader
+        title="Import purchasing data"
+        meta={
+          <span className="block max-w-2xl text-[14px] leading-relaxed">
+            Upload invoices, supplier quotes or spreadsheets. We&apos;ll extract and structure your purchasing data before
+            adding anything to your database.
+          </span>
         }
-      >
-        <CsvImport />
-        <details className="mt-4 text-[12.5px] text-ink-3">
-          <summary className="cursor-pointer font-medium text-ink-2 select-none">Columns</summary>
-          <p className="mt-2">
-            Required: <code className="font-mono text-ink-2">date, supplier, quantity, unit_price</code> and{" "}
-            <code className="font-mono text-ink-2">sku</code> or <code className="font-mono text-ink-2">product</code>{" "}
-            (<code className="font-mono text-ink-2">unit</code> for new products). Optional:{" "}
-            <code className="font-mono text-ink-2">
-              {TEMPLATE_COLUMNS.filter((c) => !["date", "supplier", "quantity", "unit_price", "sku", "product", "unit"].includes(c)).join(", ")}
-            </code>
-            . Italian headers work too (data, fornitore, codice, descrizione, quantità, prezzo, valuta, fattura…).
-            Existing products are matched by SKU, then by name; suppliers by name.
-          </p>
-        </details>
-      </Section>
+      />
 
-      <h2 className="mt-10 mb-3 text-[14px] font-semibold">Coming next</h2>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {NEXT.map(({ icon: Icon, title, body }) => (
-          <div key={title} className="rounded-lg border border-rule p-4">
-            <div className="flex items-center justify-between">
-              <Icon size={17} strokeWidth={1.75} className="text-ink-3" />
-              <Basis tone="muted">Planned</Basis>
-            </div>
-            <div className="mt-3 text-[13.5px] font-medium">{title}</div>
-            <p className="mt-1 text-[12.5px] text-ink-3">{body}</p>
-          </div>
-        ))}
+      <ImportUploader />
+
+      <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-[12.5px] text-ink-3">
+        <span>Nothing is saved until you approve it.</span>
+        <span>Every record keeps a link to its original file.</span>
+        <a href="/templates/purchases-template.csv" download className="inline-flex items-center gap-1 font-medium text-ledger hover:underline">
+          <Download size={13} /> CSV template
+        </a>
       </div>
-      <p className="mt-3 text-[12.5px] text-ink-3">
-        Automatic extraction will always produce a proposal to review — nothing is written to your data without approval.
-      </p>
+
+      <Section className="mt-10" title="Recent imports" flush>
+        {sessions.length === 0 ? (
+          <Empty title="No imports yet" body="Uploaded files appear here with their status." />
+        ) : (
+          <Table>
+            <thead>
+              <tr>
+                <Th>File</Th>
+                <Th>Type</Th>
+                <Th>Uploaded</Th>
+                <Th>Status</Th>
+                <Th align="right">Found</Th>
+                <Th align="right">Imported</Th>
+                <Th align="right">To review</Th>
+                <Th align="right">Skipped</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {sessions.map((s) => (
+                <tr key={s.id} className={rowClass(true)}>
+                  <Td className="max-w-[320px] truncate font-medium">
+                    <Link href={`/import/${s.id}`} className="stretched">
+                      {s.filename}
+                    </Link>
+                  </Td>
+                  <Td muted>{fileKindLabel(s.fileType, s.sourceType)}</Td>
+                  <Td muted className="num">{when(s.uploadedAt)}</Td>
+                  <Td>
+                    <ImportStatusBadge status={s.status} attention={s.recordsReview} />
+                  </Td>
+                  <Td align="right" muted>{s.recordsDetected || "—"}</Td>
+                  <Td align="right">{s.recordsImported || "—"}</Td>
+                  <Td align="right" className={s.recordsReview ? "font-medium text-caution" : "text-ink-3"}>
+                    {s.recordsReview || "—"}
+                  </Td>
+                  <Td align="right" muted>{s.recordsRejected || "—"}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
+      </Section>
 
       <Section
         className="mt-10"

@@ -28,6 +28,7 @@ export interface SupplierData {
   name: string;
   country: string | null;
   city: string | null;
+  vatNumber: string | null;
   contactName: string | null;
   email: string | null;
   phone: string | null;
@@ -49,6 +50,14 @@ export interface ProductData {
   currentSupplierId: string | null;
 }
 
+/** The file an imported record was read from. */
+export interface SourceDoc {
+  sessionId: string;
+  documentId: string | null;
+  filename: string;
+  importedAt: string;
+}
+
 export interface PurchaseData {
   id: string;
   productId: string;
@@ -58,12 +67,17 @@ export interface PurchaseData {
   unit: string;
   unitPrice: number;
   currency: string;
-  fxRate: number;
+  /** EUR per 1 unit of currency; null = unknown, amount stays out of EUR totals. */
+  fxRate: number | null;
   freightCost: number;
   otherCosts: number;
   totalAmount: number;
   invoiceReference: string | null;
+  paymentTermsDays: number | null;
+  incoterm: string | null;
+  originalDescription: string | null;
   source: string;
+  sourceDoc: SourceDoc | null;
   notes: string | null;
 }
 
@@ -75,13 +89,16 @@ export interface QuoteData {
   quantity: number | null;
   unitPrice: number;
   currency: string;
-  fxRate: number;
+  fxRate: number | null;
   moq: number | null;
   leadTimeDays: number | null;
   paymentTermsDays: number | null;
   incoterm: string | null;
+  freightCost: number | null;
   validUntil: string | null;
+  originalDescription: string | null;
   source: string;
+  sourceDoc: SourceDoc | null;
   notes: string | null;
 }
 
@@ -116,10 +133,12 @@ export function windowStart(asOf: string): string {
 
 // ---------- Unit helpers ----------
 
+/** Has a known exchange rate, so it can be expressed in EUR. */
+export const isPriced = <T extends { fxRate: number | null }>(p: T): p is T & { fxRate: number } => p.fxRate != null;
 /** Unit price in base currency. */
 export const basePrice = (p: { unitPrice: number; fxRate: number }) => p.unitPrice * p.fxRate;
 /** Total paid in base currency (goods + freight + other costs). */
-export const baseTotal = (p: PurchaseData) => p.totalAmount * p.fxRate;
+export const baseTotal = (p: { totalAmount: number; fxRate: number }) => p.totalAmount * p.fxRate;
 
 export function computeTotal(quantity: number, unitPrice: number, freight = 0, other = 0) {
   return Math.round((quantity * unitPrice + freight + other) * 100) / 100;
@@ -137,6 +156,8 @@ export function pctChange(from: number | null, to: number | null): number | null
 // ---------- Price change over a set of purchases ----------
 
 export interface PriceChange {
+  /** The purchase the current price comes from (to show its source). */
+  currentPurchaseId: string | null;
   currentPrice: number | null;
   currentDate: string | null;
   referencePrice: number | null;
@@ -146,6 +167,8 @@ export interface PriceChange {
   /** Price before the most recent price change (last different price). */
   previousPrice: number | null;
   previousDate: string | null;
+  /** First purchase at the current price after the previous one (when the price changed). */
+  changedOn: string | null;
 }
 
 /**
@@ -158,11 +181,13 @@ export function priceChange(
   asOf: string,
   currentSupplierId?: string | null,
 ): PriceChange {
-  const sorted = [...purchases].sort(byDate);
+  // Purchases without a known exchange rate can't be compared in EUR.
+  const sorted = purchases.filter(isPriced).sort(byDate);
   const fromCurrent = currentSupplierId ? sorted.filter((p) => p.supplierId === currentSupplierId) : [];
   const last = fromCurrent.at(-1) ?? sorted.at(-1);
   if (!last) {
     return {
+      currentPurchaseId: null,
       currentPrice: null,
       currentDate: null,
       referencePrice: null,
@@ -170,6 +195,7 @@ export function priceChange(
       changePct: null,
       previousPrice: null,
       previousDate: null,
+      changedOn: null,
     };
   }
   // Everything bought up to the current purchase, excluding it.
@@ -178,8 +204,10 @@ export function priceChange(
   const reference = earlier.filter((p) => p.date <= start).at(-1) ?? earlier[0];
   const currentPrice = basePrice(last);
   const previous = earlier.findLast((p) => Math.abs(basePrice(p) - currentPrice) > 1e-9);
+  const changedOn = previous ? ([...earlier, last].find((p) => p.date > previous.date)?.date ?? last.date) : null;
 
   return {
+    currentPurchaseId: last.id,
     currentPrice,
     currentDate: last.date,
     referencePrice: reference ? basePrice(reference) : null,
@@ -187,6 +215,7 @@ export function priceChange(
     changePct: reference ? pctChange(basePrice(reference), currentPrice) : null,
     previousPrice: previous ? basePrice(previous) : null,
     previousDate: previous?.date ?? null,
+    changedOn,
   };
 }
 
@@ -206,6 +235,8 @@ export interface ProductMetrics extends PriceChange {
   spendAtCurrentPrice: number | null;
   /** Extra yearly cost of the 12M price change at current volume, EUR. */
   changeImpact: number | null;
+  /** Purchases in the window left out of EUR figures (no exchange rate yet). */
+  unpricedCount: number;
   status: ProductStatus;
   statusReason: string;
 }
@@ -220,7 +251,8 @@ export function productMetrics(
   const start = windowStart(asOf);
   const inWindow = own.filter((p) => p.date > start);
   const annualQuantity = sum(inWindow.map((p) => p.quantity));
-  const annualSpend = sum(inWindow.map(baseTotal));
+  const annualSpend = sum(inWindow.filter(isPriced).map(baseTotal));
+  const unpricedCount = inWindow.filter((p) => !isPriced(p)).length;
 
   const spendAtCurrentPrice =
     change.currentPrice != null ? annualQuantity * change.currentPrice : null;
@@ -252,6 +284,7 @@ export function productMetrics(
     annualSpend,
     spendAtCurrentPrice,
     changeImpact,
+    unpricedCount,
     status,
     statusReason,
   };
@@ -323,12 +356,13 @@ export function compareRows(product: ProductData, data: Dataset, asOf: string): 
     const quote = quotes.find((q) => q.supplierId === id) ?? null;
     const lastPaid = data.purchases
       .filter((p) => p.productId === product.id && p.supplierId === id)
+      .filter(isPriced)
       .sort(byDate)
       .at(-1);
     rows.push({
       supplier,
       isCurrent: id === currentId,
-      price: quote ? basePrice(quote) : lastPaid ? basePrice(lastPaid) : null,
+      price: quote ? (isPriced(quote) ? basePrice(quote) : null) : lastPaid ? basePrice(lastPaid) : null,
       priceBasis: quote ? "quote" : lastPaid ? "last-paid" : "none",
       quote,
       terms: supplierTermsFor(supplier, data.quotes, product.id),
@@ -377,7 +411,7 @@ export function supplierMetrics(supplier: SupplierData, data: Dataset, asOf: str
 
   return {
     supplierId: supplier.id,
-    annualSpend: sum(inWindow.map(baseTotal)),
+    annualSpend: sum(inWindow.filter(isPriced).map(baseTotal)),
     purchaseCount: own.length,
     lastPurchaseDate: own.at(-1)?.date ?? null,
     productIds: [...productIds],
@@ -387,6 +421,74 @@ export function supplierMetrics(supplier: SupplierData, data: Dataset, asOf: str
       : supplier.defaultLeadTimeDays,
     status,
   };
+}
+
+/** Order-level view of a supplier: an order = one invoice (or one day without invoice number). */
+export interface SupplierOrderStats {
+  purchasesLast12m: number;
+  ordersLast12m: number;
+  ordersYtd: number;
+  /** Last-12-month spend ÷ orders (EUR). */
+  averageOrderValue: number | null;
+  lastInvoice: { reference: string | null; date: string; purchase: PurchaseData } | null;
+  /** Products whose price from this supplier rose over 12 months. */
+  priceIncreases: number;
+}
+
+export function supplierOrderStats(supplierId: string, purchases: PurchaseData[], asOf: string): SupplierOrderStats {
+  const own = purchases.filter((p) => p.supplierId === supplierId).sort(byDate);
+  const start = windowStart(asOf);
+  const inWindow = own.filter((p) => p.date > start);
+  const orderKey = (p: PurchaseData) => (p.invoiceReference ? `ref:${p.invoiceReference.toUpperCase().replace(/\s+/g, "")}` : `day:${p.date}`);
+  const ordersLast12m = new Set(inWindow.map(orderKey)).size;
+  const year = asOf.slice(0, 4);
+  const ordersYtd = new Set(own.filter((p) => p.date.startsWith(year)).map(orderKey)).size;
+  const spend = sum(inWindow.filter(isPriced).map(baseTotal));
+  const last = own.at(-1);
+  const byProduct = new Map<string, PurchaseData[]>();
+  for (const p of own) byProduct.set(p.productId, [...(byProduct.get(p.productId) ?? []), p]);
+  const priceIncreases = [...byProduct.values()].filter((list) => (priceChange(list, asOf).changePct ?? 0) > 0.05).length;
+  return {
+    purchasesLast12m: inWindow.length,
+    ordersLast12m,
+    ordersYtd,
+    averageOrderValue: ordersLast12m ? spend / ordersLast12m : null,
+    lastInvoice: last ? { reference: last.invoiceReference, date: last.date, purchase: last } : null,
+    priceIncreases,
+  };
+}
+
+/** The latest price change of each product (previous price → current price). */
+export interface RecentChange {
+  product: ProductData;
+  previousPrice: number;
+  currentPrice: number;
+  pct: number;
+  changedOn: string;
+  annualQuantity: number;
+  /** annual quantity × price difference, EUR/year */
+  annualImpact: number;
+}
+
+export const RECENT_CHANGE_DAYS = 90;
+
+export function recentPriceChanges(data: Dataset, asOf: string, days = RECENT_CHANGE_DAYS): RecentChange[] {
+  const out: RecentChange[] = [];
+  for (const product of data.products) {
+    const m = productMetrics(product, data.purchases, asOf);
+    if (m.previousPrice == null || m.currentPrice == null || !m.changedOn) continue;
+    if (daysBetween(m.changedOn, asOf) > days) continue;
+    out.push({
+      product,
+      previousPrice: m.previousPrice,
+      currentPrice: m.currentPrice,
+      pct: (m.currentPrice / m.previousPrice - 1) * 100,
+      changedOn: m.changedOn,
+      annualQuantity: m.annualQuantity,
+      annualImpact: m.annualQuantity * (m.currentPrice - m.previousPrice),
+    });
+  }
+  return out.sort((a, b) => (a.changedOn < b.changedOn ? 1 : a.changedOn > b.changedOn ? -1 : b.pct - a.pct));
 }
 
 // ---------- Overview (Today page) ----------

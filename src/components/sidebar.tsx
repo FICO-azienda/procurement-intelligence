@@ -7,6 +7,7 @@ import {
   Boxes,
   Building2,
   CalendarDays,
+  Inbox,
   ReceiptText,
   Upload,
   type LucideIcon,
@@ -21,13 +22,16 @@ const NAV: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/compare", label: "Compare", icon: ArrowLeftRight },
 ];
 
-const SECONDARY = [{ href: "/import", label: "Import", icon: Upload }];
+const DATA_NAV = [
+  { href: "/import", label: "Import", icon: Upload },
+  { href: "/review", label: "Review", icon: Inbox },
+];
 
 function isActive(pathname: string, href: string) {
   return href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(href + "/");
 }
 
-function NavLink({ href, label, icon: Icon }: { href: string; label: string; icon: LucideIcon }) {
+function NavLink({ href, label, icon: Icon, badge }: { href: string; label: string; icon: LucideIcon; badge?: number }) {
   const pathname = usePathname();
   const active = isActive(pathname, href);
   return (
@@ -46,11 +50,16 @@ function NavLink({ href, label, icon: Icon }: { href: string; label: string; ico
         className={active ? "text-ledger" : "text-ink-4 group-hover:text-ink-3"}
       />
       {label}
+      {badge ? (
+        <span className="num ml-auto rounded-full bg-caution-wash px-1.5 text-[11.5px] font-semibold text-caution" aria-label={`${badge} to review`}>
+          {badge}
+        </span>
+      ) : null}
     </Link>
   );
 }
 
-export function Sidebar() {
+export function Sidebar({ reviewCount = 0 }: { reviewCount?: number }) {
   return (
     <aside className="sticky top-0 z-20 border-b border-rule bg-canvas md:h-dvh md:border-r md:border-b-0">
       <div className="flex h-full flex-col md:px-3 md:py-5">
@@ -76,10 +85,9 @@ export function Sidebar() {
           {NAV.map((item) => (
             <NavLink key={item.href} {...item} />
           ))}
-          <div className="hidden flex-1 md:block" />
           <div className="mx-1 hidden border-t border-rule md:my-2 md:block" />
-          {SECONDARY.map((item) => (
-            <NavLink key={item.href} {...item} />
+          {DATA_NAV.map((item) => (
+            <NavLink key={item.href} {...item} badge={item.href === "/review" ? reviewCount : undefined} />
           ))}
         </nav>
       </div>

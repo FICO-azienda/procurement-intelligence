@@ -25,15 +25,64 @@ Apri http://localhost:3100. Al primo avvio viene creato un database locale (`.da
 
 ## Sabato: passare ai dati reali
 
-1. **Import → Data → Clear all data.** Svuota il database (resta vuoto anche dopo il riavvio).
-2. **Import → Purchases from CSV.** Esporta le righe acquisto dal gestionale/contabilità in CSV (da Excel: *File → Salva con nome → CSV*). Scarica il template per vedere le colonne. Funzionano:
-   - separatore `,` o `;`, numeri `1,58` o `1.58`, `20.000`, date `15/09/2026` o `2026-09-15`;
-   - intestazioni in italiano (`data, fornitore, codice, descrizione, um, quantità, prezzo, valuta, cambio, trasporto, fattura`) o inglese;
-   - fornitori e prodotti mancanti vengono creati; prima di salvare vedi l'anteprima riga per riga con gli errori.
-3. **Completa a mano** dove serve: categoria e specifiche dei prodotti, termini di pagamento e lead time dei fornitori, offerte (Add quote) per MOQ e alternative.
-4. Tutto — spesa annua, variazioni, stati, fornitori — si ricalcola da solo.
+1. **Import → Data → Clear all data.** Svuota database e file salvati (resta vuoto anche dopo il riavvio).
+2. **Import → carica i file** (anche più file insieme, trascinandoli):
+   - **CSV / Excel** (`.csv`, `.xlsx`, `.xls`, `.ods`) esportati dal gestionale → schermata **Map your columns** con proposta automatica (intestazioni italiane o inglesi), correggibile.
+   - **Fatture PDF** e **preventivi PDF** digitali (non scansioni) → lettura automatica di fornitore, P.IVA, numero, data, righe, quantità, prezzi, pagamento, trasporto (fatture) o MOQ, lead time, Incoterm, validità (preventivi).
+3. **Revisione.** Per ogni file: *We found 42 purchases. 3 need your attention.*
+   - fornitori e prodotti riconosciuti, suggeriti (con % di confidenza → **Confirm / Choose another / Create new**) o sconosciuti (**Create**);
+   - righe con problemi (valuta mancante, unità sconosciuta, numero ambiguo, duplicato, aumento prezzo > 5%) da correggere o confermare (**Looks right**);
+   - clic su una riga per correggere i valori: il valore originale del file resta visibile ("In file: …").
+4. **Import N purchases.** Le righe pronte entrano nel database; quelle dubbie restano in **Review** (sidebar) senza bloccare il resto.
+5. Dashboard, storico prezzi, variazioni e fornitori si aggiornano da soli. Ogni acquisto ha **View source** verso il documento originale.
+
+Ogni conferma insegna qualcosa: "ABC S.r.l." o "PARAFFIN WAX 58/60" confermati una volta vengono riconosciuti automaticamente la volta dopo (alias).
+
+**File di prova** in `test-data/` (scenari A–G + preventivo PDF), rigenerabili con `npx tsx scripts/make-test-data.ts`. Funzionano sui dati demo.
 
 Per tornare alla demo: **Import → Data → Reload demo data**.
+
+## Pipeline di import (Fase 2)
+
+```
+File ─▶ Estrazione ─▶ Normalizzazione ─▶ Matching ─▶ Revisione ─▶ Approvazione ─▶ Database ─▶ Dashboard
+        CSV/Excel/PDF   unità, valute,     fornitori,   problemi e    solo righe
+                        numeri, date        prodotti     anomalie      "ready"
+```
+
+Regola: *se è noto → si salva; se è dedotto con alta confidenza → si suggerisce; se è incerto → revisione; se è sconosciuto → vuoto.* Nessun dato inventato, nessun errore silenzioso.
+
+| Modulo | File |
+|---|---|
+| Lettura CSV/Excel (codifica Windows-1252, riga di intestazione, fogli) | `lib/import/extract/tabular.ts` |
+| Righe → dati normalizzati + problemi di lettura | `lib/import/extract/rows.ts` |
+| PDF → righe di testo (scansioni riconosciute) | `lib/import/extract/pdf.ts` |
+| Fatture e preventivi: campi e righe articolo (verificate con quantità × prezzo = importo) | `lib/import/extract/document.ts` |
+| Campi standard e proposta di mappatura colonne | `lib/import/fields.ts` |
+| Unità (kg/KG/chilogrammi, pz/pezzi, t/tonnellate…) con conversioni esatte | `lib/import/normalize/units.ts` |
+| Valute (€ $ £ EUR USD…), mai convertite senza cambio | `lib/import/normalize/currency.ts` |
+| Numeri 1.234,50 / 1,234.50: stile rilevato per colonna, ambiguità → revisione | `lib/import/normalize/numbers.ts` |
+| Date (gg/mm, mm/gg rilevato dalla colonna, seriali Excel) | `lib/import/normalize/dates.ts` |
+| Matching fornitori (P.IVA, alias, forma societaria) e prodotti (SKU, codice fornitore, alias, nome, fuzzy; i numeri devono coincidere: 300 ml ≠ 500 ml) | `lib/import/match/` |
+| Valutazione righe: obbligatori, unità, duplicati, anomalie → ready/attention | `lib/import/evaluate.ts` |
+| Regole anomalie configurabili (+5% review, +10% alta priorità, mediana ±20%, quantità ×3…) | `lib/anomalies.ts` |
+| Servizi DB: upload, mappatura, risoluzioni, apprendimento alias, approvazione, riepilogo | `server/imports.ts` |
+| File originali: cartella locale o Supabase Storage (`imports/{company}/{anno}/…`) | `lib/storage.ts` |
+
+### Nuove tabelle
+
+- `documents` — file originale (hash SHA-256 → stesso file = stesso documento, duplicati riconosciuti).
+- `import_sessions` — un upload: stato (`uploaded → processing → needs_review → completed / failed`), contatori, mappatura, riepilogo.
+- `import_items` — una riga estratta: `raw` (come nel file) → `extracted` (normalizzato) → `data` (corretto dall'utente), confidenza, suggerimenti di matching, problemi.
+- `product_aliases`, `supplier_aliases` — ciò che il sistema ha imparato dalle conferme.
+- `supplier_products` — codice e nome dell'articolo presso ogni fornitore, MOQ, lead time (i prezzi restano calcolati da acquisti e offerte).
+- `purchases` / `quotes` ora hanno `import_item_id` (→ sessione → documento: "View source"), descrizione originale; `fx_rate` può essere vuoto (valuta estera senza cambio: esclusa dai totali EUR, mai convertita 1:1). `suppliers` ha la P.IVA.
+
+### Limiti noti
+
+- PDF: funziona con PDF digitali con testo; le scansioni vengono riconosciute e segnalate (OCR in una fase successiva). Layout di fattura molto particolari possono richiedere correzioni in revisione.
+- Supabase Storage: codice pronto (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, bucket `imports`) ma non ancora provato su un progetto reale.
+- Un codice fornitore per coppia fornitore/prodotto.
 
 ## Architettura
 
@@ -45,7 +94,9 @@ src/
   lib/analytics.ts    TUTTI i calcoli, funzioni pure (testate in analytics.test.ts)
   lib/data.ts         Lettura dal DB → dati tipizzati per analytics
   lib/validation.ts   Schemi zod condivisi da form e import
-  lib/import/         Import CSV (anteprima → approvazione → scrittura)
+  lib/import/         Pipeline di import (estrazione, normalizzazione, matching, valutazione)
+  lib/anomalies.ts    Regole su prezzi e quantità dei nuovi acquisti
+  server/imports.ts   Servizi DB dell'import (usati da server actions e test)
   app/actions.ts      Tutte le scritture (Server Actions)
   app/…/page.tsx      Pagine: Today, Products, Suppliers, Purchases, Compare, Import
   components/         UI (tabelle, dialog, grafico, filtri)
@@ -83,8 +134,8 @@ Soglie modificabili in `RULES` (`lib/analytics.ts`).
 
 | Modulo | Punto di aggancio |
 |---|---|
-| Document AI (fatture, preventivi, listini) | Nuovo importer in `lib/import/` che produce le stesse righe dell'import CSV → stessa anteprima con approvazione → `source = invoice` |
-| Email intelligence | Proposte di modifica approvate dall'utente, poi scritte con le funzioni di `app/actions.ts` (`source = email`) |
+| Document AI (OCR, layout complessi) | Sostituisce un "finder" alla volta in `lib/import/extract/document.ts`; il resto della pipeline (revisione, approvazione) non cambia |
+| Email intelligence | Allegati e testo delle email → stessa pipeline (`import_sessions` con `source = email`) → Review |
 | True landed cost | Funzione pura in `lib/analytics.ts` sopra `quotes` (Incoterm, valuta, MOQ, pagamento sono già salvati) + tabelle per dazi/trasporto |
 | Market intelligence | Tabella `market_prices` (serie esterne), confrontata con lo storico acquisti |
 | RFQ engine | Tabelle `rfqs` / `rfq_recipients`; le risposte diventano `quotes` |

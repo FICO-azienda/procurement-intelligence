@@ -4,23 +4,56 @@
  * loading the dataset per request keeps the code simple. When that stops being
  * true, push the aggregations into SQL behind these same functions.
  */
+import { eq } from "drizzle-orm";
 import { connection } from "next/server";
 import { cache } from "react";
-import { getDb } from "@/db";
-import { products, purchases, quotes, suppliers } from "@/db/schema";
-import type { Dataset } from "./analytics";
+import { getDb, type DB } from "@/db";
+import {
+  importItems,
+  importSessions,
+  productAliases,
+  products,
+  purchases,
+  quotes,
+  supplierAliases,
+  supplierProducts,
+  suppliers,
+} from "@/db/schema";
+import type { Dataset, SourceDoc } from "./analytics";
 
 const num = (v: string) => Number(v);
 const numOrNull = (v: string | null) => (v == null ? null : Number(v));
 
-export const getDataset = cache(async (): Promise<Dataset> => {
-  await connection(); // always read fresh data at request time
-  const db = await getDb();
+function sourceDoc(r: { sessionId: string | null; documentId: string | null; filename: string | null; importedAt: Date | null }): SourceDoc | null {
+  return r.sessionId && r.filename
+    ? { sessionId: r.sessionId, documentId: r.documentId, filename: r.filename, importedAt: (r.importedAt ?? new Date()).toISOString() }
+    : null;
+}
+
+const sourceCols = {
+  sessionId: importSessions.id,
+  documentId: importSessions.documentId,
+  filename: importSessions.filename,
+  importedAt: importSessions.completedAt,
+};
+
+/** Everything the analytics need, from any database handle (also used in tests). */
+export async function readDataset(db: DB): Promise<Dataset> {
   const [s, p, pu, q] = await Promise.all([
     db.select().from(suppliers).orderBy(suppliers.name),
     db.select().from(products).orderBy(products.name),
-    db.select().from(purchases).orderBy(purchases.date, purchases.createdAt),
-    db.select().from(quotes).orderBy(quotes.date, quotes.createdAt),
+    db
+      .select({ row: purchases, ...sourceCols })
+      .from(purchases)
+      .leftJoin(importItems, eq(purchases.importItemId, importItems.id))
+      .leftJoin(importSessions, eq(importItems.sessionId, importSessions.id))
+      .orderBy(purchases.date, purchases.createdAt),
+    db
+      .select({ row: quotes, ...sourceCols })
+      .from(quotes)
+      .leftJoin(importItems, eq(quotes.importItemId, importItems.id))
+      .leftJoin(importSessions, eq(importItems.sessionId, importSessions.id))
+      .orderBy(quotes.date, quotes.createdAt),
   ]);
 
   return {
@@ -29,6 +62,7 @@ export const getDataset = cache(async (): Promise<Dataset> => {
       name: r.name,
       country: r.country,
       city: r.city,
+      vatNumber: r.vatNumber,
       contactName: r.contactName,
       email: r.email,
       phone: r.phone,
@@ -48,7 +82,7 @@ export const getDataset = cache(async (): Promise<Dataset> => {
       technicalSpecifications: r.technicalSpecifications,
       currentSupplierId: r.currentSupplierId,
     })),
-    purchases: pu.map((r) => ({
+    purchases: pu.map(({ row: r, ...src }) => ({
       id: r.id,
       productId: r.productId,
       supplierId: r.supplierId,
@@ -57,15 +91,19 @@ export const getDataset = cache(async (): Promise<Dataset> => {
       unit: r.unit,
       unitPrice: num(r.unitPrice),
       currency: r.currency,
-      fxRate: num(r.fxRate),
+      fxRate: numOrNull(r.fxRate),
       freightCost: num(r.freightCost),
       otherCosts: num(r.otherCosts),
       totalAmount: num(r.totalAmount),
       invoiceReference: r.invoiceReference,
+      paymentTermsDays: r.paymentTermsDays,
+      incoterm: r.incoterm,
+      originalDescription: r.originalDescription,
       source: r.source,
+      sourceDoc: sourceDoc(src),
       notes: r.notes,
     })),
-    quotes: q.map((r) => ({
+    quotes: q.map(({ row: r, ...src }) => ({
       id: r.id,
       productId: r.productId,
       supplierId: r.supplierId,
@@ -73,14 +111,50 @@ export const getDataset = cache(async (): Promise<Dataset> => {
       quantity: numOrNull(r.quantity),
       unitPrice: num(r.unitPrice),
       currency: r.currency,
-      fxRate: num(r.fxRate),
+      fxRate: numOrNull(r.fxRate),
       moq: numOrNull(r.moq),
       leadTimeDays: r.leadTimeDays,
       paymentTermsDays: r.paymentTermsDays,
       incoterm: r.incoterm,
+      freightCost: numOrNull(r.freightCost),
       validUntil: r.validUntil,
+      originalDescription: r.originalDescription,
       source: r.source,
+      sourceDoc: sourceDoc(src),
       notes: r.notes,
     })),
   };
+}
+
+/** Aliases and supplier codes: what the system has learned from confirmations. */
+export async function readLearning(db: DB) {
+  const [pa, sa, sp] = await Promise.all([
+    db.select().from(productAliases).orderBy(productAliases.createdAt),
+    db.select().from(supplierAliases).orderBy(supplierAliases.createdAt),
+    db.select().from(supplierProducts),
+  ]);
+  return {
+    productAliases: pa.map((a) => ({ id: a.id, productId: a.productId, alias: a.alias, normalized: a.normalized, supplierId: a.supplierId })),
+    supplierAliases: sa.map((a) => ({ id: a.id, supplierId: a.supplierId, alias: a.alias, normalized: a.normalized })),
+    supplierProducts: sp.map((l) => ({
+      id: l.id,
+      supplierId: l.supplierId,
+      productId: l.productId,
+      supplierSku: l.supplierSku,
+      supplierProductName: l.supplierProductName,
+      moq: numOrNull(l.moq),
+      leadTimeDays: l.leadTimeDays,
+    })),
+  };
+}
+export type Learning = Awaited<ReturnType<typeof readLearning>>;
+
+export const getDataset = cache(async (): Promise<Dataset> => {
+  await connection(); // always read fresh data at request time
+  return readDataset(await getDb());
+});
+
+export const getLearning = cache(async (): Promise<Learning> => {
+  await connection();
+  return readLearning(await getDb());
 });

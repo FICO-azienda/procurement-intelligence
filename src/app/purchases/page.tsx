@@ -3,8 +3,9 @@ import { Suspense } from "react";
 import type { Metadata } from "next";
 import { PurchaseDialog } from "@/components/dialogs";
 import { PurchaseFilters } from "@/components/purchase-filters";
-import { Basis, Empty, PageHeader, Sku, Table, Td, Th, rowClass } from "@/components/ui";
-import { baseTotal } from "@/lib/analytics";
+import { Empty, PageHeader, Sku, Table, Td, Th, rowClass } from "@/components/ui";
+import { baseTotal, isPriced } from "@/lib/analytics";
+import { SourceTag } from "@/components/import/labels";
 import { getDataset } from "@/lib/data";
 import * as f from "@/lib/format";
 import { lookups, plural } from "@/lib/lookups";
@@ -41,7 +42,8 @@ export default async function PurchasesPage({ searchParams }: PageProps<"/purcha
     })
     .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
 
-  const total = rows.reduce((s, p) => s + baseTotal(p), 0);
+  const total = rows.filter(isPriced).reduce((s, p) => s + baseTotal(p), 0);
+  const unpriced = rows.filter((p) => !isPriced(p)).length;
   const common = { products: l.productOptions, suppliers: l.supplierOptions };
 
   return (
@@ -109,7 +111,7 @@ export default async function PurchasesPage({ searchParams }: PageProps<"/purcha
                       <Td align="right">{f.money(p.totalAmount, p.currency)}</Td>
                       <Td muted>{p.invoiceReference ?? "—"}</Td>
                       <Td>
-                        <Basis tone={p.source === "demo" ? "muted" : "neutral"}>{p.source}</Basis>
+                        <SourceTag source={p.source} doc={p.sourceDoc} />
                       </Td>
                       <Td>
                         <PurchaseDialog {...common} purchase={p} trigger={{ label: "Edit purchase", iconOnly: true }} />
@@ -122,6 +124,7 @@ export default async function PurchasesPage({ searchParams }: PageProps<"/purcha
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-rule bg-well px-5 py-3 text-[13px]">
               <span className="text-ink-3">{plural(rows.length, "purchase")}</span>
               <span>
+                {unpriced > 0 && <span className="mr-3 text-caution">{unpriced} in other currencies not included (no exchange rate)</span>}
                 <span className="text-ink-3">Total </span>
                 <span className="num font-semibold">{f.money(total)}</span>
               </span>

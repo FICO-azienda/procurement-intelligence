@@ -5,7 +5,19 @@
  * boxes 30.000 pcs). Every number shown in the app is computed from these rows.
  */
 import type { DB } from "./index";
-import { products, purchases, quotes, suppliers } from "./schema";
+import { getStorage } from "../lib/storage";
+import {
+  documents,
+  importItems,
+  importSessions,
+  productAliases,
+  products,
+  purchases,
+  quotes,
+  supplierAliases,
+  supplierProducts,
+  suppliers,
+} from "./schema";
 
 type SupplierKey =
   | "abc"
@@ -250,6 +262,16 @@ export async function seedDemo(db: DB) {
     );
     await tx.insert(purchases).values(purchaseRows);
 
+    // How Vetreria Rossi codes our glass: lets imports recognise "VR-8821".
+    await tx.insert(supplierProducts).values({
+      supplierId: supplierIds.rossi,
+      productId: productIds.gls,
+      supplierSku: "VR-8821",
+      supplierProductName: "Bicchiere 300 cc trasparente",
+      moq: "5000",
+      leadTimeDays: 15,
+    });
+
     await tx.insert(quotes).values(
       QUOTES.map((q) => ({
         productId: productIds[q.product],
@@ -268,14 +290,21 @@ export async function seedDemo(db: DB) {
   });
 }
 
-/** Deletes every record. Used by "Clear all data" before loading real data. */
+/** Deletes every record and stored file. Used by "Clear all data" before loading real data. */
 export async function clearAll(db: DB) {
   await db.transaction(async (tx) => {
     await tx.delete(purchases);
     await tx.delete(quotes);
+    await tx.delete(importItems);
+    await tx.delete(importSessions);
+    await tx.delete(documents);
+    await tx.delete(productAliases);
+    await tx.delete(supplierAliases);
+    await tx.delete(supplierProducts);
     await tx.delete(products);
     await tx.delete(suppliers);
   });
+  await getStorage().clear();
 }
 
 function round2(n: number) {

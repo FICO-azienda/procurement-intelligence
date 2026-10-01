@@ -1,0 +1,862 @@
+/**
+ * Import service: every database operation of the import pipeline.
+ *
+ *   upload → (spreadsheet: column mapping) → items → match → evaluate
+ *   → user review (confirm / choose / create / edit / skip) → approve → facts
+ *
+ * Functions take a `db` handle so they run the same in the app and in tests.
+ * Server actions (app/import/actions.ts) are thin wrappers around these.
+ */
+import { createHash } from "node:crypto";
+import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import type { DB } from "@/db";
+import {
+  documents,
+  importItems,
+  importSessions,
+  productAliases,
+  products,
+  purchases,
+  quotes,
+  supplierAliases,
+  supplierProducts,
+  suppliers,
+  type ImportItemRecord,
+  type ImportSession,
+  type Source,
+} from "@/db/schema";
+import { computeTotal, productMetrics, todayISO, type Dataset } from "@/lib/analytics";
+import { readDataset, readLearning, type Learning } from "@/lib/data";
+import { documentToItems, extractDocument, type DocKind, type DocumentExtraction } from "@/lib/import/extract/document";
+import { readPdfLines } from "@/lib/import/extract/pdf";
+import { buildRowItems } from "@/lib/import/extract/rows";
+import { ImportError, readTable, SPREADSHEET_TYPES, cellText, type Table } from "@/lib/import/extract/tabular";
+import { evaluateItems, inProductUnit, type ItemState } from "@/lib/import/evaluate";
+import { missingRequired, proposeMapping, type ColumnMapping } from "@/lib/import/fields";
+import { productGroupKey, supplierGroupKey } from "@/lib/import/groups";
+import { matchProduct, matchSupplier, type MatchContext, type MatchResult } from "@/lib/import/match";
+import { companyKey, productKey, tidy } from "@/lib/import/normalize/text";
+import { normalizeUnit } from "@/lib/import/normalize/units";
+import type { CurrentData, DraftItem, ExtractedData, Issue, ItemData, RecordType } from "@/lib/import/types";
+import { getStorage, storageKey } from "@/lib/storage";
+
+export type UploadKind = "spreadsheet" | "invoice" | "quote";
+
+export interface MappingInfo {
+  columns: ColumnMapping;
+  recordType: RecordType;
+  defaultCurrency: string | null;
+}
+
+export interface SpreadsheetExtraction {
+  type: "spreadsheet";
+  sheetName: string | null;
+  headers: string[];
+  sample: string[][];
+  rowCount: number;
+  skippedRows?: number;
+}
+
+export interface PdfSessionExtraction {
+  type: "pdf";
+  kind: DocKind;
+  detectedKind: DocKind | null;
+  fields: Record<string, { value: string | number | null; confidence: number }>;
+  lineCount: number;
+}
+
+export interface PriceChangeSummary {
+  productId: string;
+  productName: string;
+  unit: string;
+  previousPrice: number;
+  newPrice: number;
+  pct: number;
+  annualQuantity: number;
+  annualImpact: number;
+}
+
+export interface ImportSummary {
+  detected: number;
+  imported: number;
+  needReview: number;
+  duplicatesSkipped: number;
+  skipped: number;
+  newSuppliers: number;
+  newProducts: number;
+  priceChanges: PriceChangeSummary[];
+  /** Sum of annual impact of price increases (EUR/year). */
+  increaseImpact: number;
+}
+
+export const MAX_FILE_BYTES = 20 * 1024 * 1024;
+
+const MIME: Record<string, string> = {
+  csv: "text/csv",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  xls: "application/vnd.ms-excel",
+  ods: "application/vnd.oasis.opendocument.spreadsheet",
+  pdf: "application/pdf",
+};
+
+function fileTypeOf(name: string, bytes: Uint8Array): string | null {
+  const ext = name.toLowerCase().split(".").pop() ?? "";
+  if (ext === "pdf" || (bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46)) return "pdf";
+  if (ext === "txt" || ext === "tsv") return "csv";
+  if ((SPREADSHEET_TYPES as readonly string[]).includes(ext)) return ext;
+  return null;
+}
+
+// ======================= Upload =======================
+
+/**
+ * Stores the file and starts a session. Never throws for bad files: it
+ * records a failed session with a plain-language reason instead.
+ */
+export async function createUpload(
+  db: DB,
+  file: { name: string; bytes: Uint8Array },
+  kind: UploadKind,
+): Promise<{ sessionId: string }> {
+  const fileType = fileTypeOf(file.name, file.bytes);
+  const sourceType: Source = fileType === "pdf" ? (kind === "quote" ? "quote" : "invoice") : fileType === "csv" ? "csv" : "excel";
+  const recordType: RecordType = kind === "quote" ? "quote" : "purchase";
+
+  const fail = async (message: string, documentId: string | null = null) => {
+    const [s] = await db
+      .insert(importSessions)
+      .values({ filename: file.name, fileType: fileType ?? "unknown", sourceType, recordType, status: "failed", errorMessage: message, documentId })
+      .returning({ id: importSessions.id });
+    return { sessionId: s.id };
+  };
+
+  if (!fileType) return fail("This file type isn't supported. Upload CSV, Excel (.xlsx, .xls, .ods) or PDF files.");
+  if (file.bytes.length === 0) return fail("The file is empty.");
+  if (file.bytes.length > MAX_FILE_BYTES) return fail("This file is larger than 20 MB. Split it into smaller files and upload them separately.");
+  if (kind !== "spreadsheet" && fileType !== "pdf") return fail("Invoices and quotes must be PDF files. Use “Upload CSV” or “Upload Excel” for spreadsheets.");
+  if (kind === "spreadsheet" && fileType === "pdf") return fail("This is a PDF. Use “Upload invoice” or “Upload quote” for PDF documents.");
+
+  // Store the original once (same content = same document).
+  const sha256 = createHash("sha256").update(file.bytes).digest("hex");
+  let [doc] = await db.select().from(documents).where(eq(documents.sha256, sha256));
+  if (!doc) {
+    const key = storageKey(file.name, sha256);
+    try {
+      await getStorage().put(key, file.bytes, MIME[fileType] ?? "application/octet-stream");
+    } catch {
+      return fail("We couldn't save the file. Please try again.");
+    }
+    [doc] = await db
+      .insert(documents)
+      .values({ filename: file.name, mimeType: MIME[fileType], sizeBytes: file.bytes.length, sha256, storagePath: key })
+      .returning();
+  }
+
+  // Same file imported before?
+  const [previous] = await db
+    .select({ id: importSessions.id })
+    .from(importSessions)
+    .where(and(eq(importSessions.documentId, doc.id), inArray(importSessions.status, ["completed", "needs_review"])))
+    .limit(1);
+
+  const [session] = await db
+    .insert(importSessions)
+    .values({
+      documentId: doc.id,
+      filename: file.name,
+      fileType,
+      sourceType,
+      recordType,
+      status: "processing",
+      duplicateOfSessionId: previous?.id ?? null,
+    })
+    .returning();
+
+  try {
+    if (fileType === "pdf") {
+      await processPdf(db, session, file.bytes, kind === "quote" ? "quote" : "invoice");
+    } else {
+      const table = readTable(file.bytes, fileType);
+      const mapping: MappingInfo = {
+        columns: proposeMapping(table.headers, table.rows.slice(0, 20)),
+        recordType: guessRecordType(table),
+        defaultCurrency: "EUR",
+      };
+      const extraction: SpreadsheetExtraction = {
+        type: "spreadsheet",
+        sheetName: table.sheetName,
+        headers: table.headers,
+        sample: table.rows.slice(0, 6).map((r) => r.map(cellText)),
+        rowCount: table.rows.length,
+      };
+      await db.update(importSessions).set({ status: "uploaded", extraction, mapping, updatedAt: new Date() }).where(eq(importSessions.id, session.id));
+    }
+  } catch (err) {
+    const message = err instanceof ImportError ? err.message : "Something went wrong while reading this file. It has been saved; try again or contact support.";
+    if (!(err instanceof ImportError)) console.error("[import] processing failed", err);
+    await db.update(importSessions).set({ status: "failed", errorMessage: message, updatedAt: new Date() }).where(eq(importSessions.id, session.id));
+  }
+  return { sessionId: session.id };
+}
+
+function guessRecordType(table: Table): RecordType {
+  const m = proposeMapping(table.headers);
+  const fields = new Set(Object.values(m));
+  return (fields.has("valid_until") || fields.has("moq")) && !fields.has("invoice_reference") ? "quote" : "purchase";
+}
+
+async function loadFile(db: DB, session: ImportSession): Promise<Uint8Array> {
+  if (!session.documentId) throw new ImportError("The original file is no longer available.");
+  const [doc] = await db.select().from(documents).where(eq(documents.id, session.documentId));
+  const bytes = doc ? await getStorage().get(doc.storagePath) : null;
+  if (!bytes) throw new ImportError("The original file is no longer available. Upload it again.");
+  return bytes;
+}
+
+// ======================= Spreadsheet mapping =======================
+
+export async function applyMapping(db: DB, sessionId: string, mapping: MappingInfo): Promise<{ error?: string }> {
+  const session = await getSession(db, sessionId);
+  if (!session || session.status !== "uploaded") return { error: "This import has already been processed." };
+  const missing = missingRequired(mapping.columns, mapping.recordType);
+  if (missing.length) return { error: `Map a column for: ${missing.join(", ")}.` };
+
+  try {
+    const table = readTable(await loadFile(db, session), session.fileType);
+    const { items, skippedRows } = buildRowItems(table, mapping.columns, {
+      recordType: mapping.recordType,
+      defaultCurrency: mapping.defaultCurrency,
+    });
+    if (items.length === 0) return { error: "No rows with products or prices were found with this mapping." };
+    await db
+      .update(importSessions)
+      .set({
+        mapping,
+        recordType: mapping.recordType,
+        extraction: { ...(session.extraction as SpreadsheetExtraction), skippedRows },
+        status: "processing",
+        updatedAt: new Date(),
+      })
+      .where(eq(importSessions.id, sessionId));
+    await insertItems(db, sessionId, mapping.recordType, items);
+  } catch (err) {
+    if (err instanceof ImportError) return { error: err.message };
+    console.error("[import] mapping failed", err);
+    return { error: "Something went wrong while reading the rows. Please try again." };
+  }
+  return {};
+}
+
+// ======================= PDF =======================
+
+async function processPdf(db: DB, session: ImportSession, bytes: Uint8Array, kind: DocKind) {
+  const { lines } = await readPdfLines(bytes);
+  const doc = extractDocument(lines, kind);
+  if (doc.lines.length === 0) {
+    throw new ImportError(
+      kind === "quote"
+        ? "We couldn't find product lines with prices in this quote. You can add the quote manually from the product page."
+        : "We couldn't find product lines (quantity × price) in this invoice. You can add the purchases manually.",
+    );
+  }
+  const extraction: PdfSessionExtraction = {
+    type: "pdf",
+    kind,
+    detectedKind: doc.detectedKind,
+    fields: Object.fromEntries(
+      (["supplierName", "supplierVat", "number", "date", "validUntil", "currency", "paymentTermsDays", "incoterm", "leadTimeDays", "moq", "freight", "total"] as const).map((k) => [
+        k,
+        { value: doc[k].value, confidence: doc[k].confidence },
+      ]),
+    ),
+    lineCount: doc.lines.length,
+  };
+  await db.update(importSessions).set({ extraction, updatedAt: new Date() }).where(eq(importSessions.id, session.id));
+  await insertItems(db, session.id, kind === "quote" ? "quote" : "purchase", documentToItems(doc), doc);
+}
+
+// ======================= Items: match + evaluate =======================
+
+async function matchContext(db: DB, data?: Dataset, learning?: Learning): Promise<{ ctx: MatchContext; data: Dataset }> {
+  const d = data ?? (await readDataset(db));
+  const l = learning ?? (await readLearning(db));
+  return {
+    data: d,
+    ctx: {
+      suppliers: d.suppliers.map((s) => ({ id: s.id, name: s.name, vatNumber: s.vatNumber })),
+      products: d.products.map((p) => ({ id: p.id, sku: p.sku, name: p.name, description: p.description })),
+      supplierAliases: l.supplierAliases,
+      productAliases: l.productAliases,
+      supplierProducts: l.supplierProducts,
+    },
+  };
+}
+
+/** Known supplier names written anywhere in a document (letterhead, footer…). */
+function supplierInText(text: string, ctx: MatchContext): MatchResult | null {
+  const hay = ` ${companyKey(text).replace(/\n/g, " ")} `;
+  const hits = ctx.suppliers.filter((s) => {
+    const k = companyKey(s.name);
+    return k.length >= 4 && hay.includes(` ${k} `);
+  });
+  return hits.length === 1 ? { status: "probable", id: hits[0].id, confidence: 0.85, reason: "Name found in the document", alternatives: [] } : null;
+}
+
+function matchItem(row: ItemState, ctx: MatchContext, docText?: string) {
+  const d = row.data;
+  let { supplierId, supplierMatch, supplierResolution, productId, productMatch, productResolution } = row;
+  if (!supplierResolution || supplierResolution === "auto") {
+    let m = matchSupplier({ name: d.supplierName, vat: d.supplierVat }, ctx);
+    if (m.status !== "exact" && docText) m = supplierInText(docText, ctx) ?? m;
+    supplierMatch = m;
+    supplierId = m.status === "exact" ? m.id : null;
+    supplierResolution = m.status === "exact" ? "auto" : null;
+  }
+  if (!productResolution || productResolution === "auto") {
+    const m = matchProduct({ sku: d.sku, supplierSku: d.supplierSku, name: d.productName, description: d.description }, supplierId, ctx);
+    productMatch = m;
+    productId = m.status === "exact" ? m.id : null;
+    productResolution = m.status === "exact" ? "auto" : null;
+  }
+  return { supplierId, supplierMatch, supplierResolution, productId, productMatch, productResolution };
+}
+
+async function insertItems(db: DB, sessionId: string, recordType: RecordType, drafts: DraftItem[], doc?: DocumentExtraction) {
+  const { ctx } = await matchContext(db);
+  const rows = drafts.map((draft, index) => {
+    const data: CurrentData = { ...stripIssues(draft.extracted), corrected: [] };
+    const state: ItemState = {
+      id: "",
+      line: draft.line,
+      recordType,
+      extracted: draft.extracted,
+      data,
+      confidence: draft.confidence,
+      supplierId: null,
+      supplierMatch: null,
+      supplierResolution: null,
+      productId: null,
+      productMatch: null,
+      productResolution: null,
+      acknowledged: false,
+      duplicateDecision: null,
+    };
+    return { ...state, ...matchItem(state, ctx, doc?.fullText), raw: draft.raw, index };
+  });
+  if (rows.length) {
+    await db.insert(importItems).values(
+      rows.map((r) => ({
+        sessionId,
+        line: r.line,
+        recordType,
+        raw: r.raw,
+        extracted: r.extracted,
+        data: r.data,
+        confidence: r.confidence,
+        supplierId: r.supplierId,
+        supplierMatch: r.supplierMatch,
+        supplierResolution: r.supplierResolution,
+        productId: r.productId,
+        productMatch: r.productMatch,
+        productResolution: r.productResolution,
+        status: "attention" as const,
+      })),
+    );
+  }
+  await refreshSession(db, sessionId);
+}
+
+function stripIssues(e: ExtractedData): ItemData {
+  const { parseIssues: _ignored, ...rest } = e;
+  void _ignored;
+  return rest;
+}
+
+function toState(r: ImportItemRecord): ItemState {
+  return {
+    id: r.id,
+    line: r.line,
+    recordType: r.recordType as RecordType,
+    extracted: r.extracted as ExtractedData,
+    data: r.data as CurrentData,
+    confidence: r.confidence,
+    supplierId: r.supplierId,
+    supplierMatch: r.supplierMatch as MatchResult | null,
+    supplierResolution: r.supplierResolution,
+    productId: r.productId,
+    productMatch: r.productMatch as MatchResult | null,
+    productResolution: r.productResolution,
+    acknowledged: r.acknowledged,
+    duplicateDecision: r.duplicateDecision,
+  };
+}
+
+/**
+ * Re-matches unresolved items and re-evaluates every open item of a session,
+ * then updates the session counts and status.
+ */
+export async function refreshSession(db: DB, sessionId: string, opts: { rematch?: boolean } = {}) {
+  const { ctx, data } = await matchContext(db);
+  const all = await db.select().from(importItems).where(eq(importItems.sessionId, sessionId));
+  const open = all.filter((r) => r.status === "ready" || r.status === "attention");
+  let states = open.map(toState);
+  if (opts.rematch) states = states.map((s) => ({ ...s, ...matchItem(s, ctx) }));
+  const results = evaluateItems(states, { data });
+
+  for (const s of states) {
+    const r = results.get(s.id)!;
+    await db
+      .update(importItems)
+      .set({
+        issues: r.issues,
+        status: r.status,
+        supplierId: s.supplierId,
+        supplierMatch: s.supplierMatch,
+        supplierResolution: s.supplierResolution,
+        productId: s.productId,
+        productMatch: s.productMatch,
+        productResolution: s.productResolution,
+        updatedAt: new Date(),
+      })
+      .where(eq(importItems.id, s.id));
+  }
+  await updateCounts(db, sessionId);
+}
+
+async function updateCounts(db: DB, sessionId: string) {
+  const counts = await db
+    .select({ status: importItems.status, n: sql<number>`count(*)::int` })
+    .from(importItems)
+    .where(eq(importItems.sessionId, sessionId))
+    .groupBy(importItems.status);
+  const c = Object.fromEntries(counts.map((x) => [x.status, x.n])) as Record<string, number>;
+  const detected = counts.reduce((s, x) => s + x.n, 0);
+  const open = (c.ready ?? 0) + (c.attention ?? 0);
+  const session = await getSession(db, sessionId);
+  if (!session) return;
+  await db
+    .update(importSessions)
+    .set({
+      recordsDetected: detected,
+      recordsImported: c.imported ?? 0,
+      recordsReview: c.attention ?? 0,
+      recordsRejected: c.skipped ?? 0,
+      status: session.status === "failed" ? "failed" : open > 0 ? "needs_review" : "completed",
+      updatedAt: new Date(),
+    })
+    .where(eq(importSessions.id, sessionId));
+}
+
+/** After learning something (alias, new product), other open imports may now match. */
+export async function rematchOpenSessions(db: DB, exceptSessionId?: string) {
+  const open = await db
+    .select({ id: importSessions.id })
+    .from(importSessions)
+    .where(exceptSessionId ? and(eq(importSessions.status, "needs_review"), ne(importSessions.id, exceptSessionId)) : eq(importSessions.status, "needs_review"));
+  for (const s of open) await refreshSession(db, s.id, { rematch: true });
+}
+
+// ======================= Grouping =======================
+
+export { productGroupKey, supplierGroupKey };
+
+async function openItems(db: DB, sessionId: string) {
+  return (await db.select().from(importItems).where(eq(importItems.sessionId, sessionId))).filter(
+    (r) => r.status === "ready" || r.status === "attention",
+  );
+}
+
+// ======================= Resolutions (user decisions) =======================
+
+export type SupplierDecision =
+  | { type: "use"; supplierId: string }
+  | { type: "create"; name: string; country: string | null; vatNumber: string | null };
+
+export async function resolveSupplier(db: DB, sessionId: string, groupKey: string, decision: SupplierDecision) {
+  const items = (await openItems(db, sessionId)).filter((i) => supplierGroupKey(i.data as ItemData) === groupKey);
+  if (!items.length) return;
+  const sample = items[0].data as ItemData;
+
+  let supplierId: string;
+  let resolution: string;
+  if (decision.type === "create") {
+    const [s] = await db
+      .insert(suppliers)
+      .values({ name: tidy(decision.name), country: decision.country, vatNumber: decision.vatNumber })
+      .returning({ id: suppliers.id });
+    supplierId = s.id;
+    resolution = "created";
+    await db.update(importSessions).set({ newSuppliers: sql`${importSessions.newSuppliers} + 1` }).where(eq(importSessions.id, sessionId));
+  } else {
+    supplierId = decision.supplierId;
+    const suggested = (items[0].supplierMatch as MatchResult | null)?.id;
+    resolution = suggested === supplierId ? "confirmed" : "chosen";
+    // Learn: the name as written in this document now means this supplier.
+    const [target] = await db.select().from(suppliers).where(eq(suppliers.id, supplierId));
+    if (!target) return;
+    const names = [...new Set(items.map((i) => tidy((i.data as ItemData).supplierName)).filter(Boolean))];
+    for (const alias of names) {
+      if (alias.toLowerCase() === target.name.toLowerCase()) continue;
+      await db
+        .insert(supplierAliases)
+        .values({ supplierId, alias, normalized: companyKey(alias) })
+        .onConflictDoUpdate({ target: supplierAliases.normalized, set: { supplierId, alias } });
+    }
+    if (!target.vatNumber && sample.supplierVat) {
+      await db.update(suppliers).set({ vatNumber: sample.supplierVat, updatedAt: new Date() }).where(eq(suppliers.id, supplierId));
+    }
+  }
+
+  await db
+    .update(importItems)
+    .set({ supplierId, supplierResolution: resolution, updatedAt: new Date() })
+    .where(inArray(importItems.id, items.map((i) => i.id)));
+  // Supplier codes can now be recognised for these lines.
+  await refreshSession(db, sessionId, { rematch: true });
+  await rematchOpenSessions(db, sessionId);
+}
+
+export type ProductDecision =
+  | { type: "use"; productId: string }
+  | { type: "create"; name: string; sku: string; unit: string; category: string | null };
+
+export async function resolveProduct(db: DB, sessionId: string, groupKey: string, decision: ProductDecision): Promise<{ error?: string }> {
+  const items = (await openItems(db, sessionId)).filter((i) => productGroupKey(i.data as ItemData) === groupKey);
+  if (!items.length) return {};
+
+  let productId: string;
+  let resolution: string;
+  if (decision.type === "create") {
+    const sku = decision.sku.trim().toUpperCase();
+    const unit = normalizeUnit(decision.unit) ?? decision.unit.trim();
+    if (!decision.name.trim() || !sku || !unit) return { error: "Name, SKU and unit are required." };
+    const [clash] = await db.select({ id: products.id }).from(products).where(eq(products.sku, sku));
+    if (clash) return { error: "Another product already uses this SKU." };
+    const [p] = await db
+      .insert(products)
+      .values({ name: tidy(decision.name), sku, unit, category: decision.category?.trim() || null, currentSupplierId: items[0].supplierId })
+      .returning({ id: products.id });
+    productId = p.id;
+    resolution = "created";
+    await db.update(importSessions).set({ newProducts: sql`${importSessions.newProducts} + 1` }).where(eq(importSessions.id, sessionId));
+  } else {
+    productId = decision.productId;
+    const suggested = (items[0].productMatch as MatchResult | null)?.id;
+    resolution = suggested === productId ? "confirmed" : "chosen";
+  }
+
+  await learnProduct(db, productId, items);
+  await db
+    .update(importItems)
+    .set({ productId, productResolution: resolution, updatedAt: new Date() })
+    .where(inArray(importItems.id, items.map((i) => i.id)));
+  await refreshSession(db, sessionId);
+  await rematchOpenSessions(db, sessionId);
+  return {};
+}
+
+/** Save how this product was written (alias) and the supplier's code for it. */
+async function learnProduct(db: DB, productId: string, items: ImportItemRecord[]) {
+  const [product] = await db.select().from(products).where(eq(products.id, productId));
+  if (!product) return;
+  for (const i of items) {
+    const d = i.data as ItemData;
+    for (const text of [d.productName, d.description]) {
+      const alias = tidy(text);
+      if (!alias || productKey(alias) === productKey(product.name)) continue;
+      await db
+        .insert(productAliases)
+        .values({ productId, alias, normalized: productKey(alias), supplierId: i.supplierId })
+        .onConflictDoUpdate({ target: productAliases.normalized, set: { productId, alias } });
+    }
+    if (i.supplierId && (d.supplierSku || d.productName)) {
+      await db
+        .insert(supplierProducts)
+        .values({ supplierId: i.supplierId, productId, supplierSku: d.supplierSku, supplierProductName: tidy(d.productName ?? d.description) || null })
+        .onConflictDoUpdate({
+          target: [supplierProducts.supplierId, supplierProducts.productId],
+          set: {
+            supplierSku: sql`coalesce(excluded.supplier_sku, ${supplierProducts.supplierSku})`,
+            supplierProductName: sql`coalesce(${supplierProducts.supplierProductName}, excluded.supplier_product_name)`,
+            updatedAt: new Date(),
+          },
+        });
+    }
+  }
+}
+
+/** User corrections of values. Keeps extracted values untouched for audit. */
+export async function updateItem(db: DB, itemId: string, patch: Partial<ItemData>) {
+  const [item] = await db.select().from(importItems).where(eq(importItems.id, itemId));
+  if (!item || (item.status !== "ready" && item.status !== "attention")) return;
+  const data = item.data as CurrentData;
+  const corrected = new Set(data.corrected ?? []);
+  for (const k of Object.keys(patch) as (keyof ItemData)[]) corrected.add(k);
+  const next: CurrentData = { ...data, ...patch, corrected: [...corrected] };
+  if (next.currency === "EUR") next.fxRate = 1;
+  if ("unit" in patch && patch.unit) next.unitRaw = null;
+  const rematch = "supplierName" in patch || "productName" in patch || "sku" in patch || "supplierSku" in patch;
+  await db
+    .update(importItems)
+    .set({
+      data: next,
+      ...(rematch ? { supplierResolution: item.supplierResolution === "auto" ? null : item.supplierResolution, productResolution: item.productResolution === "auto" ? null : item.productResolution } : {}),
+      updatedAt: new Date(),
+    })
+    .where(eq(importItems.id, itemId));
+  await refreshSession(db, item.sessionId, { rematch });
+}
+
+/** Document-level fields (PDF header) applied to every open line of the session. */
+export async function updateSessionFields(db: DB, sessionId: string, patch: Partial<ItemData>) {
+  for (const item of await openItems(db, sessionId)) {
+    const data = item.data as CurrentData;
+    const corrected = new Set(data.corrected ?? []);
+    for (const k of Object.keys(patch) as (keyof ItemData)[]) corrected.add(k);
+    const next: CurrentData = { ...data, ...patch, corrected: [...corrected] };
+    if (next.currency === "EUR") next.fxRate = 1;
+    await db
+      .update(importItems)
+      .set({ data: next, ...("supplierName" in patch || "supplierVat" in patch ? { supplierResolution: null, supplierId: null } : {}), updatedAt: new Date() })
+      .where(eq(importItems.id, item.id));
+  }
+  await refreshSession(db, sessionId, { rematch: "supplierName" in patch || "supplierVat" in patch });
+}
+
+export async function acknowledge(db: DB, target: { itemId: string } | { sessionId: string }) {
+  if ("itemId" in target) {
+    const [item] = await db.select().from(importItems).where(eq(importItems.id, target.itemId));
+    if (!item) return;
+    await db.update(importItems).set({ acknowledged: true }).where(eq(importItems.id, target.itemId));
+    await refreshSession(db, item.sessionId);
+  } else {
+    // Only lines whose remaining problems are review flags (nothing blocking).
+    const items = (await openItems(db, target.sessionId)).filter((i) => !(i.issues as Issue[]).some((x) => x.severity === "blocking"));
+    if (items.length) await db.update(importItems).set({ acknowledged: true }).where(inArray(importItems.id, items.map((i) => i.id)));
+    await refreshSession(db, target.sessionId);
+  }
+}
+
+export async function decideDuplicate(db: DB, target: { itemId: string } | { sessionId: string }, decision: "skip" | "import") {
+  const items =
+    "itemId" in target
+      ? await db.select().from(importItems).where(eq(importItems.id, target.itemId))
+      : (await openItems(db, target.sessionId)).filter((i) => (i.issues as Issue[]).some((x) => x.code === "duplicate" || x.code === "duplicate_in_file"));
+  if (!items.length) return;
+  await db
+    .update(importItems)
+    .set(decision === "skip" ? { duplicateDecision: "skip", status: "skipped" } : { duplicateDecision: "import", acknowledged: true })
+    .where(inArray(importItems.id, items.map((i) => i.id)));
+  await refreshSession(db, items[0].sessionId);
+}
+
+export async function setSkipped(db: DB, itemId: string, skipped: boolean) {
+  const [item] = await db.select().from(importItems).where(eq(importItems.id, itemId));
+  if (!item || item.status === "imported") return;
+  await db.update(importItems).set({ status: skipped ? "skipped" : "attention" }).where(eq(importItems.id, itemId));
+  await refreshSession(db, item.sessionId);
+}
+
+/** The same file was imported before: stop here, or go on anyway. */
+export async function decideDuplicateFile(db: DB, sessionId: string, decision: "skip" | "continue") {
+  if (decision === "continue") {
+    await db.update(importSessions).set({ duplicateOfSessionId: null }).where(eq(importSessions.id, sessionId));
+    return;
+  }
+  await db.update(importItems).set({ status: "skipped", duplicateDecision: "skip" }).where(eq(importItems.sessionId, sessionId));
+  await db
+    .update(importSessions)
+    .set({ status: "completed", completedAt: new Date(), errorMessage: "Skipped — this file had already been imported." })
+    .where(eq(importSessions.id, sessionId));
+  await updateCountsKeepStatus(db, sessionId);
+}
+
+async function updateCountsKeepStatus(db: DB, sessionId: string) {
+  const all = await db.select({ status: importItems.status }).from(importItems).where(eq(importItems.sessionId, sessionId));
+  await db
+    .update(importSessions)
+    .set({ recordsDetected: all.length, recordsRejected: all.filter((i) => i.status === "skipped").length, recordsReview: 0 })
+    .where(eq(importSessions.id, sessionId));
+}
+
+// ======================= Approval =======================
+
+/** Writes every ready line as a purchase/quote. Lines needing attention stay in review. */
+export async function approveSession(db: DB, sessionId: string): Promise<{ imported: number; summary?: ImportSummary; error?: string }> {
+  const session = await getSession(db, sessionId);
+  if (!session) return { imported: 0, error: "Import not found." };
+  const before = await readDataset(db);
+  const ready = (await db.select().from(importItems).where(and(eq(importItems.sessionId, sessionId), eq(importItems.status, "ready"))));
+  if (!ready.length) return { imported: 0, error: "No lines are ready to import yet." };
+
+  const touched = new Set<string>();
+  await db.transaction(async (tx) => {
+    for (const item of ready) {
+      const d = item.data as CurrentData;
+      const product = before.products.find((p) => p.id === item.productId);
+      if (!product || !item.supplierId || !d.date || d.unitPrice == null || !d.currency) continue;
+      const v = inProductUnit(d, product.unit);
+      if (!v || v.unitPrice == null) continue;
+      const fxRate = d.currency === "EUR" ? "1" : d.fxRate != null ? String(d.fxRate) : null;
+      const originalDescription = tidy(d.productName ?? d.description) || null;
+
+      if (item.recordType === "quote") {
+        await tx.insert(quotes).values({
+          productId: product.id,
+          supplierId: item.supplierId,
+          date: d.date,
+          quantity: v.quantity == null ? null : String(v.quantity),
+          unitPrice: String(v.unitPrice),
+          currency: d.currency,
+          fxRate,
+          moq: v.moq == null ? null : String(v.moq),
+          leadTimeDays: d.leadTimeDays,
+          paymentTermsDays: d.paymentTermsDays,
+          incoterm: d.incoterm,
+          freightCost: d.freight == null ? null : String(d.freight),
+          validUntil: d.validUntil,
+          originalDescription,
+          source: session.sourceType,
+          importItemId: item.id,
+          notes: d.notes,
+        });
+      } else {
+        if (v.quantity == null) continue;
+        await tx.insert(purchases).values({
+          productId: product.id,
+          supplierId: item.supplierId,
+          date: d.date,
+          quantity: String(v.quantity),
+          unit: product.unit,
+          unitPrice: String(v.unitPrice),
+          currency: d.currency,
+          fxRate,
+          freightCost: String(d.freight ?? 0),
+          otherCosts: String(d.otherCosts ?? 0),
+          totalAmount: String(computeTotal(v.quantity, v.unitPrice, d.freight ?? 0, d.otherCosts ?? 0)),
+          invoiceReference: d.invoiceReference,
+          paymentTermsDays: d.paymentTermsDays,
+          incoterm: d.incoterm,
+          originalDescription,
+          source: session.sourceType,
+          importItemId: item.id,
+          notes: d.notes,
+        });
+      }
+      // Supplier-specific terms for this product
+      if (d.supplierSku || d.moq != null || d.leadTimeDays != null) {
+        await tx
+          .insert(supplierProducts)
+          .values({
+            supplierId: item.supplierId,
+            productId: product.id,
+            supplierSku: d.supplierSku,
+            supplierProductName: originalDescription,
+            moq: v.moq == null ? null : String(v.moq),
+            leadTimeDays: d.leadTimeDays,
+          })
+          .onConflictDoUpdate({
+            target: [supplierProducts.supplierId, supplierProducts.productId],
+            set: {
+              supplierSku: sql`coalesce(excluded.supplier_sku, ${supplierProducts.supplierSku})`,
+              moq: sql`coalesce(excluded.moq, ${supplierProducts.moq})`,
+              leadTimeDays: sql`coalesce(excluded.lead_time_days, ${supplierProducts.leadTimeDays})`,
+              updatedAt: new Date(),
+            },
+          });
+      }
+      if (!product.currentSupplierId) {
+        await tx.update(products).set({ currentSupplierId: item.supplierId }).where(eq(products.id, product.id));
+        product.currentSupplierId = item.supplierId;
+      }
+      await tx.update(importItems).set({ status: "imported", updatedAt: new Date() }).where(eq(importItems.id, item.id));
+      touched.add(product.id);
+    }
+  });
+
+  await db.update(importSessions).set({ completedAt: new Date() }).where(eq(importSessions.id, sessionId));
+  await updateCounts(db, sessionId);
+  const after = await readDataset(db);
+  const summary = await buildSummary(db, sessionId, before, after, touched);
+  await db.update(importSessions).set({ summary }).where(eq(importSessions.id, sessionId));
+  // Other imports' price checks now compare against the new history.
+  await rematchOpenSessions(db, sessionId);
+  return { imported: ready.length, summary };
+}
+
+async function buildSummary(db: DB, sessionId: string, before: Dataset, after: Dataset, touched: Set<string>): Promise<ImportSummary> {
+  const session = (await getSession(db, sessionId))!;
+  const items = await db.select().from(importItems).where(eq(importItems.sessionId, sessionId));
+  const asOf = todayISO();
+  const prev = (session.summary as ImportSummary | null)?.priceChanges ?? [];
+  const changes = new Map(prev.map((c) => [c.productId, c]));
+  for (const productId of touched) {
+    const pBefore = before.products.find((p) => p.id === productId);
+    const pAfter = after.products.find((p) => p.id === productId);
+    if (!pBefore || !pAfter) continue;
+    const mb = productMetrics(pBefore, before.purchases, asOf);
+    const ma = productMetrics(pAfter, after.purchases, asOf);
+    if (mb.currentPrice == null || ma.currentPrice == null || Math.abs(ma.currentPrice - mb.currentPrice) < 1e-9) continue;
+    // Across several approvals of the same import, compare with the price before the first one.
+    const base = changes.get(productId)?.previousPrice ?? mb.currentPrice;
+    changes.set(productId, {
+      productId,
+      productName: pAfter.name,
+      unit: pAfter.unit,
+      previousPrice: base,
+      newPrice: ma.currentPrice,
+      pct: (ma.currentPrice / base - 1) * 100,
+      // Consumption before this import, as shown on each line during review.
+      annualQuantity: mb.annualQuantity || ma.annualQuantity,
+      annualImpact: (mb.annualQuantity || ma.annualQuantity) * (ma.currentPrice - base),
+    });
+  }
+  const priceChanges = [...changes.values()].sort((a, b) => b.pct - a.pct);
+  return {
+    detected: items.length,
+    imported: items.filter((i) => i.status === "imported").length,
+    needReview: items.filter((i) => i.status === "ready" || i.status === "attention").length,
+    duplicatesSkipped: items.filter((i) => i.status === "skipped" && i.duplicateDecision === "skip").length,
+    skipped: items.filter((i) => i.status === "skipped").length,
+    newSuppliers: session.newSuppliers,
+    newProducts: session.newProducts,
+    priceChanges,
+    increaseImpact: priceChanges.filter((c) => c.pct > 0).reduce((s, c) => s + c.annualImpact, 0),
+  };
+}
+
+// ======================= Reads =======================
+
+export async function getSession(db: DB, id: string) {
+  const [s] = await db.select().from(importSessions).where(eq(importSessions.id, id));
+  return s ?? null;
+}
+
+export async function listSessions(db: DB, limit = 50) {
+  return db.select().from(importSessions).orderBy(desc(importSessions.uploadedAt)).limit(limit);
+}
+
+/** Open lines that need the user, across all imports (for the Review queue and badge). */
+export async function attentionItems(db: DB) {
+  return db
+    .select({ item: importItems, session: importSessions })
+    .from(importItems)
+    .innerJoin(importSessions, eq(importItems.sessionId, importSessions.id))
+    .where(and(eq(importItems.status, "attention"), eq(importSessions.status, "needs_review")))
+    .orderBy(desc(importSessions.uploadedAt), importItems.line);
+}
+
+export async function attentionCount(db: DB) {
+  const [r] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(importItems)
+    .innerJoin(importSessions, eq(importItems.sessionId, importSessions.id))
+    .where(and(eq(importItems.status, "attention"), eq(importSessions.status, "needs_review")));
+  return r?.n ?? 0;
+}
+
+export async function getSessionItems(db: DB, sessionId: string) {
+  return db.select().from(importItems).where(eq(importItems.sessionId, sessionId)).orderBy(importItems.line);
+}
+
+export { ImportError };
