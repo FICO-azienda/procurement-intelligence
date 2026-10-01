@@ -20,3 +20,6 @@ Procurement Intelligence prototype for manufacturing SMEs. See README.md (Italia
 - Verify with `npm test`, `npm run typecheck`, `npm run lint`.
 - Imports never write facts directly: file → import_items → user review/approval (`src/server/imports.ts`). Unit/currency/number/date parsing lives only in `src/lib/import/normalize/`; never guess an ambiguous value — flag it for review.
 - Import scenarios: `test-data/` (regenerate with `npx tsx scripts/make-test-data.ts`); end-to-end tests in `src/server/imports.test.ts` run on in-memory PGlite.
+- Price intelligence lives in `src/lib/intel/` (pure, tested): thresholds only in `config.ts`, explanations in `explain.ts`. Demo data is a test fixture — never shape logic around it; add generic cases to `src/lib/intel/fixtures.ts` tests instead.
+- Savings vocabulary is strict: "price difference" (nominal) vs "potential saving" (estimate, price only) — never "saving realised", never "best supplier". No saving for non-comparable offers.
+- Opportunities are computed by the engine; the `opportunities` table stores only the user's status/note/snapshot.

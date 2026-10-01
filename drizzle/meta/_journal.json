@@ -15,6 +15,13 @@
       "when": 1790805258219,
       "tag": "0001_import_pipeline",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790884858237,
+      "tag": "0002_price_intelligence",
+      "breakpoints": true
     }
   ]
 }

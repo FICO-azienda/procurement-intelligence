@@ -44,6 +44,26 @@ const currency = z.preprocess(
 const id = (label: string) => z.string().uuid(`Select a ${label}`);
 const optionalId = z.preprocess((v) => (v === "" || v == null ? null : v), z.string().uuid().nullable());
 
+/**
+ * "capacity: 300 ml" lines → { capacity: "300 ml" }. Lines without a colon
+ * are ignored; an empty text gives null.
+ */
+export function parseSpecs(text: string): Record<string, string> | null {
+  const out: Record<string, string> = {};
+  for (const line of text.split(/\r?\n/)) {
+    const i = line.indexOf(":");
+    if (i <= 0) continue;
+    const name = line.slice(0, i).trim();
+    const value = line.slice(i + 1).trim();
+    if (name && value) out[name] = value;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+export function formatSpecs(specs: Record<string, string> | null | undefined): string {
+  return specs ? Object.entries(specs).map(([k, v]) => `${k}: ${v}`).join("\n") : "";
+}
+
 export const supplierInput = z.object({
   name: requiredText("Name"),
   country: optionalText,
@@ -68,6 +88,7 @@ export const productInput = z.object({
   unit: requiredText("Unit"),
   description: optionalText,
   technicalSpecifications: optionalText,
+  specs: z.preprocess((v) => parseSpecs(typeof v === "string" ? v : ""), z.record(z.string(), z.string()).nullable()),
   currentSupplierId: optionalId,
 });
 

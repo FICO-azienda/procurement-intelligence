@@ -32,6 +32,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import { OPPORTUNITY_STATUSES, type OpportunityStatus } from "../lib/intel/statuses";
 
 /** Where a record came from. Extend here when a new ingestion channel ships. */
 export const SOURCES = ["manual", "csv", "excel", "invoice", "quote", "email", "erp", "demo"] as const;
@@ -73,6 +74,8 @@ export const products = pgTable("products", {
   /** Unit of measure used for prices and quantities (kg, pcs, l, m…). */
   unit: text("unit").notNull(),
   technicalSpecifications: text("technical_specifications"),
+  /** Structured specifications (name → value), compared against supplier offers. */
+  specs: jsonb("specs").$type<Record<string, string>>(),
   currentSupplierId: uuid("current_supplier_id").references(() => suppliers.id, {
     onDelete: "set null",
   }),
@@ -201,6 +204,11 @@ export const purchases = pgTable(
     originalDescription: text("original_description"),
     source: text("source", { enum: SOURCES }).notNull().default("manual"),
     importItemId: uuid("import_item_id").references(() => importItems.id, { onDelete: "set null" }),
+    /**
+     * User decision on a price flagged as a possible anomaly:
+     * confirmed = the price is real · excluded = leave it out of price analysis.
+     */
+    priceReview: text("price_review", { enum: ["confirmed", "excluded"] }),
     notes: text("notes"),
     ...timestamps,
   },
@@ -288,10 +296,40 @@ export const supplierProducts = pgTable(
     supplierProductName: text("supplier_product_name"),
     moq: qty("moq"),
     leadTimeDays: integer("lead_time_days"),
+    /** The supplier's version of the product specifications (name → value). */
+    specs: jsonb("specs").$type<Record<string, string>>(),
+    /** User decision on whether this offer can be compared with what we buy. */
+    comparabilityOverride: text("comparability_override", { enum: ["comparable", "partial", "not"] }),
+    comparabilityNote: text("comparability_note"),
     ...timestamps,
   },
   (t) => [uniqueIndex("supplier_products_pair_idx").on(t.supplierId, t.productId)],
 );
+
+// ---------------- Opportunities ----------------
+
+export { OPPORTUNITY_STATUSES, type OpportunityStatus };
+
+/**
+ * Opportunities are computed by the intelligence engine (src/lib/intel), so
+ * their numbers always follow the data. This table only stores what the user
+ * decided about one: its status, a note, and a snapshot of the figures at
+ * that moment (so a validated/rejected opportunity stays readable even when
+ * the engine no longer detects it). A later landed-cost phase adds to the
+ * snapshot, not to this structure.
+ */
+export const opportunities = pgTable("opportunities", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  /** Stable identity from the engine: type:productId[:alternativeSupplierId]. */
+  key: text("key").notNull().unique(),
+  type: text("type").notNull(),
+  productId: uuid("product_id").references(() => products.id, { onDelete: "cascade" }),
+  alternativeSupplierId: uuid("alternative_supplier_id").references(() => suppliers.id, { onDelete: "cascade" }),
+  status: text("status", { enum: OPPORTUNITY_STATUSES }).notNull().default("open"),
+  note: text("note"),
+  snapshot: jsonb("snapshot"),
+  ...timestamps,
+});
 
 export type Supplier = typeof suppliers.$inferSelect;
 export type Product = typeof products.$inferSelect;

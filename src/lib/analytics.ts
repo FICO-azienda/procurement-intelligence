@@ -13,6 +13,8 @@
  *   (the last purchase on/before the window start, otherwise the oldest one).
  */
 
+import { conversionFactor } from "./import/normalize/units";
+
 export const RULES = {
   /** A 12M price change above this % marks the product "Price increase". */
   priceIncreasePct: 5,
@@ -47,6 +49,8 @@ export interface ProductData {
   category: string | null;
   unit: string;
   technicalSpecifications: string | null;
+  /** Structured specifications (name → value). */
+  specs: Record<string, string> | null;
   currentSupplierId: string | null;
 }
 
@@ -78,6 +82,8 @@ export interface PurchaseData {
   originalDescription: string | null;
   source: string;
   sourceDoc: SourceDoc | null;
+  /** User decision on a flagged price: "excluded" leaves it out of price analysis. */
+  priceReview: "confirmed" | "excluded" | null;
   notes: string | null;
 }
 
@@ -144,6 +150,27 @@ export function computeTotal(quantity: number, unitPrice: number, freight = 0, o
   return Math.round((quantity * unitPrice + freight + other) * 100) / 100;
 }
 
+/**
+ * Purchases of one product expressed in the product's unit (2 t at €1.500/t →
+ * 2000 kg at €1,50/kg). Purchases in a unit that can't be converted exactly
+ * are returned separately: their money counts as spend, but their price and
+ * quantity can't be compared.
+ */
+export function normalizePurchases(product: Pick<ProductData, "unit">, purchases: PurchaseData[]) {
+  const comparable: PurchaseData[] = [];
+  const unitMismatch: PurchaseData[] = [];
+  for (const p of purchases) {
+    if (p.unit === product.unit) {
+      comparable.push(p);
+      continue;
+    }
+    const f = conversionFactor(p.unit, product.unit);
+    if (f == null) unitMismatch.push(p);
+    else comparable.push({ ...p, unit: product.unit, quantity: p.quantity * f, unitPrice: p.unitPrice / f });
+  }
+  return { comparable, unitMismatch };
+}
+
 function byDate<T extends { date: string }>(a: T, b: T) {
   return a.date < b.date ? -1 : a.date > b.date ? 1 : 0;
 }
@@ -181,8 +208,9 @@ export function priceChange(
   asOf: string,
   currentSupplierId?: string | null,
 ): PriceChange {
-  // Purchases without a known exchange rate can't be compared in EUR.
-  const sorted = purchases.filter(isPriced).sort(byDate);
+  // Purchases without a known exchange rate can't be compared in EUR; prices
+  // the user excluded as data errors don't take part either.
+  const sorted = purchases.filter(isPriced).filter((p) => p.priceReview !== "excluded").sort(byDate);
   const fromCurrent = currentSupplierId ? sorted.filter((p) => p.supplierId === currentSupplierId) : [];
   const last = fromCurrent.at(-1) ?? sorted.at(-1);
   if (!last) {
@@ -237,6 +265,10 @@ export interface ProductMetrics extends PriceChange {
   changeImpact: number | null;
   /** Purchases in the window left out of EUR figures (no exchange rate yet). */
   unpricedCount: number;
+  /** Purchases whose unit can't be converted to the product's unit. */
+  unitMismatchCount: number;
+  /** Spend since 1 January of the as-of year, EUR. */
+  ytdSpend: number;
   status: ProductStatus;
   statusReason: string;
 }
@@ -247,12 +279,16 @@ export function productMetrics(
   asOf: string,
 ): ProductMetrics {
   const own = allPurchases.filter((p) => p.productId === product.id).sort(byDate);
-  const change = priceChange(own, asOf, product.currentSupplierId);
+  const { comparable, unitMismatch } = normalizePurchases(product, own);
+  const change = priceChange(comparable, asOf, product.currentSupplierId);
   const start = windowStart(asOf);
   const inWindow = own.filter((p) => p.date > start);
-  const annualQuantity = sum(inWindow.map((p) => p.quantity));
+  // Quantity only from purchases in (or convertible to) the product's unit.
+  const annualQuantity = sum(comparable.filter((p) => p.date > start).map((p) => p.quantity));
   const annualSpend = sum(inWindow.filter(isPriced).map(baseTotal));
   const unpricedCount = inWindow.filter((p) => !isPriced(p)).length;
+  const yearStart = `${asOf.slice(0, 4)}-01-01`;
+  const ytdSpend = sum(own.filter((p) => p.date >= yearStart && p.date <= asOf).filter(isPriced).map(baseTotal));
 
   const spendAtCurrentPrice =
     change.currentPrice != null ? annualQuantity * change.currentPrice : null;
@@ -285,6 +321,8 @@ export function productMetrics(
     spendAtCurrentPrice,
     changeImpact,
     unpricedCount,
+    unitMismatchCount: unitMismatch.length,
+    ytdSpend,
     status,
     statusReason,
   };
@@ -304,75 +342,6 @@ export function latestQuotesBySupplier(quotes: QuoteData[], productId: string) {
     latest.set(q.supplierId, q);
   }
   return [...latest.values()];
-}
-
-export interface SupplierTerms {
-  moq: number | null;
-  leadTimeDays: number | null;
-  paymentTermsDays: number | null;
-  incoterm: string | null;
-  /** True when a value comes from supplier defaults rather than a quote. */
-  fromDefaults: boolean;
-}
-
-export function supplierTermsFor(
-  supplier: SupplierData,
-  quotes: QuoteData[],
-  productId: string,
-): SupplierTerms {
-  const quote = latestQuotesBySupplier(quotes, productId).find(
-    (q) => q.supplierId === supplier.id,
-  );
-  return {
-    moq: quote?.moq ?? null,
-    leadTimeDays: quote?.leadTimeDays ?? supplier.defaultLeadTimeDays,
-    paymentTermsDays: quote?.paymentTermsDays ?? supplier.paymentTermsDays,
-    incoterm: quote?.incoterm ?? null,
-    fromDefaults: !quote,
-  };
-}
-
-export interface CompareRow {
-  supplier: SupplierData;
-  isCurrent: boolean;
-  /** Quoted price in EUR (or last paid price if the supplier has no quote). */
-  price: number | null;
-  priceBasis: "quote" | "last-paid" | "none";
-  quote: QuoteData | null;
-  terms: SupplierTerms;
-}
-
-export function compareRows(product: ProductData, data: Dataset, asOf: string): CompareRow[] {
-  const m = productMetrics(product, data.purchases, asOf);
-  const currentId = currentSupplierId(product, m);
-  const quotes = latestQuotesBySupplier(data.quotes, product.id);
-  const ids = new Set(quotes.map((q) => q.supplierId));
-  if (currentId) ids.add(currentId);
-
-  const rows: CompareRow[] = [];
-  for (const id of ids) {
-    const supplier = data.suppliers.find((s) => s.id === id);
-    if (!supplier) continue;
-    const quote = quotes.find((q) => q.supplierId === id) ?? null;
-    const lastPaid = data.purchases
-      .filter((p) => p.productId === product.id && p.supplierId === id)
-      .filter(isPriced)
-      .sort(byDate)
-      .at(-1);
-    rows.push({
-      supplier,
-      isCurrent: id === currentId,
-      price: quote ? (isPriced(quote) ? basePrice(quote) : null) : lastPaid ? basePrice(lastPaid) : null,
-      priceBasis: quote ? "quote" : lastPaid ? "last-paid" : "none",
-      quote,
-      terms: supplierTermsFor(supplier, data.quotes, product.id),
-    });
-  }
-  // Current supplier first, then alphabetical: listed, deliberately not ranked
-  // by price until landed cost exists.
-  return rows.sort(
-    (a, b) => Number(b.isCurrent) - Number(a.isCurrent) || a.supplier.name.localeCompare(b.supplier.name),
-  );
 }
 
 // ---------- Supplier metrics ----------
@@ -456,39 +425,6 @@ export function supplierOrderStats(supplierId: string, purchases: PurchaseData[]
     lastInvoice: last ? { reference: last.invoiceReference, date: last.date, purchase: last } : null,
     priceIncreases,
   };
-}
-
-/** The latest price change of each product (previous price → current price). */
-export interface RecentChange {
-  product: ProductData;
-  previousPrice: number;
-  currentPrice: number;
-  pct: number;
-  changedOn: string;
-  annualQuantity: number;
-  /** annual quantity × price difference, EUR/year */
-  annualImpact: number;
-}
-
-export const RECENT_CHANGE_DAYS = 90;
-
-export function recentPriceChanges(data: Dataset, asOf: string, days = RECENT_CHANGE_DAYS): RecentChange[] {
-  const out: RecentChange[] = [];
-  for (const product of data.products) {
-    const m = productMetrics(product, data.purchases, asOf);
-    if (m.previousPrice == null || m.currentPrice == null || !m.changedOn) continue;
-    if (daysBetween(m.changedOn, asOf) > days) continue;
-    out.push({
-      product,
-      previousPrice: m.previousPrice,
-      currentPrice: m.currentPrice,
-      pct: (m.currentPrice / m.previousPrice - 1) * 100,
-      changedOn: m.changedOn,
-      annualQuantity: m.annualQuantity,
-      annualImpact: m.annualQuantity * (m.currentPrice - m.previousPrice),
-    });
-  }
-  return out.sort((a, b) => (a.changedOn < b.changedOn ? 1 : a.changedOn > b.changedOn ? -1 : b.pct - a.pct));
 }
 
 // ---------- Overview (Today page) ----------

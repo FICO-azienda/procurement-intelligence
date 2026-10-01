@@ -130,16 +130,76 @@ drizzle/              Migrazioni SQL (valide anche su Supabase)
 
 Soglie modificabili in `RULES` (`lib/analytics.ts`).
 
+## Price intelligence (Fase 3)
+
+Risponde a "stiamo pagando bene?" usando solo i dati interni (acquisti, fatture, preventivi). Nessun benchmark esterno.
+
+**Motore separato dalla UI**: `src/lib/intel/` — funzioni pure, testate, con tutte le soglie in `config.ts`.
+
+| Modulo | Cosa calcola |
+|---|---|
+| `config.ts` | Tutte le soglie (avvisi +5/+10/+20%, età preventivi 30/90 giorni, Pareto 80%, outlier ±50%…) — da calibrare sui dati reali |
+| `price-metrics.ts` | Prezzo attuale e precedente, variazioni 3M/6M/12M/totale, media semplice e ponderata, min/max, trend, timeline, distribuzione, outlier |
+| `comparison.ts` | Confronto fornitori sulla stessa base (unità, EUR), età del preventivo, differenze di specifiche, **comparabilità** |
+| `opportunities.ts` | Saving potenziale, **confidenza** a regole, informazioni mancanti, i 5 tipi di opportunità |
+| `portfolio.ts` | Spesa per fornitore/categoria, Pareto, concentrazione fornitori, avvisi, variazione prezzi fornitore ponderata sulla spesa |
+| `quality.ts` | Qualità dei dati di un prodotto |
+| `summary.ts` | Riepiloghi in linguaggio naturale da regole/template (nessun LLM) |
+| `explain.ts` | La spiegazione mostrata accanto a ogni cifra (generata dalle soglie) |
+| `filters.ts`, `csv.ts` | Filtri rapidi/ordinamenti e export CSV |
+| `engine.ts` | `analyze()`: un passaggio sul dataset → tutto ciò che le pagine mostrano |
+
+### Vocabolario (tenuto rigoroso)
+
+- **Price difference** — differenza nominale tra due prezzi.
+- **Potential saving** — (prezzo attuale − prezzo alternativo) × quantità degli ultimi 12 mesi. Solo prezzi: prima di trasporto, dazi, qualità, scorte e condizioni commerciali.
+- **Verified saving** — non calcolato: arriverà con la conferma dell'utente e il landed cost.
+
+Nessun saving viene generato se l'offerta non è comparabile (valuta senza cambio, unità non convertibile, o decisione dell'utente).
+
+### Regole principali
+
+| Concetto | Regola |
+|---|---|
+| Comparable | Stesso prodotto, stessa unità (o convertibile esattamente), valuta convertibile con un cambio registrato |
+| Partially comparable | Specifiche diverse, oppure MOQ > 1,5 × ordine tipico |
+| Not comparable | Cambio sconosciuto, unità non convertibile, nessun prezzo, o deciso dall'utente |
+| Confidenza alta | Tutti i controlli ok: unità, valuta, specifiche non in conflitto, offerta ≤ 90 giorni, MOQ entro l'ordine tipico, dati propri sufficienti |
+| Confidenza media | Almeno un'attenzione: valuta convertita, specifiche diverse, MOQ ignoto o sopra l'ordine tipico, pochi dati |
+| Confidenza bassa | Offerta > 90 giorni o scaduta, MOQ sopra il volume annuo, prezzo attuale segnalato come anomalo |
+| Saving che rappresenta un prodotto | Il più affidabile, poi il più grande; mai uno rifiutato/chiuso |
+| Totale in dashboard | Un'alternativa per prodotto, solo confidenza alta o media, opportunità ancora aperte |
+| Alta spesa | Prodotti che compongono il primo 80% della spesa annua |
+| Outlier | Prezzo a più del 50% dalla mediana con almeno 4 acquisti: segnalato, mai rimosso da solo (Price is correct / Exclude from analysis / Correct value) |
+
+### Database (migrazione 0002)
+
+- `opportunities` — solo la decisione dell'utente (stato, nota, fotografia dei numeri). Le opportunità restano calcolate dal motore.
+- `products.specs`, `supplier_products.specs` — specifiche strutturate (nome: valore) per il confronto.
+- `supplier_products.comparability_override` / `comparability_note` — giudizio dell'utente sulla comparabilità di un'offerta.
+- `purchases.price_review` — `confirmed` / `excluded` per i prezzi anomali.
+
+### Assunzioni da calibrare con i dati reali
+
+I dati demo sono solo fixture di test: il motore è testato su dataset generici (`src/lib/intel/fixtures.ts`), inclusi storici incompleti, un solo acquisto, nessuna alternativa, più fornitori, unità e valute diverse, dati anomali.
+
+- "Annuale" = ultimi 12 mesi (non anno solare); YTD mostrato a parte.
+- Prezzo attuale = ultimo prezzo pagato al fornitore attuale.
+- Storico più corto della finestra (es. 12M con 9 mesi di dati): si confronta con il primo prezzo disponibile e lo si dichiara ("start of history").
+- Specifiche non inserite non abbassano la confidenza ma compaiono tra le informazioni mancanti (`requireSpecsForHighConfidence`).
+- Acquisti in valuta estera senza cambio: esclusi da prezzi e totali EUR, mai convertiti 1:1.
+- Scala: una lettura per tabella + calcolo indicizzato in memoria (10.000 acquisti, 1.000 prodotti, 500 fornitori in meno di mezzo secondo, vedi test "scale"). Aggregazioni SQL solo quando servirà.
+
 ## Dove si innesta il futuro
 
 | Modulo | Punto di aggancio |
 |---|---|
 | Document AI (OCR, layout complessi) | Sostituisce un "finder" alla volta in `lib/import/extract/document.ts`; il resto della pipeline (revisione, approvazione) non cambia |
 | Email intelligence | Allegati e testo delle email → stessa pipeline (`import_sessions` con `source = email`) → Review |
-| True landed cost | Funzione pura in `lib/analytics.ts` sopra `quotes` (Incoterm, valuta, MOQ, pagamento sono già salvati) + tabelle per dazi/trasporto |
+| True landed cost (Fase 4) | Estende `ComparisonRow` e `Opportunity` in `lib/intel/` (prezzo → + trasporto, dazi, FX, scorte, qualità); la lista "missing information" di ogni opportunità indica già cosa manca |
 | Market intelligence | Tabella `market_prices` (serie esterne), confrontata con lo storico acquisti |
 | RFQ engine | Tabelle `rfqs` / `rfq_recipients`; le risposte diventano `quotes` |
-| AI analysis | Le funzioni di `lib/analytics.ts` diventano gli strumenti dell'AI ("quanto abbiamo speso in vetro?") |
+| AI analysis | `analyze()` e le funzioni di `lib/intel/` diventano gli strumenti dell'AI ("quanto abbiamo speso in vetro?") |
 | Qualità, inventario | Tabelle proprie legate a `products`/`suppliers` |
 
 ## Note

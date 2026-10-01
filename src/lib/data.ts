@@ -11,6 +11,7 @@ import { getDb, type DB } from "@/db";
 import {
   importItems,
   importSessions,
+  opportunities,
   productAliases,
   products,
   purchases,
@@ -19,7 +20,8 @@ import {
   supplierProducts,
   suppliers,
 } from "@/db/schema";
-import type { Dataset, SourceDoc } from "./analytics";
+import { todayISO, type Dataset, type SourceDoc } from "./analytics";
+import { analyze, type Intel, type OpportunityState } from "./intel/engine";
 
 const num = (v: string) => Number(v);
 const numOrNull = (v: string | null) => (v == null ? null : Number(v));
@@ -80,6 +82,7 @@ export async function readDataset(db: DB): Promise<Dataset> {
       category: r.category,
       unit: r.unit,
       technicalSpecifications: r.technicalSpecifications,
+      specs: r.specs ?? null,
       currentSupplierId: r.currentSupplierId,
     })),
     purchases: pu.map(({ row: r, ...src }) => ({
@@ -101,6 +104,7 @@ export async function readDataset(db: DB): Promise<Dataset> {
       originalDescription: r.originalDescription,
       source: r.source,
       sourceDoc: sourceDoc(src),
+      priceReview: r.priceReview,
       notes: r.notes,
     })),
     quotes: q.map(({ row: r, ...src }) => ({
@@ -144,6 +148,9 @@ export async function readLearning(db: DB) {
       supplierProductName: l.supplierProductName,
       moq: numOrNull(l.moq),
       leadTimeDays: l.leadTimeDays,
+      specs: l.specs ?? null,
+      comparabilityOverride: l.comparabilityOverride,
+      comparabilityNote: l.comparabilityNote,
     })),
   };
 }
@@ -157,4 +164,21 @@ export const getDataset = cache(async (): Promise<Dataset> => {
 export const getLearning = cache(async (): Promise<Learning> => {
   await connection();
   return readLearning(await getDb());
+});
+
+/** What the user decided about opportunities (status, note, snapshot). */
+export async function readOpportunityStates(db: DB): Promise<OpportunityState[]> {
+  const rows = await db.select().from(opportunities);
+  return rows.map((r) => ({ key: r.key, status: r.status, note: r.note, snapshot: r.snapshot, updatedAt: r.updatedAt.toISOString() }));
+}
+
+export const getOpportunityStates = cache(async () => {
+  await connection();
+  return readOpportunityStates(await getDb());
+});
+
+/** The whole intelligence picture, computed once per request. */
+export const getIntel = cache(async (): Promise<Intel> => {
+  const [data, learning, states] = await Promise.all([getDataset(), getLearning(), getOpportunityStates()]);
+  return analyze(data, learning.supplierProducts, states, todayISO());
 });

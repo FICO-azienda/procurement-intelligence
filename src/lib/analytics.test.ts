@@ -1,11 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  compareRows,
   minusMonths,
   overview,
   priceChange,
   productMetrics,
-  recentPriceChanges,
   supplierOrderStats,
   type Dataset,
   type PurchaseData,
@@ -32,6 +30,7 @@ function purchase(p: Partial<PurchaseData> & Pick<PurchaseData, "date" | "quanti
     originalDescription: null,
     source: "manual",
     sourceDoc: null,
+    priceReview: null,
     notes: null,
     ...p,
   };
@@ -45,6 +44,7 @@ const product = {
   category: "Wax",
   unit: "kg",
   technicalSpecifications: null,
+  specs: null,
   currentSupplierId: "abc",
 };
 
@@ -127,7 +127,7 @@ describe("productMetrics", () => {
   });
 });
 
-describe("overview and compare", () => {
+describe("overview", () => {
   const data: Dataset = {
     suppliers: [
       { id: "abc", name: "ABC Srl", country: "Italy", city: null, vatNumber: null, contactName: null, email: null, phone: null, website: null, currency: "EUR", paymentTermsDays: 60, defaultLeadTimeDays: 12, notes: null },
@@ -147,19 +147,9 @@ describe("overview and compare", () => {
     expect(o.activeSuppliers).toBe(1);
     expect(o.otherSuppliers).toBe(1);
   });
-
-  it("lists the current supplier first with last paid price, alternatives with quotes", () => {
-    const rows = compareRows(product, data, AS_OF);
-    expect(rows.map((r) => [r.supplier.id, r.priceBasis, r.price])).toEqual([
-      ["abc", "last-paid", 1.58],
-      ["tw", "quote", 1.31],
-    ]);
-    expect(rows[0].terms.fromDefaults).toBe(true);
-    expect(rows[1].terms.moq).toBe(5000);
-  });
 });
 
-describe("recent changes and supplier orders", () => {
+describe("supplier orders and exchange rates", () => {
   const data: Dataset = {
     suppliers: [],
     products: [product],
@@ -171,13 +161,6 @@ describe("recent changes and supplier orders", () => {
     ],
     quotes: [],
   };
-
-  it("reports the last change with its real date and annual impact", () => {
-    const [c] = recentPriceChanges(data, AS_OF);
-    expect(c).toMatchObject({ previousPrice: 1.5, currentPrice: 1.6, changedOn: "2026-08-04", annualQuantity: 3500 });
-    expect(c.annualImpact).toBeCloseTo(350);
-    expect(recentPriceChanges(data, "2027-01-15")).toHaveLength(0);
-  });
 
   it("counts orders by invoice (or day) and their average value", () => {
     const s = supplierOrderStats("abc", data.purchases, AS_OF);

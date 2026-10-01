@@ -1,12 +1,14 @@
 import Link from "next/link";
 import type { Metadata } from "next";
-import { Info } from "lucide-react";
 import { QuoteDialog } from "@/components/dialogs";
+import { Hint } from "@/components/hint";
+import { ConfidenceBadge } from "@/components/intel/badges";
+import { PriceOnlyNotice, SupplierComparison } from "@/components/intel/supplier-comparison";
 import { ProductPicker } from "@/components/product-picker";
-import { Basis, ButtonLink, Empty, PageHeader, Table, Td, Th, cx, rowClass } from "@/components/ui";
-import { compareRows, todayISO } from "@/lib/analytics";
-import { getDataset } from "@/lib/data";
+import { Basis, ButtonLink, Empty, ExportLink, PageHeader } from "@/components/ui";
+import { getDataset, getIntel } from "@/lib/data";
 import * as f from "@/lib/format";
+import { EXPLAIN } from "@/lib/intel/explain";
 import { lookups } from "@/lib/lookups";
 
 export const metadata: Metadata = { title: "Compare" };
@@ -16,11 +18,10 @@ const NOT_INCLUDED = ["Freight", "Insurance", "Duties", "Anti-dumping", "Broker 
 
 export default async function ComparePage({ searchParams }: PageProps<"/compare">) {
   const sp = await searchParams;
-  const data = await getDataset();
+  const [data, intel] = await Promise.all([getDataset(), getIntel()]);
   const l = lookups(data);
-  const asOf = todayISO();
 
-  if (data.products.length === 0) {
+  if (intel.products.length === 0) {
     return (
       <>
         <PageHeader title="Compare" />
@@ -31,142 +32,60 @@ export default async function ComparePage({ searchParams }: PageProps<"/compare"
     );
   }
 
-  // Default to the product with the most quotes — the most interesting comparison.
+  // Default to the product with the most supplier options — the most interesting comparison.
   const requested = typeof sp.product === "string" ? sp.product : "";
-  const product =
-    data.products.find((p) => p.id === requested) ??
-    [...data.products].sort(
-      (a, b) =>
-        data.quotes.filter((q) => q.productId === b.id).length -
-        data.quotes.filter((q) => q.productId === a.id).length,
-    )[0];
-  const rows = compareRows(product, data, asOf);
+  const pi =
+    intel.products.find((p) => p.product.id === requested) ??
+    [...intel.products].sort((a, b) => b.supplierOptions - a.supplierOptions || b.metrics.annualSpend - a.metrics.annualSpend)[0];
+  const { product } = pi;
+  const best = pi.bestSaving;
   const common = { products: l.productOptions, suppliers: l.supplierOptions };
 
   return (
     <>
       <PageHeader
         title="Compare"
-        meta="Offers from current and alternative suppliers, side by side."
+        meta="The latest price from every supplier for one product, on the same basis."
         actions={<QuoteDialog {...common} defaultProductId={product.id} trigger={{ label: "Add quote", variant: "primary" }} />}
       />
 
       <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
-        <ProductPicker
-          products={data.products.map(({ id, name, sku }) => ({ id, name, sku }))}
-          value={product.id}
-        />
-        <Link href={`/products/${product.id}`} className="text-[13px] font-medium text-ledger hover:underline">
-          Open product
-        </Link>
-      </div>
-
-      <div className="mb-4 flex gap-3 rounded-lg border border-caution/20 bg-caution-wash px-4 py-3">
-        <Info size={16} className="mt-0.5 shrink-0 text-caution" />
-        <div className="text-[13px]">
-          <div className="font-semibold text-ink">Quoted prices only</div>
-          <p className="mt-0.5 text-ink-2">
-            Freight, duties, FX, inventory costs and quality adjustments are not included yet. A lower quoted price is
-            not necessarily a lower cost.
-          </p>
+        <ProductPicker products={data.products.map(({ id, name, sku }) => ({ id, name, sku }))} value={product.id} />
+        <div className="flex items-center gap-4">
+          <ExportLink href={`/export/comparison?product=${product.id}`}>CSV</ExportLink>
+          <Link href={`/products/${product.id}`} className="text-[13px] font-medium text-ledger hover:underline">
+            Open product
+          </Link>
         </div>
       </div>
 
+      <PriceOnlyNotice className="mb-4" />
+
       <div className="rounded-lg border border-rule">
-        {rows.length === 0 ? (
-          <Empty
-            title="No offers for this product yet"
-            body="Record the current supplier's price list and any alternative quotes you receive."
-          />
-        ) : (
-          <Table>
-            <thead>
-              <tr>
-                <Th className="border-t-0">Supplier</Th>
-                <Th className="border-t-0">Country</Th>
-                <Th className="border-t-0" align="right">Quoted price</Th>
-                <Th className="border-t-0">Incoterm</Th>
-                <Th className="border-t-0" align="right">MOQ</Th>
-                <Th className="border-t-0" align="right">Lead time</Th>
-                <Th className="border-t-0">Payment</Th>
-                <Th className="border-t-0">Quote date</Th>
-                <Th className="border-t-0">Valid until</Th>
-                <Th className="border-t-0" />
-                <Th className="w-10 border-t-0" />
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => {
-                const expired = r.quote?.validUntil != null && r.quote.validUntil < asOf;
-                return (
-                  <tr key={r.supplier.id} className={rowClass()}>
-                    <Td className="font-medium">
-                      <Link href={`/suppliers/${r.supplier.id}`} className="hover:text-ledger">
-                        {r.supplier.name}
-                      </Link>
-                    </Td>
-                    <Td muted>{r.supplier.country ?? "—"}</Td>
-                    <Td align="right">
-                      <span className="text-[14px] font-semibold">{f.price(r.price)}</span>
-                      <span className="text-ink-3">/{product.unit}</span>
-                      {r.quote && r.quote.currency !== "EUR" && (
-                        <div className="text-[12px] text-ink-3">{f.price(r.quote.unitPrice, r.quote.currency)}</div>
-                      )}
-                    </Td>
-                    <Td>
-                      {r.priceBasis === "last-paid" ? (
-                        <Basis tone="muted">Last paid</Basis>
-                      ) : r.terms.incoterm ? (
-                        <Basis>{r.terms.incoterm}</Basis>
-                      ) : (
-                        <span className="text-ink-4">—</span>
-                      )}
-                    </Td>
-                    <Td align="right" muted>{r.terms.moq != null ? f.number(r.terms.moq) : "—"}</Td>
-                    <Td align="right" className={cx(r.terms.fromDefaults && "text-ink-3")}>
-                      {r.terms.leadTimeDays != null ? `${r.terms.leadTimeDays}d` : "—"}
-                    </Td>
-                    <Td className={cx(r.terms.fromDefaults && "text-ink-3")}>
-                      {r.terms.paymentTermsDays == null
-                        ? "—"
-                        : r.terms.paymentTermsDays === 0
-                          ? "Advance"
-                          : `${r.terms.paymentTermsDays}d`}
-                    </Td>
-                    <Td muted className="num">{f.date(r.quote?.date)}</Td>
-                    <Td className="num">
-                      <span className={expired ? "text-caution" : "text-ink-3"}>
-                        {f.date(r.quote?.validUntil)}
-                        {expired && " · expired"}
-                      </span>
-                    </Td>
-                    <Td>
-                      <span
-                        className={cx(
-                          "inline-flex h-[22px] items-center rounded-full px-2 text-[12px] font-medium",
-                          r.isCurrent ? "bg-ink text-white" : "bg-wash text-ink-2",
-                        )}
-                      >
-                        {r.isCurrent ? "Current" : "Alternative"}
-                      </span>
-                    </Td>
-                    <Td>
-                      {r.quote && (
-                        <QuoteDialog {...common} quote={r.quote} trigger={{ label: "Edit quote", iconOnly: true }} />
-                      )}
-                    </Td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </Table>
-        )}
+        <SupplierComparison intel={pi} quotes={data.quotes.filter((q) => q.productId === product.id)} products={l.productOptions} suppliers={l.supplierOptions} />
       </div>
+
+      {best && (
+        <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-rule px-5 py-4">
+          <div className="min-w-[260px] flex-1 text-[13.5px]">
+            <div className="font-medium">
+              Largest nominal gap: {l.supplierName(best.alternativeSupplierId)} at <span className="num">{f.price(best.comparePrice)}</span>, {f.pct(-best.priceDifferencePct!)} vs the current price
+            </div>
+            <div className="mt-0.5 text-ink-3">
+              Potential nominal saving <span className="num font-medium text-ink-2">{f.money(best.potentialSaving)}/year</span> on {f.quantity(best.annualQuantity, product.unit)} <Hint text={EXPLAIN.potentialSaving} />
+            </div>
+          </div>
+          <ConfidenceBadge level={best.confidence} suffix=" confidence" />
+          <ButtonLink href={`/opportunities/${best.key}`} size="sm">
+            See what&apos;s missing
+          </ButtonLink>
+        </div>
+      )}
 
       <div className="mt-6 rounded-lg border border-dashed border-rule-strong px-5 py-4">
         <div className="text-[13px] font-medium">Not in this comparison yet</div>
         <p className="mt-0.5 text-[12.5px] text-ink-3">
-          These will make up the true landed cost per supplier. Until then, suppliers are listed, not ranked.
+          These will make up the true landed cost per supplier. Until then, suppliers are listed, not ranked — and no supplier is called the best.
         </p>
         <div className="mt-3 flex flex-wrap gap-1.5">
           {NOT_INCLUDED.map((c) => (

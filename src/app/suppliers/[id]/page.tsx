@@ -16,7 +16,10 @@ import {
   rowClass,
 } from "@/components/ui";
 import { basePrice, isPriced, priceChange, supplierMetrics, supplierOrderStats, todayISO } from "@/lib/analytics";
-import { getDataset, getLearning } from "@/lib/data";
+import { getDataset, getIntel, getLearning } from "@/lib/data";
+import { Hint } from "@/components/hint";
+import { AlertBadge } from "@/components/intel/badges";
+import { EXPLAIN } from "@/lib/intel/explain";
 import { SourceTag } from "@/components/import/labels";
 import * as f from "@/lib/format";
 import { lookups, plural } from "@/lib/lookups";
@@ -29,9 +32,10 @@ export async function generateMetadata({ params }: PageProps<"/suppliers/[id]">)
 
 export default async function SupplierPage({ params }: PageProps<"/suppliers/[id]">) {
   const { id } = await params;
-  const [data, learning] = await Promise.all([getDataset(), getLearning()]);
+  const [data, learning, intel] = await Promise.all([getDataset(), getLearning(), getIntel()]);
   const supplier = data.suppliers.find((s) => s.id === id);
-  if (!supplier) notFound();
+  const si = intel.suppliers.find((s) => s.supplier.id === id);
+  if (!supplier || !si) notFound();
 
   const asOf = todayISO();
   const l = lookups(data);
@@ -83,6 +87,13 @@ export default async function SupplierPage({ params }: PageProps<"/suppliers/[id
           </>
         }
       />
+
+      {/* Rule-based summary */}
+      <section aria-label="Summary" className="mb-6 max-w-3xl text-[15px] leading-relaxed text-ink-2">
+        {si.summary.map((x, i) => (
+          <span key={i}>{x} </span>
+        ))}
+      </section>
 
       <div className="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
         <Section title="Details">
@@ -139,7 +150,13 @@ export default async function SupplierPage({ params }: PageProps<"/suppliers/[id
             </div>
           </div>
           <div className="bg-canvas p-5 sm:col-span-3">
-            <div className="mb-3 text-[12px] font-medium tracking-[0.02em] text-ink-3 uppercase">Price changes</div>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+              <div className="text-[12px] font-medium tracking-[0.02em] text-ink-3 uppercase">Price evolution by product</div>
+              <div className="flex items-center gap-1.5 text-[12.5px] text-ink-3">
+                Weighted price change YTD <Hint text={EXPLAIN.supplierWeightedChange} />
+                <Delta value={si.priceChange.weightedPct} className="text-[13.5px]" />
+              </div>
+            </div>
             {changes.length === 0 ? (
               <p className="text-[13px] text-ink-3">Needs at least two purchases of the same product.</p>
             ) : (
@@ -158,6 +175,10 @@ export default async function SupplierPage({ params }: PageProps<"/suppliers/[id
                       <span className="font-medium">{f.price(change.currentPrice)}</span>
                     </span>
                     <Delta value={change.changePct} className="w-20 justify-end" />
+                    {(() => {
+                      const a = si.alerts.find((x) => x.productId === product.id);
+                      return a ? <AlertBadge level={a.level} short /> : null;
+                    })()}
                   </li>
                 ))}
               </ul>
@@ -165,6 +186,53 @@ export default async function SupplierPage({ params }: PageProps<"/suppliers/[id
           </div>
         </div>
       </div>
+
+      {(si.singleSourcedHighSpend.length > 0 || si.productsWithAlternatives.length > 0) && (
+        <div className="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <Section title="Dependency" description="High-spend products bought only from this supplier">
+            {si.singleSourcedHighSpend.length === 0 ? (
+              <p className="text-[13px] text-ink-3">No high-spend product depends on this supplier alone.</p>
+            ) : (
+              <ul className="space-y-1.5 text-[13px]">
+                {si.singleSourcedHighSpend.map((pid) => {
+                  const pi = intel.products.find((p) => p.product.id === pid)!;
+                  return (
+                    <li key={pid} className="flex items-baseline justify-between gap-4">
+                      <Link href={`/products/${pid}`} className="font-medium hover:text-ledger">
+                        {pi.product.name}
+                      </Link>
+                      <span className="num text-ink-2">
+                        {f.money(pi.metrics.annualSpend)} · {f.number(pi.spendShare * 100, 0)}% of total spend
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </Section>
+          <Section title="Alternatives on file" description="Products of this supplier with a recent quote from someone else">
+            {si.productsWithAlternatives.length === 0 ? (
+              <p className="text-[13px] text-ink-3">No recent alternative quotes for this supplier&apos;s products.</p>
+            ) : (
+              <ul className="space-y-1.5 text-[13px]">
+                {si.productsWithAlternatives.map((pid) => {
+                  const pi = intel.products.find((p) => p.product.id === pid)!;
+                  return (
+                    <li key={pid} className="flex items-baseline justify-between gap-4">
+                      <Link href={`/compare?product=${pid}`} className="font-medium hover:text-ledger">
+                        {pi.product.name}
+                      </Link>
+                      <span className="num text-ink-2">
+                        {pi.bestSaving ? `${f.pct(-pi.bestSaving.priceDifferencePct!)} lowest comparable quote` : "no lower comparable quote"}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </Section>
+        </div>
+      )}
 
       <Section title="Products supplied" description="Current price = last price paid to this supplier" flush>
         {supplied.length === 0 ? (

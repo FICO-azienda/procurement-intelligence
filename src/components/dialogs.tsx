@@ -17,6 +17,7 @@ import type { ProductData, PurchaseData, QuoteData, SupplierData } from "@/lib/a
 import { computeTotal, todayISO } from "@/lib/analytics";
 import { money } from "@/lib/format";
 import { parseNumber } from "@/lib/parse";
+import { formatSpecs } from "@/lib/validation";
 import {
   DeleteButton,
   Field,
@@ -202,8 +203,11 @@ function ProductForm({
         <Field label="Description" className="sm:col-span-2">
           <Textarea name="description" defaultValue={product?.description ?? ""} rows={2} />
         </Field>
-        <Field label="Technical specifications" className="sm:col-span-2" hint="Grade, dimensions, certifications — anything a supplier must match.">
-          <Textarea name="technicalSpecifications" defaultValue={product?.technicalSpecifications ?? ""} rows={3} />
+        <Field label="Specifications" className="sm:col-span-2" hint="One per line, as name: value. Compared with each supplier's offer to flag differences.">
+          <Textarea name="specs" defaultValue={formatSpecs(product?.specs)} rows={4} placeholder={"capacity: 300 ml\nweight: 210 g\nmaterial: glass"} className="font-mono text-[12.5px]" />
+        </Field>
+        <Field label="Technical notes" className="sm:col-span-2" hint="Free text: grade, certifications, anything else.">
+          <Textarea name="technicalSpecifications" defaultValue={product?.technicalSpecifications ?? ""} rows={2} />
         </Field>
       </Grid>
     </SheetForm>

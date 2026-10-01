@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { ComponentProps, ReactNode } from "react";
-import { ArrowDownRight, ArrowUpRight } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, Download } from "lucide-react";
 import type { ProductStatus, SupplierStatus } from "@/lib/analytics";
 import { pct } from "@/lib/format";
 
@@ -34,6 +34,15 @@ export function ButtonLink({
   ...props
 }: ComponentProps<typeof Link> & { variant?: Variant; size?: "sm" | "md" }) {
   return <Link {...props} className={cx(buttonClass(variant, size), className)} />;
+}
+
+/** Link to a CSV export (a file download, not a page). */
+export function ExportLink({ href, children = "Export CSV", className }: { href: string; children?: ReactNode; className?: string }) {
+  return (
+    <a href={href} download className={cx("inline-flex items-center gap-1 text-[13px] font-medium whitespace-nowrap text-ledger hover:underline", className)}>
+      <Download size={13} strokeWidth={2} /> {children}
+    </a>
+  );
 }
 
 // ---------- Page structure ----------

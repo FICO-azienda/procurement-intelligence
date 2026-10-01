@@ -8,6 +8,7 @@ import {
   Building2,
   CalendarDays,
   Inbox,
+  Lightbulb,
   ReceiptText,
   Upload,
   type LucideIcon,
@@ -20,6 +21,7 @@ const NAV: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/suppliers", label: "Suppliers", icon: Building2 },
   { href: "/purchases", label: "Purchases", icon: ReceiptText },
   { href: "/compare", label: "Compare", icon: ArrowLeftRight },
+  { href: "/opportunities", label: "Opportunities", icon: Lightbulb },
 ];
 
 const DATA_NAV = [

@@ -1,4 +1,5 @@
 import type { ImportStatus } from "@/db/schema";
+import { sourceLabel } from "@/lib/source-labels";
 import { cx } from "../ui";
 
 const STATUS: Record<ImportStatus, { label: string; className: string }> = {
@@ -25,20 +26,7 @@ export function fileKindLabel(fileType: string, sourceType: string) {
   return "Excel";
 }
 
-export function sourceLabel(source: string) {
-  return (
-    {
-      manual: "Manual",
-      csv: "CSV import",
-      excel: "Excel import",
-      invoice: "Invoice",
-      quote: "Quote",
-      email: "Email",
-      erp: "ERP",
-      demo: "Demo data",
-    } as Record<string, string>
-  )[source] ?? source;
-}
+export { sourceLabel };
 
 /** "Invoice · View" — where a purchase/quote came from, with a link to the original file. */
 export function SourceTag({ source, doc }: { source: string; doc: { documentId: string | null; filename: string } | null }) {

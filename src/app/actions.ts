@@ -12,10 +12,22 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getDb } from "@/db";
 import { clearAll, seedDemo } from "@/db/seed";
-import { products, purchases, quotes, suppliers } from "@/db/schema";
-import { computeTotal } from "@/lib/analytics";
+import {
+  OPPORTUNITY_STATUSES,
+  opportunities,
+  products,
+  purchases,
+  quotes,
+  supplierProducts,
+  suppliers,
+  type OpportunityStatus,
+} from "@/db/schema";
+import { computeTotal, todayISO } from "@/lib/analytics";
+import { readDataset, readLearning, readOpportunityStates } from "@/lib/data";
+import { analyze } from "@/lib/intel/engine";
 import {
   fieldErrors,
+  parseSpecs,
   productInput,
   purchaseInput,
   quoteInput,
@@ -215,4 +227,102 @@ export async function loadDemoData() {
   await clearAll(db);
   await seedDemo(db);
   refresh();
+}
+
+// ---------------- Price intelligence: user decisions ----------------
+
+export type SimpleResult = { ok: boolean; error?: string };
+
+/**
+ * Status of an opportunity. The figures stay computed by the engine; here we
+ * store the decision and a snapshot of the numbers at that moment.
+ */
+export async function setOpportunityStatus(key: string, status: OpportunityStatus, note?: string | null): Promise<SimpleResult> {
+  if (!OPPORTUNITY_STATUSES.includes(status)) return { ok: false, error: "Unknown status." };
+  try {
+    const db = await getDb();
+    const [data, learning, states] = await Promise.all([readDataset(db), readLearning(db), readOpportunityStates(db)]);
+    const intel = analyze(data, learning.supplierProducts, states, todayISO());
+    const o = intel.opportunities.find((x) => x.key === key);
+    const [existing] = await db.select().from(opportunities).where(eq(opportunities.key, key));
+    if (!o && !existing) return { ok: false, error: "This opportunity is no longer detected." };
+    const snapshot = o
+      ? {
+          type: o.type,
+          productId: o.productId,
+          productName: data.products.find((p) => p.id === o.productId)?.name ?? null,
+          currentSupplierId: o.currentSupplierId,
+          alternativeSupplierId: o.alternativeSupplierId,
+          alternativeName: data.suppliers.find((s) => s.id === o.alternativeSupplierId)?.name ?? null,
+          currentPrice: o.currentPrice,
+          comparePrice: o.comparePrice,
+          annualQuantity: o.annualQuantity,
+          impact: o.impact,
+          impactBasis: o.impactBasis,
+          potentialSaving: o.potentialSaving,
+          confidence: o.confidence,
+          reason: o.reason,
+          at: new Date().toISOString(),
+        }
+      : existing.snapshot;
+    await db
+      .insert(opportunities)
+      .values({
+        key,
+        type: o?.type ?? existing.type,
+        productId: o?.productId ?? existing.productId,
+        alternativeSupplierId: o?.alternativeSupplierId ?? existing.alternativeSupplierId,
+        status,
+        note: note === undefined ? (existing?.note ?? null) : note,
+        snapshot,
+      })
+      .onConflictDoUpdate({
+        target: opportunities.key,
+        set: { status, snapshot, updatedAt: new Date(), ...(note === undefined ? {} : { note }) },
+      });
+    refresh();
+    return { ok: true };
+  } catch (err) {
+    console.error("[opportunity status]", err);
+    return { ok: false, error: "Could not save the status. Please try again." };
+  }
+}
+
+/** The user's view of one supplier's offer for a product: comparability and specifications. */
+export async function saveOffer(
+  supplierId: string,
+  productId: string,
+  input: { comparability: "auto" | "comparable" | "partial" | "not"; note: string; specs: string },
+): Promise<SimpleResult> {
+  try {
+    const db = await getDb();
+    const values = {
+      comparabilityOverride: input.comparability === "auto" ? null : input.comparability,
+      comparabilityNote: input.note.trim() || null,
+      specs: parseSpecs(input.specs),
+      updatedAt: new Date(),
+    };
+    await db
+      .insert(supplierProducts)
+      .values({ supplierId, productId, ...values })
+      .onConflictDoUpdate({ target: [supplierProducts.supplierId, supplierProducts.productId], set: values });
+    refresh();
+    return { ok: true };
+  } catch (err) {
+    console.error("[offer]", err);
+    return { ok: false, error: "Could not save. Please try again." };
+  }
+}
+
+/** Decision on a price flagged as a possible anomaly (null = undecided again). */
+export async function reviewPrice(purchaseId: string, decision: "confirmed" | "excluded" | null): Promise<SimpleResult> {
+  try {
+    const db = await getDb();
+    await db.update(purchases).set({ priceReview: decision, updatedAt: new Date() }).where(eq(purchases.id, purchaseId));
+    refresh();
+    return { ok: true };
+  } catch (err) {
+    console.error("[price review]", err);
+    return { ok: false, error: "Could not save. Please try again." };
+  }
 }

@@ -10,6 +10,7 @@ import {
   documents,
   importItems,
   importSessions,
+  opportunities,
   productAliases,
   products,
   purchases,
@@ -293,6 +294,7 @@ export async function seedDemo(db: DB) {
 /** Deletes every record and stored file. Used by "Clear all data" before loading real data. */
 export async function clearAll(db: DB) {
   await db.transaction(async (tx) => {
+    await tx.delete(opportunities);
     await tx.delete(purchases);
     await tx.delete(quotes);
     await tx.delete(importItems);
