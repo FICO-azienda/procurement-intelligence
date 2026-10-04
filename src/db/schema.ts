@@ -32,6 +32,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import type { Said } from "../lib/i18n";
 import { OPPORTUNITY_STATUSES, type OpportunityStatus } from "../lib/intel/statuses";
 
 /** Where a record came from. Extend here when a new ingestion channel ships. */
@@ -65,12 +66,40 @@ export const suppliers = pgTable("suppliers", {
   ...timestamps,
 });
 
+/**
+ * A family of products: the same thing in several sizes, colours or types
+ * ("Trecciolino" → TG 1204, TG 1206, ST 18/08). The products are its variants;
+ * every variant keeps its own purchases, prices and suppliers.
+ */
+export const productFamilies = pgTable("product_families", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  category: text("category"),
+  subcategory: text("subcategory"),
+  ...timestamps,
+});
+
 export const products = pgTable("products", {
   id: uuid("id").primaryKey().defaultRandom(),
   sku: text("sku").notNull().unique(),
+  /** The name people read. What the documents wrote is kept in product_aliases. */
   name: text("name").notNull(),
   description: text("description"),
+  /** Category and subcategory, as text: the Product Mapper proposes them (lib/catalog/taxonomy.ts), the company can write its own. */
   category: text("category"),
+  subcategory: text("subcategory"),
+  familyId: uuid("family_id").references(() => productFamilies.id, { onDelete: "set null" }),
+  /** What tells this product from the others of its family: "TG 1204", "LC TR". */
+  variant: text("variant"),
+  /** When the user confirmed what the product is. Null: its name and category are still what the import wrote. */
+  mappedAt: timestamp("mapped_at", { withTimezone: true }),
+  /**
+   * What it is for the company's spend (lib/catalog/kinds.ts): a material, a
+   * component, packaging — the catalogue Procurement Intelligence works on —
+   * or transport, a service, a utility, an office purchase: spend that counts
+   * in the totals but is not compared and negotiated as a product.
+   */
+  kind: text("kind").notNull().default("needs_review"),
   /** Unit of measure used for prices and quantities (kg, pcs, l, m…). */
   unit: text("unit").notNull(),
   technicalSpecifications: text("technical_specifications"),
@@ -79,6 +108,11 @@ export const products = pgTable("products", {
   currentSupplierId: uuid("current_supplier_id").references(() => suppliers.id, {
     onDelete: "set null",
   }),
+  /** HS/CN customs code, for trade statistics. Not confirmed: a suggestion nobody has checked yet. */
+  customsCode: text("customs_code"),
+  customsCodeConfirmed: boolean("customs_code_confirmed").notNull().default(false),
+  /** How to research it (lib/research/strategy.ts), when the user says otherwise than the rules. */
+  researchClass: text("research_class"),
   ...timestamps,
 });
 
@@ -198,6 +232,8 @@ export const purchases = pgTable(
     /** quantity × unit_price + freight + other costs, in document currency. */
     totalAmount: money("total_amount").notNull(),
     invoiceReference: text("invoice_reference"),
+    /** The line's number on the invoice: two equal lines of one invoice are two purchases, the same line read twice is one. */
+    invoiceLine: integer("invoice_line"),
     paymentTermsDays: integer("payment_terms_days"),
     incoterm: text("incoterm"),
     /** Product text exactly as written on the source document. */
@@ -253,19 +289,54 @@ export const quotes = pgTable(
 
 // ---------------- Learning: aliases and supplier codes ----------------
 
-/** Other names a product is known by. Saved when the user confirms a match. */
-export const productAliases = pgTable("product_aliases", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  productId: uuid("product_id")
-    .notNull()
-    .references(() => products.id, { onDelete: "cascade" }),
-  alias: text("alias").notNull(),
-  /** Normalized form used for lookups (see lib/import/normalize/text.ts). */
-  normalized: text("normalized").notNull().unique(),
-  supplierId: uuid("supplier_id").references(() => suppliers.id, { onDelete: "set null" }),
-  source: text("source").notNull().default("import"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+/**
+ * How suppliers write a product: every description found on a document, kept
+ * as written and linked to the product it means. A product has many; the next
+ * import recognises them by themselves.
+ */
+export const productAliases = pgTable(
+  "product_aliases",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    productId: uuid("product_id")
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    /** The description exactly as written on the document. */
+    alias: text("alias").notNull(),
+    /** Normalized form used for lookups (see lib/import/normalize/text.ts). One per supplier. */
+    normalized: text("normalized").notNull(),
+    /** Who writes it this way. */
+    supplierId: uuid("supplier_id").references(() => suppliers.id, { onDelete: "set null" }),
+    /** The supplier's article code and the barcode found with this description. */
+    supplierSku: text("supplier_sku"),
+    ean: text("ean"),
+    /** How sure the link was when it was proposed: high | medium | low. */
+    confidence: text("confidence"),
+    /** False while the link is only the system's proposal. */
+    confirmedByUser: boolean("confirmed_by_user").notNull().default(true),
+    /** The import in which the description was first found. */
+    sourceSessionId: uuid("source_session_id").references(() => importSessions.id, { onDelete: "set null" }),
+    source: text("source").notNull().default("import"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("product_aliases_normalized_idx").on(t.normalized), index("product_aliases_product_idx").on(t.productId)],
+);
+
+/** Two products that look alike and that the user said are not the same one: not asked again. */
+export const productSeparations = pgTable(
+  "product_separations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    productA: uuid("product_a")
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    productB: uuid("product_b")
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("product_separations_pair_idx").on(t.productA, t.productB)],
+);
 
 /** Other names a supplier is known by (e.g. "ABC S.r.l." for "ABC Srl"). */
 export const supplierAliases = pgTable("supplier_aliases", {
@@ -331,8 +402,243 @@ export const opportunities = pgTable("opportunities", {
   ...timestamps,
 });
 
+// ---------------- Sourcing: alternative suppliers and market evidence ----------------
+
+/**
+ * A company that may sell a comparable product: found by a discovery provider
+ * or added by the user, always with the page where it was seen. It is not a
+ * supplier yet: it becomes one (`supplierId`) when a quote is recorded. A
+ * price here is what the supplier or a marketplace publishes — never an offer.
+ */
+export const supplierCandidates = pgTable(
+  "supplier_candidates",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    productId: uuid("product_id")
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    country: text("country"),
+    website: text("website"),
+    /** Who found it: a provider's key, or "manual". */
+    source: text("source").notNull().default("manual"),
+    /** How trustworthy the source is (lib/sourcing/types.ts: SOURCE_LEVELS). */
+    sourceLevel: text("source_level").notNull().default("external"),
+    sourceUrl: text("source_url"),
+    sourceDate: date("source_date"),
+    productMatched: text("product_matched"),
+    matchReason: text("match_reason"),
+    /** high | partial | not; null until someone checks the specification. */
+    technicalCompatibility: text("technical_compatibility"),
+    specifications: jsonb("specifications").$type<Record<string, string>>(),
+    priceLow: money("price_low"),
+    priceHigh: money("price_high"),
+    priceType: text("price_type"),
+    priceSourceUrl: text("price_source_url"),
+    currency: text("currency"),
+    unit: text("unit"),
+    incoterm: text("incoterm"),
+    moq: qty("moq"),
+    leadTimeDays: integer("lead_time_days"),
+    paymentTerms: text("payment_terms"),
+    certifications: text("certifications"),
+    shippingOrigin: text("shipping_origin"),
+    confidence: text("confidence"),
+    notes: text("notes"),
+    status: text("status").notNull().default("discovered"),
+    supplierId: uuid("supplier_id").references(() => suppliers.id, { onDelete: "set null" }),
+    /** manufacturer | distributor | wholesaler; null: the source does not say. */
+    companyType: text("company_type"),
+    /** The title of the page it was found on. */
+    sourceTitle: text("source_title"),
+    /** When the research found it (the source's own date is `sourceDate`). */
+    discoveredAt: date("discovered_at"),
+    /** What its own page confirms of the product's specification, and what it does not (lib/research/inspect.ts). */
+    specCheck: jsonb("spec_check").$type<{ url: string; checkedAt: string; email?: string | null; product: string[]; confirmed: string[]; missing: string[] }>(),
+    ...timestamps,
+  },
+  (t) => [index("supplier_candidates_product_idx").on(t.productId)],
+);
+
+/**
+ * An external reference for a product's price — a published benchmark, trade
+ * statistics, the movement of a cost driver — with its source and date.
+ * Written by a provider or typed by the user from a report they have.
+ */
+export const marketBenchmarks = pgTable(
+  "market_benchmarks",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    productId: uuid("product_id")
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    /** direct_benchmark | trade_benchmark | cost_driver | estimate */
+    type: text("type").notNull(),
+    label: text("label").notNull(),
+    /** Per product unit, in `currency`. */
+    low: money("low"),
+    high: money("high"),
+    unit: text("unit"),
+    currency: text("currency").notNull().default("EUR"),
+    /** Units of `currency` for one EUR on `fxDate`, from an exchange-rate provider. Null with a foreign currency: not converted, shown as written. */
+    fxRate: numeric("fx_rate", { precision: 16, scale: 6 }),
+    fxDate: date("fx_date"),
+    /** Cost drivers: the movement, in %, over `period`. */
+    changePct: real("change_pct"),
+    period: text("period"),
+    sourceName: text("source_name").notNull(),
+    sourceUrl: text("source_url"),
+    sourceDate: date("source_date"),
+    sourceLevel: text("source_level").notNull().default("external"),
+    comparability: text("comparability").notNull().default("partial"),
+    notes: text("notes"),
+    provider: text("provider").notNull().default("manual"),
+    ...timestamps,
+  },
+  (t) => [index("market_benchmarks_product_idx").on(t.productId)],
+);
+
+/**
+ * A request for quotation the user says they sent: to which company, for
+ * which products, when. Nothing is sent by the app — this is the memory that
+ * keeps a supplier from being written to twice for the same thing, and that
+ * tells when an answer is overdue.
+ */
+export const rfqRequests = pgTable(
+  "rfq_requests",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** The company, by its normalised name: one supplier is one outreach, whatever the number of products. */
+    supplierKey: text("supplier_key").notNull(),
+    supplierName: text("supplier_name").notNull(),
+    candidateIds: jsonb("candidate_ids").$type<string[]>().notNull(),
+    productIds: jsonb("product_ids").$type<string[]>().notNull(),
+    /** request | update (products added to an earlier request) | follow_up */
+    kind: text("kind").notNull().default("request"),
+    sentAt: date("sent_at").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("rfq_requests_supplier_idx").on(t.supplierKey)],
+);
+
+// ---------------- Deep research ----------------
+
+/**
+ * One research on a product: what was looked for, how far it went, what it
+ * concluded. Runs are kept: the history says when each thing was learned.
+ * A run never changes a purchase, a price or a supplier.
+ */
+export const researchRuns = pgTable(
+  "research_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    productId: uuid("product_id")
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    /** running | completed | partial | failed */
+    status: text("status").notNull().default("running"),
+    /** standard | imported (research done outside the app and loaded with its sources). */
+    depth: text("depth").notNull().default("standard"),
+    /** commodity | standard | custom | private_label | service | other */
+    productClass: text("product_class"),
+    sourcesChecked: integer("sources_checked").notNull().default(0),
+    resultsFound: integer("results_found").notNull().default(0),
+    confidence: text("confidence"),
+    /** The conclusion in plain words: stored messages (say()), shown in the reader's language. */
+    summary: jsonb("summary").$type<Said[]>(),
+    /** What each step did. */
+    steps: jsonb("steps").$type<{ key: string; status: string; count?: number; note?: Said }[]>(),
+    queries: jsonb("queries").$type<{ query: string; results: number; cached: boolean }[]>(),
+    errors: jsonb("errors").$type<{ step: string; message: string }[]>(),
+  },
+  (t) => [index("research_runs_product_idx").on(t.productId)],
+);
+
+/** One thing a research found, with where and when: every conclusion leads back to rows here. */
+export const researchEvidence = pgTable(
+  "research_evidence",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => researchRuns.id, { onDelete: "cascade" }),
+    productId: uuid("product_id")
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    candidateId: uuid("candidate_id").references(() => supplierCandidates.id, { onDelete: "set null" }),
+    /** supplier | product | price | specification | benchmark | trade | freight | tariff | fx | other */
+    type: text("type").notNull(),
+    sourceName: text("source_name").notNull(),
+    sourceUrl: text("source_url"),
+    retrievedAt: timestamp("retrieved_at", { withTimezone: true }).notNull().defaultNow(),
+    publishedAt: date("published_at"),
+    /** What was found, as a stored message. */
+    finding: jsonb("finding").$type<Said>().notNull(),
+    /** The words of the source the finding rests on. */
+    excerpt: text("excerpt"),
+    /** Source level (lib/sourcing/types.ts: SOURCE_LEVELS). */
+    reliability: text("reliability").notNull().default("external"),
+    comparability: text("comparability"),
+    confidence: text("confidence"),
+  },
+  (t) => [index("research_evidence_product_idx").on(t.productId), index("research_evidence_run_idx").on(t.runId)],
+);
+
+/** What an external source answered, kept until it expires: the same search or page is not paid for twice. */
+export const researchCache = pgTable("research_cache", {
+  key: text("key").primaryKey(),
+  provider: text("provider").notNull(),
+  /** search | page | fx | trade */
+  kind: text("kind").notNull(),
+  request: text("request").notNull(),
+  response: jsonb("response").$type<unknown>(),
+  retrievedAt: timestamp("retrieved_at", { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+});
+
+/** Every call to an external source, answered from the cache or not, with what it is estimated to cost. */
+export const researchUsage = pgTable(
+  "research_usage",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    runId: uuid("run_id").references(() => researchRuns.id, { onDelete: "set null" }),
+    productId: uuid("product_id").references(() => products.id, { onDelete: "set null" }),
+    provider: text("provider").notNull(),
+    kind: text("kind").notNull(),
+    calls: integer("calls").notNull().default(0),
+    cached: integer("cached").notNull().default(0),
+    /** EUR. Null: the provider's price per call is not known. */
+    estimatedCost: numeric("estimated_cost", { precision: 12, scale: 4 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("research_usage_created_idx").on(t.createdAt)],
+);
+
+// ---------------- Company settings ----------------
+
+/**
+ * Who is using the app: one row. Not purchasing data — "Clear all data"
+ * leaves it alone, so the company does not have to introduce itself twice.
+ * The base currency is not here: every calculation is in EUR for now.
+ */
+export const settings = pgTable("settings", {
+  id: integer("id").primaryKey().default(1),
+  companyName: text("company_name"),
+  country: text("country"),
+  /** Our own VAT number: on invoices it identifies the customer, never the supplier. */
+  vatNumber: text("vat_number"),
+  /** Who is at the keyboard — only used to say good morning. */
+  userName: text("user_name"),
+  /** Language of the interface: "en" or "it". */
+  language: text("language").notNull().default("en"),
+  ...timestamps,
+});
+
 export type Supplier = typeof suppliers.$inferSelect;
 export type Product = typeof products.$inferSelect;
+export type ProductFamily = typeof productFamilies.$inferSelect;
 export type PurchaseRecord = typeof purchases.$inferSelect;
 export type QuoteRecord = typeof quotes.$inferSelect;
 export type ImportSession = typeof importSessions.$inferSelect;

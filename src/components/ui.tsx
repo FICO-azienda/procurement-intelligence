@@ -1,8 +1,10 @@
 import Link from "next/link";
 import type { ComponentProps, ReactNode } from "react";
-import { ArrowDownRight, ArrowUpRight, Download } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, ChevronRight, Download } from "lucide-react";
 import type { ProductStatus, SupplierStatus } from "@/lib/analytics";
 import { pct } from "@/lib/format";
+import { Tx } from "@/lib/i18n/client";
+import { PRODUCT_STATUS_LABEL, SUPPLIER_STATUS_LABEL } from "@/lib/intel/labels";
 
 export function cx(...classes: (string | false | null | undefined)[]) {
   return classes.filter(Boolean).join(" ");
@@ -19,7 +21,7 @@ export function buttonClass(variant: Variant = "secondary", size: "sm" | "md" = 
     "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ledger",
     "disabled:pointer-events-none disabled:opacity-50",
     size === "md" ? "h-8 px-3 text-[13px]" : "h-7 px-2.5 text-[12.5px]",
-    variant === "primary" && "bg-ink text-white hover:bg-ink/85",
+    variant === "primary" && "bg-ledger text-white hover:bg-ledger/90",
     variant === "secondary" &&
       "border border-rule-strong bg-canvas text-ink hover:border-ink/25 hover:bg-wash",
     variant === "ghost" && "text-ink-2 hover:bg-wash hover:text-ink",
@@ -37,10 +39,10 @@ export function ButtonLink({
 }
 
 /** Link to a CSV export (a file download, not a page). */
-export function ExportLink({ href, children = "Export CSV", className }: { href: string; children?: ReactNode; className?: string }) {
+export function ExportLink({ href, children, className }: { href: string; children?: ReactNode; className?: string }) {
   return (
     <a href={href} download className={cx("inline-flex items-center gap-1 text-[13px] font-medium whitespace-nowrap text-ledger hover:underline", className)}>
-      <Download size={13} strokeWidth={2} /> {children}
+      <Download size={13} strokeWidth={2} /> {children ?? <Tx msg="Export CSV" />}
     </a>
   );
 }
@@ -104,6 +106,39 @@ export function Section({
   );
 }
 
+/**
+ * A section that stays closed until asked for: detail on demand. Same frame
+ * as Section, so open and closed blocks sit together on a page.
+ */
+export function Disclosure({
+  title,
+  description,
+  children,
+  className,
+  flush,
+  defaultOpen,
+}: {
+  title: ReactNode;
+  description?: ReactNode;
+  children: ReactNode;
+  className?: string;
+  flush?: boolean;
+  defaultOpen?: boolean;
+}) {
+  return (
+    <details open={defaultOpen} className={cx("group rounded-lg border border-rule bg-canvas", className)}>
+      <summary className="flex cursor-pointer list-none items-center gap-2.5 rounded-lg px-5 py-3.5 select-none hover:bg-well focus-visible:outline-2 focus-visible:outline-ledger [&::-webkit-details-marker]:hidden">
+        <ChevronRight size={15} className="shrink-0 text-ink-4 transition-transform duration-150 group-open:rotate-90" />
+        <span className="text-[14px] font-semibold tracking-[-0.005em]">{title}</span>
+        {description && <span className="min-w-0 truncate text-[12.5px] text-ink-3">{description}</span>}
+      </summary>
+      <div className={cx("border-t border-rule", flush ? "" : "px-5 py-4")}>{children}</div>
+    </details>
+  );
+}
+
+export { Crumbs } from "./crumbs";
+
 /** Small uppercase label naming where a number comes from. */
 export function Basis({ children, tone = "neutral" }: { children: ReactNode; tone?: "neutral" | "muted" }) {
   return (
@@ -140,10 +175,10 @@ export function Delta({ value, className }: { value: number | null; className?: 
 
 // ---------- Status ----------
 
-const PRODUCT_STATUS: Record<ProductStatus, { label: string; className: string; dot: string }> = {
-  increase: { label: "Price increase", className: "bg-up-wash text-up", dot: "bg-up" },
-  stable: { label: "Stable", className: "bg-wash text-ink-2", dot: "bg-ink-4" },
-  review: { label: "Review", className: "bg-caution-wash text-caution", dot: "bg-caution" },
+const PRODUCT_STATUS: Record<ProductStatus, { className: string; dot: string }> = {
+  increase: { className: "bg-up-wash text-up", dot: "bg-up" },
+  stable: { className: "bg-wash text-ink-2", dot: "bg-ink-4" },
+  review: { className: "bg-caution-wash text-caution", dot: "bg-caution" },
 };
 
 export function StatusBadge({ status, title }: { status: ProductStatus; title?: string }) {
@@ -154,23 +189,22 @@ export function StatusBadge({ status, title }: { status: ProductStatus; title?: 
       className={cx("inline-flex h-[22px] items-center gap-1.5 rounded-full px-2 text-[12px] font-medium whitespace-nowrap", s.className)}
     >
       <span className={cx("size-1.5 rounded-full", s.dot)} />
-      {s.label}
+      <Tx msg={PRODUCT_STATUS_LABEL[status]} />
     </span>
   );
 }
 
-const SUPPLIER_STATUS: Record<SupplierStatus, { label: string; className: string }> = {
-  active: { label: "Active", className: "bg-wash text-ink-2" },
-  inactive: { label: "No recent purchases", className: "bg-caution-wash text-caution" },
-  "quote-only": { label: "Quotes only", className: "bg-ledger-wash text-ledger" },
-  new: { label: "New", className: "bg-wash text-ink-3" },
+const SUPPLIER_STATUS: Record<SupplierStatus, string> = {
+  active: "bg-wash text-ink-2",
+  inactive: "bg-caution-wash text-caution",
+  "quote-only": "bg-ledger-wash text-ledger",
+  new: "bg-wash text-ink-3",
 };
 
 export function SupplierStatusBadge({ status }: { status: SupplierStatus }) {
-  const s = SUPPLIER_STATUS[status];
   return (
-    <span className={cx("inline-flex h-[22px] items-center rounded-full px-2 text-[12px] font-medium whitespace-nowrap", s.className)}>
-      {s.label}
+    <span className={cx("inline-flex h-[22px] items-center rounded-full px-2 text-[12px] font-medium whitespace-nowrap", SUPPLIER_STATUS[status])}>
+      <Tx msg={SUPPLIER_STATUS_LABEL[status]} />
     </span>
   );
 }

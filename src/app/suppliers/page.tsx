@@ -1,68 +1,79 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { SupplierDialog } from "@/components/dialogs";
-import { Empty, PageHeader, SupplierStatusBadge, Table, Td, Th, rowClass } from "@/components/ui";
-import { supplierMetrics, todayISO } from "@/lib/analytics";
-import { getDataset } from "@/lib/data";
+import { Hint } from "@/components/hint";
+import { ButtonLink, Delta, Empty, ExportLink, PageHeader, SupplierStatusBadge, Table, Td, Th, rowClass } from "@/components/ui";
+import { countryName } from "@/lib/countries";
+import { KIND_LABEL } from "@/lib/catalog/kinds";
+import { getDataset, getIntel, getSpend, getT } from "@/lib/data";
 import * as f from "@/lib/format";
+import { explain } from "@/lib/intel/explain";
 
-export const metadata: Metadata = { title: "Suppliers" };
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: (await getT())("Suppliers") };
+}
 
 export default async function SuppliersPage() {
-  const data = await getDataset();
-  const asOf = todayISO();
-  const rows = data.suppliers
-    .map((s) => ({ s, m: supplierMetrics(s, data, asOf) }))
-    .sort((a, b) => b.m.annualSpend - a.m.annualSpend || a.s.name.localeCompare(b.s.name));
+  const [data, intel, spend, t] = await Promise.all([getDataset(), getIntel(), getSpend(), getT()]);
+  const EXPLAIN = explain(t);
+  const rows = [...intel.suppliers].sort((a, b) => b.metrics.annualSpend - a.metrics.annualSpend || a.supplier.name.localeCompare(b.supplier.name));
 
   return (
     <>
-      <PageHeader
-        title="Suppliers"
-        meta="Who you buy from, and who has quoted. Spend is the last 12 months of purchases."
-        actions={<SupplierDialog trigger={{ label: "Add supplier", variant: "primary" }} />}
-      />
+      <PageHeader title={t("Suppliers")} meta={t("Who you buy from, and who has given you a quote.")} actions={rows.length > 0 ? <ExportLink href="/export/suppliers" className="px-1" /> : undefined} />
       <div className="rounded-lg border border-rule">
         {rows.length === 0 ? (
-          <Empty title="No suppliers yet" body="Add the companies you buy from." />
+          <Empty
+            title={t("No suppliers yet")}
+            body={t("Suppliers appear by themselves when you import invoices. You can also add one by hand: a name and a country are enough.")}
+            action={
+              <div className="flex flex-wrap justify-center gap-2">
+                <ButtonLink href="/import" variant="primary">
+                  {t("Import invoices")}
+                </ButtonLink>
+                <SupplierDialog trigger={{ label: t("Add a supplier") }} />
+              </div>
+            }
+          />
         ) : (
           <Table>
             <thead>
               <tr>
-                <Th className="border-t-0">Supplier</Th>
-                <Th className="border-t-0">Country</Th>
-                <Th className="border-t-0">Products supplied</Th>
-                <Th className="border-t-0" align="right">Annual spend</Th>
-                <Th className="border-t-0" align="right">Avg. lead time</Th>
-                <Th className="border-t-0" align="right">Payment terms</Th>
-                <Th className="border-t-0">Last purchase</Th>
-                <Th className="border-t-0">Status</Th>
+                <Th className="border-t-0">{t("Supplier")}</Th>
+                <Th className="hidden border-t-0 @4xl:table-cell">{t("What you buy")}</Th>
+                <Th className="border-t-0" align="right">{t("Annual spend")}</Th>
+                <Th className="hidden border-t-0 @2xl:table-cell" align="right">
+                  {t("Prices this year")} <Hint text={EXPLAIN.supplierWeightedChange} />
+                </Th>
+                <Th className="hidden border-t-0 @3xl:table-cell">{t("Last purchase")}</Th>
+                <Th className="border-t-0">{t("Status")}</Th>
               </tr>
             </thead>
             <tbody>
-              {rows.map(({ s, m }) => {
-                const names = m.productIds
-                  .map((id) => data.products.find((p) => p.id === id)?.name)
-                  .filter(Boolean) as string[];
+              {rows.map(({ supplier: s, metrics: m, priceChange }) => {
+                const products = m.productIds.map((id) => data.products.find((p) => p.id === id)?.name).filter(Boolean) as string[];
+                // Nothing from the catalogue: say what kind of spend it is instead.
+                const names = products.length ? products : [...new Set(spend.items.filter((i) => i.supplierIds.includes(s.id)).map((i) => t(KIND_LABEL[i.kind])))];
                 return (
                   <tr key={s.id} className={rowClass(true)}>
-                    <Td className="font-medium">
-                      <Link href={`/suppliers/${s.id}`} className="stretched">
+                    <Td className="py-2.5">
+                      <Link href={`/suppliers/${s.id}`} className="stretched font-medium">
                         {s.name}
                       </Link>
+                      <div className="text-[12px] text-ink-3">{countryName(s.country, t.locale) ?? t("Country not set")}</div>
                     </Td>
-                    <Td muted>{s.country ?? "—"}</Td>
-                    <Td className="max-w-[260px] truncate" muted={names.length === 0}>
-                      {names.length === 0
-                        ? m.quotedProductIds.length > 0
-                          ? `Quoted ${m.quotedProductIds.length} product${m.quotedProductIds.length > 1 ? "s" : ""}`
-                          : "—"
-                        : names.join(", ")}
+                    <Td className="hidden max-w-[280px] truncate @4xl:table-cell" muted={names.length === 0}>
+                      {names.length === 0 ? (m.quotedProductIds.length > 0 ? t.n(m.quotedProductIds.length, "Quoted {n} product", "Quoted {n} products") : "—") : names.join(", ")}
                     </Td>
-                    <Td align="right" className="font-medium">{m.annualSpend > 0 ? f.money(m.annualSpend) : "—"}</Td>
-                    <Td align="right" muted>{f.days(m.avgLeadTimeDays)}</Td>
-                    <Td align="right" muted>{f.paymentTerms(s.paymentTermsDays)}</Td>
-                    <Td muted className="num">{f.date(m.lastPurchaseDate)}</Td>
+                    <Td align="right" className="font-medium">
+                      {m.annualSpend > 0 ? f.money(Math.round(m.annualSpend)) : <span className="font-normal text-ink-4">—</span>}
+                    </Td>
+                    <Td align="right" className="hidden @2xl:table-cell">
+                      <Delta value={priceChange.weightedPct} className="justify-end" />
+                    </Td>
+                    <Td muted className="num hidden @3xl:table-cell">
+                      {f.date(m.lastPurchaseDate)}
+                    </Td>
                     <Td>
                       <SupplierStatusBadge status={m.status} />
                     </Td>
@@ -73,9 +84,6 @@ export default async function SuppliersPage() {
           </Table>
         )}
       </div>
-      <p className="mt-3 text-[12px] text-ink-4">
-        Lead time: average of the supplier&apos;s latest quotes, otherwise their typical lead time.
-      </p>
     </>
   );
 }

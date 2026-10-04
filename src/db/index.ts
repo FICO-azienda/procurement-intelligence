@@ -9,7 +9,7 @@
  *
  * Migrations in ./drizzle are applied on startup in both cases.
  */
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle as drizzlePglite, type PgliteDatabase } from "drizzle-orm/pglite";
@@ -25,14 +25,34 @@ export type DB = PgliteDatabase<typeof schema>;
 const migrationsFolder = path.join(process.cwd(), "drizzle");
 
 // Survive Next.js hot reloads: one connection per process.
-const globalForDb = globalThis as unknown as { __db?: Promise<DB> };
+const globalForDb = globalThis as unknown as { __db?: Promise<DB>; __migrations?: number };
+
+/** When the list of migrations last changed: a new one is applied without restarting the dev server. */
+const migrationsStamp = () => {
+  try {
+    return statSync(/*turbopackIgnore: true*/ path.join(migrationsFolder, "meta", "_journal.json")).mtimeMs;
+  } catch {
+    return 0;
+  }
+};
 
 export function getDb(): Promise<DB> {
   if (!globalForDb.__db) {
+    globalForDb.__migrations = migrationsStamp();
     globalForDb.__db = connect().catch((err) => {
       globalForDb.__db = undefined;
       throw err;
     });
+  } else if (process.env.NODE_ENV !== "production" && !process.env.DATABASE_URL) {
+    // In development the connection outlives code reloads: a migration added meanwhile is applied here.
+    const stamp = migrationsStamp();
+    if (stamp !== globalForDb.__migrations) {
+      globalForDb.__migrations = stamp;
+      globalForDb.__db = globalForDb.__db.then(async (db) => {
+        await migratePglite(db, { migrationsFolder });
+        return db;
+      });
+    }
   }
   return globalForDb.__db;
 }

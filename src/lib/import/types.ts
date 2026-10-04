@@ -1,4 +1,5 @@
 /** Shared types of the import pipeline. */
+import type { Params } from "../i18n";
 
 export type RecordType = "purchase" | "quote";
 
@@ -32,6 +33,12 @@ export interface ItemData {
   leadTimeDays: number | null;
   validUntil: string | null;
   notes: string | null;
+  /** Barcode (EAN / GTIN) of the product, when the file has one. Absent on lines read before this field existed. */
+  ean?: string | null;
+  /** What kind of document the line comes from, as written ("TD01", "TD04", "Credit note"). */
+  documentType?: string | null;
+  /** The line's number on the invoice: tells two equal lines of one invoice from the same line read twice. */
+  invoiceLine?: number | null;
 }
 
 export const EMPTY_ITEM: ItemData = {
@@ -60,6 +67,9 @@ export const EMPTY_ITEM: ItemData = {
   leadTimeDays: null,
   validUntil: null,
   notes: null,
+  ean: null,
+  documentType: null,
+  invoiceLine: null,
 };
 
 /** As stored in import_items.extracted: data + problems found while reading. */
@@ -105,13 +115,26 @@ export type IssueCode =
   | "quantity_high"
   | "low_confidence"
   | "freight_allocated"
+  | "other_costs_allocated"
+  | "discount_not_applied"
+  | "document_type"
+  | "quantity_assumed"
+  | "excluded"
   | "terms_not_understood";
 
 export interface Issue {
   code: IssueCode;
   severity: Severity;
+  /** Plain English. Shown through `said()`, which uses `msg` + `params` to say it in the reader's language. */
   message: string;
+  msg?: string;
+  params?: Params;
   field?: keyof ItemData;
+  /**
+   * The line is not a purchase (a credit note, a line with no amount): it is
+   * set aside on its own, with this reason. The user can bring it back.
+   */
+  excludes?: boolean;
   /** Only for price increases above the high threshold. */
   priority?: "high";
   data?: Record<string, number | string | null>;
@@ -122,6 +145,6 @@ export interface DraftItem {
   line: number;
   raw: Record<string, string>;
   extracted: ExtractedData;
-  /** 0–1 for PDF extraction; null for spreadsheet cells. */
+  /** 0–1 for PDF extraction; null for values read from their own field (spreadsheet cells, electronic invoices). */
   confidence: number | null;
 }

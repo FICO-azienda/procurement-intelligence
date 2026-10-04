@@ -3,7 +3,8 @@
 /*
  * Tokens — a ledger on white paper.
  * ink: text levels · rule: hairlines · wash: quiet surfaces
- * ledger: the single accent (links, focus, chart line)
+ * ledger: the single accent (primary actions, links, focus, chart line)
+ * night: the navigation rail
  * up / down / caution: meaning only (price up, price down, needs review)
  */
 @theme {
@@ -19,8 +20,12 @@
   --color-rule: rgb(17 17 19 / 0.08);
   --color-rule-strong: rgb(17 17 19 / 0.15);
 
-  --color-ledger: #2443a6;
-  --color-ledger-wash: #eef1fa;
+  --color-ledger: #2456d6;
+  --color-ledger-wash: #edf2fd;
+
+  /* The navigation rail: the one dark surface, so the page itself stays light. */
+  --color-night: #0f1a36;
+  --color-night-2: #1b2a52;
 
   --color-up: #b42318;
   --color-up-wash: #fdf1f0;
@@ -70,15 +75,15 @@ p {
   font-variant-numeric: tabular-nums;
 }
 
-/* Native dialog: fade + slight rise, never from scale(0). */
+/* Side panel (native dialog): slides in from the right, keeping the page in view. */
 dialog.sheet {
   opacity: 0;
-  transform: translateY(6px) scale(0.985);
+  transform: translateX(24px);
   transition:
     opacity 180ms var(--ease-out-quint),
-    transform 220ms var(--ease-out-quint),
-    overlay 220ms allow-discrete,
-    display 220ms allow-discrete;
+    transform 240ms var(--ease-out-quint),
+    overlay 240ms allow-discrete,
+    display 240ms allow-discrete;
 }
 dialog.sheet[open] {
   opacity: 1;
@@ -87,7 +92,7 @@ dialog.sheet[open] {
 @starting-style {
   dialog.sheet[open] {
     opacity: 0;
-    transform: translateY(6px) scale(0.985);
+    transform: translateX(24px);
   }
 }
 dialog.sheet::backdrop {
@@ -98,7 +103,7 @@ dialog.sheet::backdrop {
     display 200ms allow-discrete;
 }
 dialog.sheet[open]::backdrop {
-  background: rgb(17 17 19 / 0.28);
+  background: rgb(17 17 19 / 0.2);
 }
 @starting-style {
   dialog.sheet[open]::backdrop {
@@ -106,9 +111,35 @@ dialog.sheet[open]::backdrop {
   }
 }
 
+/* Command bar: centred near the top. */
+dialog.command {
+  opacity: 0;
+  transform: translateY(-6px);
+  transition:
+    opacity 140ms var(--ease-out-quint),
+    transform 160ms var(--ease-out-quint),
+    overlay 160ms allow-discrete,
+    display 160ms allow-discrete;
+}
+dialog.command[open] {
+  opacity: 1;
+  transform: none;
+}
+@starting-style {
+  dialog.command[open] {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+dialog.command::backdrop {
+  background: rgb(17 17 19 / 0.2);
+}
+
 @media (prefers-reduced-motion: reduce) {
   dialog.sheet,
-  dialog.sheet[open] {
+  dialog.sheet[open],
+  dialog.command,
+  dialog.command[open] {
     transform: none;
   }
 }

@@ -17,7 +17,3 @@ export function lookups(data: Dataset) {
     product: (id: string | null | undefined) => data.products.find((p) => p.id === id),
   };
 }
-
-export function plural(n: number, one: string, many = one + "s") {
-  return `${n.toLocaleString("it-IT", { useGrouping: "always" })} ${n === 1 ? one : many}`;
-}

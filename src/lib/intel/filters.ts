@@ -3,29 +3,30 @@
  * a buyer has, answered without a language model.
  */
 import { currentSupplierId } from "../analytics";
+import { en, type Msg, type T } from "../i18n";
 import { INTEL_CONFIG, type IntelConfig } from "./config";
 import type { ProductIntel } from "./engine";
 
 export type QuickFilter = "up-moderate" | "up-high" | "down" | "high-spend" | "single-source" | "multi-supplier" | "recent-quote" | "saving" | "review";
 
-export function quickFilters(cfg: IntelConfig = INTEL_CONFIG): { key: QuickFilter; label: string; test: (p: ProductIntel) => boolean }[] {
+export function quickFilters(cfg: IntelConfig = INTEL_CONFIG, t: T = en): { key: QuickFilter; label: string; test: (p: ProductIntel) => boolean }[] {
   const pct = (p: ProductIntel) => (p.price.changes.m12.pct == null ? null : Number(p.price.changes.m12.pct.toFixed(1)));
   return [
-    { key: "up-moderate", label: `Up >${cfg.alerts.moderate}%`, test: (p) => (pct(p) ?? 0) > cfg.alerts.moderate },
-    { key: "up-high", label: `Up >${cfg.alerts.high}%`, test: (p) => (pct(p) ?? 0) > cfg.alerts.high },
-    { key: "down", label: "Price decrease", test: (p) => (pct(p) ?? 0) < 0 },
-    { key: "high-spend", label: "High spend", test: (p) => p.highSpend },
-    { key: "single-source", label: "Single-source", test: (p) => p.concentration.sourcing === "single" },
-    { key: "multi-supplier", label: "Multiple supplier options", test: (p) => p.supplierOptions >= 2 },
-    { key: "recent-quote", label: "Recent quote available", test: (p) => p.recentAlternativeQuote },
-    { key: "saving", label: "Potential saving", test: (p) => p.bestSaving != null },
-    { key: "review", label: "Needs review", test: (p) => p.metrics.status === "review" || p.price.outliers.length > 0 },
+    { key: "up-moderate", label: t("Up >{pct}%", { pct: cfg.alerts.moderate }), test: (p) => (pct(p) ?? 0) > cfg.alerts.moderate },
+    { key: "up-high", label: t("Up >{pct}%", { pct: cfg.alerts.high }), test: (p) => (pct(p) ?? 0) > cfg.alerts.high },
+    { key: "down", label: t("Price decrease"), test: (p) => (pct(p) ?? 0) < 0 },
+    { key: "high-spend", label: t("High spend"), test: (p) => p.highSpend },
+    { key: "single-source", label: t("Single-source"), test: (p) => p.concentration.sourcing === "single" },
+    { key: "multi-supplier", label: t("Multiple supplier options"), test: (p) => p.supplierOptions >= 2 },
+    { key: "recent-quote", label: t("Recent quote available"), test: (p) => p.recentAlternativeQuote },
+    { key: "saving", label: t("Potential saving"), test: (p) => p.bestSaving != null },
+    { key: "review", label: t("Needs review"), test: (p) => p.metrics.status === "review" || p.price.outliers.length > 0 },
   ];
 }
 
 export type SortKey = "spend" | "change" | "saving" | "last" | "suppliers" | "name";
 
-export const SORTS: { key: SortKey; label: string }[] = [
+export const SORTS: { key: SortKey; label: Msg }[] = [
   { key: "spend", label: "Annual spend" },
   { key: "change", label: "Price change" },
   { key: "saving", label: "Potential saving" },

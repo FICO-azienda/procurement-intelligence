@@ -7,6 +7,7 @@
  * purchase needs a sanity check.
  */
 import { basePrice, isPriced, type PurchaseData, type QuoteData } from "./analytics";
+import { say } from "./i18n";
 import type { Issue } from "./import/types";
 
 export const ANOMALY_RULES = {
@@ -72,7 +73,7 @@ export function detectAnomalies(
   const previous = priced.at(-1);
 
   if (before.length > 0 && !before.some((p) => p.supplierId === c.supplierId)) {
-    issues.push({ code: "new_supplier_for_product", severity: "info", message: "First purchase of this product from this supplier" });
+    issues.push({ code: "new_supplier_for_product", severity: "info", ...say("First purchase of this product from this supplier") });
   }
   const lastAny = before.at(-1);
   if (lastAny && lastAny.currency !== c.currency) {
@@ -80,7 +81,7 @@ export function detectAnomalies(
       code: "currency_changed",
       severity: "review",
       field: "currency",
-      message: `Currency changed: previous purchase was in ${lastAny.currency}, this one in ${c.currency}`,
+      ...say("Currency changed: previous purchase was in {from}, this one in {to}", { from: lastAny.currency, to: c.currency }),
     });
   }
 
@@ -95,15 +96,15 @@ export function detectAnomalies(
       annualQuantity,
       annualImpact: annualQuantity * (c.price - prev),
     };
-    const message = `Price ${change >= 0 ? "increase" : "decrease"}: ${fmt(prev)} → ${fmt(c.price)} (${fmtPct(change)}) vs previous purchase`;
+    const message = say(change >= 0 ? "Price increase: {from} → {to} ({pct}) vs previous purchase" : "Price decrease: {from} → {to} ({pct}) vs previous purchase", { from: fmt(prev), to: fmt(c.price), pct: fmtPct(change) });
     if (change > ANOMALY_RULES.highIncreasePct) {
-      issues.push({ code: "price_increase", severity: "review", priority: "high", message, data: { ...data } });
+      issues.push({ code: "price_increase", severity: "review", priority: "high", ...message, data: { ...data } });
     } else if (change > ANOMALY_RULES.reviewIncreasePct) {
-      issues.push({ code: "price_increase", severity: "review", message, data: { ...data } });
+      issues.push({ code: "price_increase", severity: "review", ...message, data: { ...data } });
     } else if (change > 0.05) {
-      issues.push({ code: "price_increase", severity: "info", message, data: { ...data } });
+      issues.push({ code: "price_increase", severity: "info", ...message, data: { ...data } });
     } else if (change < -0.05) {
-      issues.push({ code: "price_decrease", severity: "info", message, data: { ...data } });
+      issues.push({ code: "price_decrease", severity: "info", ...message, data: { ...data } });
     }
   }
 
@@ -114,7 +115,7 @@ export function detectAnomalies(
       issues.push({
         code: "price_vs_median",
         severity: "review",
-        message: `Price is ${fmtPct(dev)} away from the usual price (median ${fmt(med)})`,
+        ...say("Price is {pct} away from the usual price (median {median})", { pct: fmtPct(dev), median: fmt(med) }),
         data: { median: med, pct: dev },
       });
     }
@@ -127,7 +128,7 @@ export function detectAnomalies(
         code: "quantity_high",
         severity: "review",
         field: "quantity",
-        message: `Quantity is ${Math.round(c.quantity / medQty)}× the usual order (${medQty.toLocaleString("it-IT")})`,
+        ...say("Quantity is {factor}× the usual order ({usual})", { factor: Math.round(c.quantity / medQty), usual: medQty.toLocaleString("it-IT") }),
       });
     }
   }
@@ -143,7 +144,7 @@ export function detectAnomalies(
       issues.push({
         code: "price_vs_quote",
         severity: Math.abs(dev) > ANOMALY_RULES.quoteDeviationPct ? "review" : "info",
-        message: `Quoted ${fmt(q)} on ${quote.date.split("-").reverse().join("/")}, invoiced ${fmt(c.price)} (${fmtPct(dev)})`,
+        ...say("Quoted {quoted} on {date}, invoiced {invoiced} ({pct})", { quoted: fmt(q), date: quote.date.split("-").reverse().join("/"), invoiced: fmt(c.price), pct: fmtPct(dev) }),
         data: { quotedPrice: q, pct: dev },
       });
     }

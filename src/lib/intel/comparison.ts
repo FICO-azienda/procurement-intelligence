@@ -8,6 +8,7 @@
  * it does not replace them.
  */
 import { basePrice, daysBetween, isPriced, type ProductData, type PurchaseData, type QuoteData, type SupplierData } from "../analytics";
+import { en, type T } from "../i18n";
 import { normalizeKey } from "../import/normalize/text";
 import { INTEL_CONFIG, type IntelConfig } from "./config";
 
@@ -110,7 +111,7 @@ export interface ComparisonInput {
   asOf: string;
 }
 
-export function compareSuppliers(input: ComparisonInput, cfg: IntelConfig = INTEL_CONFIG): ComparisonRow[] {
+export function compareSuppliers(input: ComparisonInput, cfg: IntelConfig = INTEL_CONFIG, t: T = en): ComparisonRow[] {
   const { product, asOf, currentPrice } = input;
   const byDate = <T extends { date: string }>(a: T, b: T) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
   const supplierIds = new Set<string>([
@@ -157,22 +158,22 @@ export function compareSuppliers(input: ComparisonInput, cfg: IntelConfig = INTE
     let overridden = false;
     if (!record && mismatch) {
       comparability = "not";
-      reasons.push(`Bought in "${mismatch.unit}", which can't be converted to ${product.unit}`);
+      reasons.push(t('Bought in "{from}", which can\'t be converted to {to}', { from: mismatch.unit, to: product.unit }));
     } else if (price == null) {
       comparability = "not";
-      reasons.push("No price on record");
+      reasons.push(t("No price on record"));
     } else if (fxRequired) {
       comparability = "not";
-      reasons.push(`FX conversion required (${currency} price, no exchange rate on record)`);
+      reasons.push(t("FX conversion required ({currency} price, no exchange rate on record)", { currency }));
     } else if (!isCurrent) {
       if (diffs.length) {
         comparability = "partial";
-        reasons.push(`Specification difference: ${diffs.map((d) => `${d.name} ${d.theirs} vs ${d.ours}`).join(", ")}`);
+        reasons.push(t("Specification difference: {list}", { list: diffs.map((d) => t("{name} {theirs} vs {ours}", { name: d.name, theirs: d.theirs, ours: d.ours })).join(", ") }));
       }
       if (moq != null && input.typicalOrderQuantity != null && moq > input.typicalOrderQuantity * cfg.moqToleranceFactor) {
         comparability = "partial";
         const n = (v: number) => v.toLocaleString("it-IT", { useGrouping: "always", maximumFractionDigits: 2 });
-        reasons.push(`MOQ ${n(moq)} ${product.unit} is above your typical order of ${n(input.typicalOrderQuantity)} ${product.unit}`);
+        reasons.push(t("MOQ {moq} {unit} is above your typical order of {typical} {unit}", { moq: n(moq), typical: n(input.typicalOrderQuantity), unit: product.unit }));
       }
     }
     // A missing price, an unknown exchange rate or an unconvertible unit can't be overridden into "comparable".
@@ -181,7 +182,7 @@ export function compareSuppliers(input: ComparisonInput, cfg: IntelConfig = INTE
       // Otherwise the user's judgement wins.
       comparability = link.comparabilityOverride;
       overridden = true;
-      reasons.unshift(link.comparabilityNote ? `Set by you: ${link.comparabilityNote}` : "Set by you");
+      reasons.unshift(link.comparabilityNote ? t("Set by you: {note}", { note: link.comparabilityNote }) : t("Set by you"));
     }
 
     const difference = !isCurrent && priceEUR != null && currentPrice != null && comparability !== "not" ? priceEUR - currentPrice : null;

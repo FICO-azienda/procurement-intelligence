@@ -1,4 +1,5 @@
 import * as f from "@/lib/format";
+import type { T } from "@/lib/i18n";
 import type { DecisionAlternative } from "@/lib/intel/decision";
 
 /**
@@ -9,7 +10,7 @@ import type { DecisionAlternative } from "@/lib/intel/decision";
 /** Half-width of the scale, as a share of the price in the middle. */
 const MIN_HALF_SPAN = 0.12;
 
-export function PriceBar({ current, low, high, best, unit }: { current: number; low: number; high: number; best: DecisionAlternative | null; unit: string }) {
+export function PriceBar({ current, low, high, best, unit, t }: { current: number; low: number; high: number; best: DecisionAlternative | null; unit: string; t: T }) {
   const alt = best?.priceEUR ?? low;
   const lo = Math.min(current, low);
   const hi = Math.max(current, high);
@@ -21,18 +22,18 @@ export function PriceBar({ current, low, high, best, unit }: { current: number; 
   // Keep labels inside the bar: anchor them to the side they are closest to.
   const anchor = (p: number) => (p < 22 ? "translateX(0)" : p > 78 ? "translateX(-100%)" : "translateX(-50%)");
   const [you, other, from, to] = [at(current), at(alt), at(low), at(high)];
-  const altLabel = best ? best.supplierName : "Lowest quote";
+  const altLabel = best ? best.supplierName : t("Lowest quote");
 
   return (
     <div
       role="img"
-      aria-label={`You pay ${f.priceShort(current)} per ${unit}. Quotes on file from ${f.priceShort(low)} to ${f.priceShort(high)}.`}
+      aria-label={t("You pay {price} per {unit}. Quotes on file from {low} to {high}.", { price: f.priceShort(current), unit, low: f.priceShort(low), high: f.priceShort(high) })}
       className="relative mt-8 mb-7 h-1.5 rounded-full bg-wash"
     >
       <div className="absolute inset-y-0 min-w-1.5 rounded-full bg-ink/20" style={{ left: `${from}%`, width: `${Math.max(0, to - from)}%` }} />
       <div className="absolute -top-1 h-3.5 w-0.5 -translate-x-1/2 rounded-full bg-ink" style={{ left: `${you}%` }} />
       <div className="num absolute -top-[22px] text-[11.5px] font-semibold whitespace-nowrap" style={{ left: `${you}%`, transform: anchor(you) }}>
-        You pay {f.priceShort(current)}
+        {t("You pay {price}", { price: f.priceShort(current) })}
       </div>
       <div className="absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-canvas bg-ledger" style={{ left: `${other}%` }} />
       <div className="num absolute top-[11px] max-w-full truncate text-[11.5px] whitespace-nowrap text-ink-3" style={{ left: `${other}%`, transform: anchor(other) }}>

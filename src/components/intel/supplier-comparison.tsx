@@ -1,178 +1,214 @@
 import Link from "next/link";
-import { AlertTriangle, Info } from "lucide-react";
-import type { QuoteData } from "@/lib/analytics";
+import { AlertTriangle, Check } from "lucide-react";
+import type { ProductData, QuoteData } from "@/lib/analytics";
+import { countryName, flagOf } from "@/lib/countries";
+import { getT } from "@/lib/data";
 import * as f from "@/lib/format";
-import type { ProductIntel } from "@/lib/intel/engine";
-import { EXPLAIN } from "@/lib/intel/explain";
+import type { ComparisonRow } from "@/lib/intel/comparison";
+import type { CompareColumn } from "@/lib/intel/decision";
+import { explain } from "@/lib/intel/explain";
+import { COMPARABILITY_LABEL, KIND_LABEL } from "@/lib/intel/labels";
 import { formatSpecs } from "@/lib/validation";
-import { QuoteDialog, type ProductOption, type SupplierOption } from "../dialogs";
+import { QuoteDialog } from "../dialogs";
 import { Hint } from "../hint";
 import { SourceTag } from "../import/labels";
-import { Empty, Table, Td, Th, cx, rowClass } from "../ui";
-import { AgeTag, ComparabilityBadge } from "./badges";
+import { Basis, Delta, Empty, cx } from "../ui";
+import { ConfidenceBadge } from "./badges";
 import { OfferDialog } from "./controls";
 
-/** The disclaimer that must travel with every price comparison. */
-export function PriceOnlyNotice({ className }: { className?: string }) {
+/** The reminder that travels with every price comparison. */
+export async function PriceOnlyNotice({ className }: { className?: string }) {
+  const t = await getT();
   return (
-    <div className={cx("flex gap-3 rounded-lg border border-caution/20 bg-caution-wash px-4 py-3", className)}>
-      <Info size={16} className="mt-0.5 shrink-0 text-caution" />
-      <div className="text-[13px]">
-        <div className="font-semibold text-ink">Quoted / purchase prices only</div>
-        <p className="mt-0.5 text-ink-2">
-          Freight, duties, FX, inventory, quality and financial costs are not included yet. A lower price is not necessarily a lower cost.
-        </p>
-      </div>
-    </div>
+    <p className={cx("flex items-start gap-2 rounded-lg bg-caution-wash px-4 py-3 text-[13px] text-ink-2", className)}>
+      <AlertTriangle size={15} className="mt-0.5 shrink-0 text-caution" aria-hidden />
+      <span>
+        <span className="font-semibold text-ink">{t("Prices only.")}</span> {t("Transport, duties, exchange rate, stock and quality are not included yet: a lower price is not necessarily a lower cost.")}
+      </span>
+    </p>
   );
 }
 
+const cell = "border-b border-rule px-4 py-2.5 align-top";
+
 /**
- * Every supplier with a price for the product, on the same basis. Listed —
- * current supplier first, then alphabetically — never ranked.
+ * Suppliers side by side, like comparing flights: one column each, the same
+ * few rows. What each is best at is stated as a fact; no winner is named —
+ * the buyer decides. The rest is under "More details".
  */
-export function SupplierComparison({
-  intel,
-  quotes,
-  products,
-  suppliers,
-}: {
-  intel: ProductIntel;
-  quotes: QuoteData[];
-  products: ProductOption[];
-  suppliers: SupplierOption[];
-}) {
-  const { product, comparison } = intel;
-  if (comparison.length === 0) {
-    return <Empty title="No prices on record" body="Add a purchase or a quote to start comparing suppliers." />;
+export async function SupplierComparison({ product, columns, rows, quotes }: { product: ProductData; columns: CompareColumn[]; rows: ComparisonRow[]; quotes: QuoteData[] }) {
+  const t = await getT();
+  const EXPLAIN = explain(t);
+  if (columns.length === 0) {
+    return (
+      <div className="rounded-lg border border-dashed border-rule-strong">
+        <Empty title={t("No prices on record yet")} body={t("Add a purchase or a quote for this product to start comparing suppliers.")} action={<QuoteDialog defaultProductId={product.id} trigger={{ label: t("Add quote"), variant: "primary" }} />} />
+      </div>
+    );
   }
+  const unit = product.unit;
+  const tone = (c: CompareColumn) => (c.isCurrent ? "bg-well" : "bg-canvas");
+  const none = <span className="text-ink-4">—</span>;
+  const line = (label: React.ReactNode, render: (c: CompareColumn) => React.ReactNode, last = false) => (
+    <tr>
+      <th scope="row" className={cx(cell, "sticky left-0 z-[1] w-[150px] min-w-[130px] bg-canvas text-left text-[13px] font-normal text-ink-3", last && "border-b-0")}>
+        {label}
+      </th>
+      {columns.map((c) => (
+        <td key={c.supplierId} className={cx(cell, "num border-l", tone(c), last && "border-b-0")}>
+          {render(c)}
+        </td>
+      ))}
+    </tr>
+  );
+
   return (
-    <Table>
-      <thead>
-        <tr>
-          <Th>Supplier</Th>
-          <Th>Country</Th>
-          <Th align="right">Latest price</Th>
-          <Th>Basis</Th>
-          <Th align="right">MOQ</Th>
-          <Th align="right">Lead time</Th>
-          <Th>Payment</Th>
-          <Th>
-            Last update <Hint text={EXPLAIN.quoteAge} />
-          </Th>
-          <Th>Currency</Th>
-          <Th align="right">
-            Price difference <Hint text={EXPLAIN.priceDifference} />
-          </Th>
-          <Th>
-            Comparability <Hint text={EXPLAIN.comparability} />
-          </Th>
-          <Th className="w-16" />
-        </tr>
-      </thead>
-      <tbody>
-        {comparison.map((r) => {
-          const quote = r.kind === "quote" ? quotes.find((q) => q.id === r.recordId) : undefined;
-          const notes = [...r.comparabilityReasons];
-          return (
-            <tr key={r.supplier.id} className={rowClass()}>
-              <Td className="max-w-[320px] whitespace-normal! py-2.5 align-top">
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <Link href={`/suppliers/${r.supplier.id}`} className="font-medium hover:text-ledger">
-                    {r.supplier.name}
-                  </Link>
-                  {r.isCurrent && <span className="inline-flex h-[20px] items-center rounded-full bg-ink px-2 text-[11.5px] font-medium text-white">Current</span>}
-                  {r.isLowest && <span className="inline-flex h-[20px] items-center rounded-full border border-rule-strong px-2 text-[11.5px] font-medium text-ink-2">Lowest quoted price</span>}
-                </div>
-                {r.specDifferences.length > 0 && (
-                  <div className="mt-1 flex items-start gap-1.5 text-[12px] text-caution">
-                    <AlertTriangle size={12} className="mt-0.5 shrink-0" />
-                    Specification difference: {r.specDifferences.map((d) => `${d.name} ${d.theirs} (yours ${d.ours})`).join(", ")}
-                  </div>
-                )}
-                {notes
-                  .filter((n) => !n.startsWith("Specification difference"))
-                  .map((n) => (
-                    <div key={n} className="mt-1 text-[12px] text-ink-3">
-                      {n}
-                    </div>
-                  ))}
-              </Td>
-              <Td muted className="align-top">{r.supplier.country ?? "—"}</Td>
-              <Td align="right" className="align-top">
-                {r.price != null ? (
-                  <>
-                    <span className="text-[14px] font-semibold">{r.priceEUR != null ? f.price(r.priceEUR) : f.price(r.price, r.currency ?? "EUR")}</span>
-                    <span className="text-ink-3">/{product.unit}</span>
-                    {r.priceEUR != null && r.currency !== "EUR" && (
-                      <div className="text-[12px] text-ink-3">{f.price(r.price, r.currency ?? "EUR")} at the recorded rate</div>
-                    )}
-                    {r.fxRequired && <div className="text-[12px] text-caution">FX conversion required</div>}
-                  </>
-                ) : (
-                  <span className="text-ink-4">—</span>
-                )}
-              </Td>
-              <Td className="align-top">
-                <div className="text-ink-2">{r.kind === "quote" ? "Quote" : r.kind === "purchase" ? "Purchase" : "—"}</div>
-                {r.source && (
-                  <div className="mt-0.5">
-                    <SourceTag source={r.source} doc={r.sourceDoc} />
-                    {r.reference && <span className="ml-1.5 text-[12px] text-ink-3">{r.reference}</span>}
-                  </div>
-                )}
-              </Td>
-              <Td align="right" muted className="align-top">{r.moq != null ? f.quantity(r.moq, product.unit) : "—"}</Td>
-              <Td align="right" className={cx("align-top", r.termsFromDefaults && "text-ink-3")}>{r.leadTimeDays != null ? f.days(r.leadTimeDays) : "—"}</Td>
-              <Td className={cx("align-top", r.termsFromDefaults && "text-ink-3")}>
-                {f.paymentTerms(r.paymentTermsDays)}
-                {r.incoterm && <span className="ml-1.5 font-mono text-[11px] text-ink-3">{r.incoterm}</span>}
-              </Td>
-              <Td className="align-top">
-                <div className="num text-ink-2">{f.date(r.date)}</div>
-                <div className="text-[12px]">
-                  <AgeTag age={r.age} days={r.ageDays} expired={r.expired} />
-                </div>
-              </Td>
-              <Td muted className="align-top">{r.currency ?? "—"}</Td>
-              <Td align="right" className="align-top">
-                {r.isCurrent ? (
-                  <span className="text-ink-3">Current</span>
-                ) : r.differencePct != null ? (
-                  <span className="font-medium text-ink">
-                    {f.pct(r.differencePct)}
-                    <span className="block text-[12px] font-normal text-ink-3">
-                      {r.difference! > 0 ? "+" : ""}
-                      {f.price(r.difference)}/{product.unit}
+    <div className="overflow-x-auto rounded-lg border border-rule">
+      <table className="w-full border-separate border-spacing-0 text-[13.5px]" style={{ minWidth: 150 + columns.length * 190 }}>
+        <thead>
+          <tr>
+            <th className={cx(cell, "sticky left-0 z-[1] bg-canvas text-left text-[12px] font-medium text-ink-3")}>{t("Supplier")}</th>
+            {columns.map((c) => (
+              <th key={c.supplierId} scope="col" className={cx(cell, "border-l text-left font-normal", tone(c))}>
+                <div className="flex items-center gap-2">
+                  {flagOf(c.country) && (
+                    <span aria-hidden className="text-[18px] leading-none">
+                      {flagOf(c.country)}
                     </span>
-                  </span>
-                ) : (
-                  <span className="text-ink-4">—</span>
-                )}
-              </Td>
-              <Td className="align-top">{r.isCurrent ? <span className="text-ink-4">—</span> : <ComparabilityBadge level={r.comparability} />}</Td>
-              <Td className="align-top">
-                <div className="flex items-center justify-end">
-                  {!r.isCurrent && (
-                    <OfferDialog
-                      supplierId={r.supplier.id}
-                      supplierName={r.supplier.name}
-                      productId={product.id}
-                      productName={product.name}
-                      productSpecs={formatSpecs(product.specs)}
-                      override={r.link?.comparabilityOverride ?? null}
-                      note={r.link?.comparabilityNote ?? ""}
-                      specs={formatSpecs(r.link?.specs)}
-                      computed={r.overridden ? "overridden by you" : r.comparability === "comparable" ? "comparable" : r.comparability === "partial" ? "partially comparable" : "not comparable"}
-                    />
                   )}
-                  {quote && <QuoteDialog products={products} suppliers={suppliers} quote={quote} trigger={{ label: "Edit quote", iconOnly: true }} />}
+                  <span className="min-w-0">
+                    <Link href={`/suppliers/${c.supplierId}`} className="block truncate text-[14px] font-semibold hover:underline">
+                      {c.supplierName}
+                    </Link>
+                    <span className="block text-[12px] text-ink-3">{countryName(c.country, t.locale) ?? t("Country not set")}</span>
+                  </span>
                 </div>
-              </Td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </Table>
+                <div className="mt-2 flex min-h-[20px] flex-wrap gap-1">
+                  {c.isCurrent && <span className="inline-flex h-[20px] items-center rounded-full bg-ink px-2 text-[11.5px] font-medium text-white">{t("You buy here")}</span>}
+                  {c.highlights.map((h) => (
+                    <span key={h} className="inline-flex h-[20px] items-center rounded-full bg-ledger-wash px-2 text-[11.5px] font-medium text-ledger">
+                      {h}
+                    </span>
+                  ))}
+                  {c.setAside && <span className="inline-flex h-[20px] items-center rounded-full bg-wash px-2 text-[11.5px] font-medium text-ink-3">{t("Set aside by you")}</span>}
+                </div>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {line(t("Quoted price"), (c) => (
+            <>
+              <span className="text-[19px] leading-none font-semibold tracking-[-0.02em]">
+                {c.priceEUR != null ? f.priceShort(c.priceEUR) : f.price(c.quotedPrice, c.currency)}
+                <span className="text-[12.5px] font-medium text-ink-3">/{unit}</span>
+              </span>
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[12.5px] font-normal">
+                <Basis>{t(KIND_LABEL[c.kind])}</Basis>
+                {c.isCurrent ? <span className="text-ink-3">{t("what you pay")}</span> : c.notComparableReason ? <span className="text-caution">{t("can't be compared yet")}</span> : <Delta value={c.differencePct} />}
+              </div>
+            </>
+          ))}
+          {line(
+            <span className="inline-flex items-center gap-1.5">
+              {t("Estimated total cost")} <Hint text={EXPLAIN.trueCost} />
+            </span>,
+            () => <span className="text-ink-4">{t("Not estimated yet")}</span>,
+          )}
+          {line(t("Minimum order"), (c) => (c.moq != null ? f.quantity(c.moq, unit) : none))}
+          {line(t("Lead time"), (c) => (c.leadTimeDays != null ? f.days(c.leadTimeDays, t) : none))}
+          {line(t("Payment"), (c) => (c.paymentTermsDays != null ? f.paymentTerms(c.paymentTermsDays, t) : none))}
+          {line(t("Quality"), () => <span className="text-ink-4">{t("Not tracked yet")}</span>)}
+          {line(t("Potential saving"), (c) =>
+            c.potentialSaving != null && !c.setAside ? (
+              <span className="inline-flex flex-wrap items-center gap-1.5">
+                <span className="font-semibold">{t("{amount}/yr", { amount: f.moneyApprox(c.potentialSaving) })}</span>
+                <ConfidenceBadge level={c.confidence} />
+              </span>
+            ) : (
+              none
+            ),
+          )}
+          {line(t("To check"), (c) => {
+            const warns = c.flags.filter((x) => x.tone === "warn" && x.key !== "quality");
+            if (c.notComparableReason) return <span className="text-[12.5px] font-normal text-caution">{c.notComparableReason}</span>;
+            if (c.isCurrent) return none;
+            if (!warns.length)
+              return (
+                <span className="inline-flex items-center gap-1.5 text-[12.5px] font-normal text-ink-3">
+                  <Check size={12} strokeWidth={2.25} className="text-down" aria-hidden /> {t("Nothing on the offer itself")}
+                </span>
+              );
+            return (
+              <ul className="space-y-1 text-[12.5px] font-normal">
+                {warns.slice(0, 3).map((x) => (
+                  <li key={x.key} className="flex items-start gap-1.5 text-caution">
+                    <AlertTriangle size={12} strokeWidth={2} className="mt-0.5 shrink-0" aria-hidden /> {x.label}
+                  </li>
+                ))}
+              </ul>
+            );
+          })}
+          {line(
+            t("Details"),
+            (c) => {
+              const row = rows.find((r) => r.supplier.id === c.supplierId);
+              const quote = row?.kind === "quote" ? quotes.find((q) => q.id === row.recordId) : undefined;
+              return (
+                <details className="group text-[12.5px] font-normal">
+                  <summary className="cursor-pointer list-none font-medium text-ledger select-none hover:underline [&::-webkit-details-marker]:hidden">
+                    <span className="group-open:hidden">{t("Show")}</span>
+                    <span className="hidden group-open:inline">{t("Hide")}</span>
+                  </summary>
+                  <div className="mt-2 space-y-1 text-ink-2">
+                    {c.currency !== "EUR" && (
+                      <div>{t("As quoted: {price}", { price: `${f.price(c.quotedPrice, c.currency)}/${unit}` })}</div>
+                    )}
+                    <div>{t(c.kind === "quote" ? "Quoted on {date}" : "Paid on {date}", { date: f.date(c.date) })}</div>
+                    {c.incoterm && <div>Incoterm {c.incoterm}</div>}
+                    {row?.source && (
+                      <div>
+                        <SourceTag source={row.source} doc={row.sourceDoc} />
+                      </div>
+                    )}
+                    {!c.isCurrent &&
+                      c.flags
+                        .filter((x) => x.tone === "ok")
+                        .map((x) => (
+                          <div key={x.key} className="flex items-start gap-1.5 text-ink-3">
+                            <Check size={12} strokeWidth={2.25} className="mt-0.5 shrink-0 text-down" aria-hidden /> {x.label}
+                          </div>
+                        ))}
+                    {row && !c.isCurrent && row.comparabilityReasons.length > 0 && <div className="text-ink-3">{row.comparabilityReasons.join(" · ")}</div>}
+                    <div className="flex flex-wrap items-center gap-1 pt-1">
+                      {quote && <QuoteDialog quote={quote} trigger={{ label: t("Edit quote"), size: "sm", variant: "ghost" }} />}
+                      {row && !c.isCurrent && (
+                        <OfferDialog
+                          supplierId={c.supplierId}
+                          supplierName={c.supplierName}
+                          productId={product.id}
+                          productName={product.name}
+                          productSpecs={formatSpecs(product.specs)}
+                          override={row.link?.comparabilityOverride ?? null}
+                          note={row.link?.comparabilityNote ?? ""}
+                          specs={formatSpecs(row.link?.specs)}
+                          computed={row.overridden ? t("overridden by you") : t(COMPARABILITY_LABEL[row.comparability]).toLowerCase()}
+                        />
+                      )}
+                      {c.opportunityKey && (
+                        <Link href={`/opportunities/${c.opportunityKey}`} className="px-2 font-medium text-ledger hover:underline">
+                          {t("What's missing")}
+                        </Link>
+                      )}
+                    </div>
+                  </div>
+                </details>
+              );
+            },
+            true,
+          )}
+        </tbody>
+      </table>
+    </div>
   );
 }

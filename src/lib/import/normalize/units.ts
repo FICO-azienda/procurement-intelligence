@@ -7,12 +7,14 @@
  * their content differs per product.
  */
 
-export type Dimension = "mass" | "volume" | "length" | "area" | "count" | "pack";
+import type { Msg } from "../../i18n";
+
+export type Dimension = "mass" | "volume" | "length" | "area" | "count" | "pack" | "time";
 
 export interface UnitDef {
   /** Canonical code stored in the database. */
   code: string;
-  label: string;
+  label: Msg;
   dimension: Dimension;
   /** Size in the dimension's base unit (kg, l, m, m², pcs). Null = not convertible. */
   factor: number | null;
@@ -24,15 +26,19 @@ export const UNITS: UnitDef[] = [
   { code: "g", label: "grams", dimension: "mass", factor: 0.001, synonyms: ["g", "gr", "grs", "gram", "grams", "gramme", "grammo", "grammi"] },
   { code: "t", label: "tonnes", dimension: "mass", factor: 1000, synonyms: ["t", "ton", "tons", "tonne", "tonnes", "tonn", "tonnellata", "tonnellate", "metric ton", "metric tons"] },
   { code: "l", label: "litres", dimension: "volume", factor: 1, synonyms: ["l", "lt", "lts", "ltr", "ltrs", "litre", "litres", "liter", "liters", "litro", "litri"] },
+  { code: "hl", label: "hectolitres", dimension: "volume", factor: 100, synonyms: ["hl", "hectolitre", "hectolitres", "hectoliter", "ettolitro", "ettolitri"] },
+  { code: "m³", label: "cubic metres", dimension: "volume", factor: 1000, synonyms: ["m³", "m3", "mc", "cbm", "metro cubo", "metri cubi", "cubic meter", "cubic meters", "cubic metre", "cubic metres"] },
   { code: "ml", label: "millilitres", dimension: "volume", factor: 0.001, synonyms: ["ml", "millilitre", "millilitres", "milliliter", "milliliters", "millilitro", "millilitri"] },
   { code: "m", label: "metres", dimension: "length", factor: 1, synonyms: ["m", "mt", "mtr", "mtrs", "meter", "meters", "metre", "metres", "metro", "metri"] },
   { code: "cm", label: "centimetres", dimension: "length", factor: 0.01, synonyms: ["cm", "centimeter", "centimeters", "centimetre", "centimetres", "centimetro", "centimetri"] },
   { code: "mm", label: "millimetres", dimension: "length", factor: 0.001, synonyms: ["mm", "millimeter", "millimeters", "millimetre", "millimetres", "millimetro", "millimetri"] },
   { code: "m²", label: "square metres", dimension: "area", factor: 1, synonyms: ["m²", "m2", "mq", "sqm", "sq m", "square meter", "square meters", "square metre", "square metres", "metri quadri", "metro quadro"] },
-  { code: "pcs", label: "pieces", dimension: "count", factor: 1, synonyms: ["pcs", "pc", "pce", "pces", "piece", "pieces", "pz", "pzz", "pezzo", "pezzi", "nr", "n", "no", "num", "numero", "ea", "each", "unit", "units", "unita", "u", "un", "stk", "stuck"] },
-  { code: "box", label: "boxes", dimension: "pack", factor: null, synonyms: ["box", "boxes", "scatola", "scatole", "cf", "conf", "confezione", "confezioni", "pack", "packs", "pkt", "pk", "ct", "ctn", "carton", "cartons", "cartone", "cartoni"] },
+  { code: "pcs", label: "pieces", dimension: "count", factor: 1, synonyms: ["pcs", "pc", "pce", "pces", "piece", "pieces", "pz", "pzz", "pezzo", "pezzi", "nr", "n", "no", "num", "numero", "ea", "each", "unit", "units", "unita", "u", "un", "stk", "stuck", "st", "cad", "cadauno", "pezzo/i"] },
+  { code: "box", label: "boxes", dimension: "pack", factor: null, synonyms: ["box", "boxes", "scatola", "scatole", "cf", "conf", "confezione", "confezioni", "pack", "packs", "pkt", "pk", "ct", "ctn", "crtn", "carton", "cartons", "cartone", "cartoni"] },
+  { code: "bottle", label: "bottles", dimension: "pack", factor: null, synonyms: ["bottle", "bottles", "bt", "btl", "bott", "bottiglia", "bottiglie"] },
   { code: "roll", label: "rolls", dimension: "pack", factor: null, synonyms: ["roll", "rolls", "rotolo", "rotoli", "bobina", "bobine"] },
   { code: "pallet", label: "pallets", dimension: "pack", factor: null, synonyms: ["pallet", "pallets", "bancale", "bancali", "plt"] },
+  { code: "h", label: "hours", dimension: "time", factor: 1, synonyms: ["h", "hr", "hrs", "hour", "hours", "ora", "ore"] },
 ];
 
 const BY_SPELLING = new Map<string, UnitDef>();

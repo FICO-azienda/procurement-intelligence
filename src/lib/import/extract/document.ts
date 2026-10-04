@@ -7,6 +7,7 @@
  * can't be verified get a low confidence and go to review.
  */
 import { OWN_COMPANY_NAMES, OWN_VAT_NUMBERS } from "../../config";
+import { say } from "../../i18n";
 import { currencyInText } from "../normalize/currency";
 import { findDate, parseDate } from "../normalize/dates";
 import { amountsMatch, detectDecimalStyle, parseNumber, round2, type DecimalStyle } from "../normalize/numbers";
@@ -70,9 +71,17 @@ const NOT_ITEM = /\b(iban|swift|bic|banca|bank|p\.?\s?iva|partita iva|vat\s*(no|
 /** Lines that state terms, not products (their values are read by the field finders). */
 const TERMS_LINE = /^\s*(minimum order|minimo\s+d['’]?\s*ordine|moq|lotto minimo|quantit[aà] minima|lead\s*time|tempi di consegna|tempo di consegna|delivery|consegna|payment|pagamento|condizioni|valid|validit|scadenza|freight|trasporto|incoterm|resa|quote date|data offerta|date|data)\b/i;
 
-function isOwn(text: string) {
+/** Names and VAT numbers of the company using the app: the customer on a document, never the supplier. */
+export interface OwnCompany {
+  names: string[];
+  vats: string[];
+}
+
+const DEFAULT_OWN: OwnCompany = { names: OWN_COMPANY_NAMES, vats: OWN_VAT_NUMBERS };
+
+function isOwn(text: string, own: OwnCompany) {
   const k = companyKey(text);
-  return OWN_COMPANY_NAMES.some((n) => {
+  return own.names.some((n) => {
     const own = companyKey(n);
     return own && (k === own || k.includes(own));
   });
@@ -87,7 +96,7 @@ function findLabelled(lines: PdfLine[], label: RegExp, value: RegExp): { match: 
   return null;
 }
 
-export function extractDocument(lines: PdfLine[], requested: DocKind): DocumentExtraction {
+export function extractDocument(lines: PdfLine[], requested: DocKind, ownCompany: OwnCompany = DEFAULT_OWN): DocumentExtraction {
   const fullText = lines.map((l) => l.text).join("\n");
   const style: DecimalStyle | null = detectDecimalStyle(
     lines.flatMap((l) => l.text.split(/\s+/)).filter((t) => NUMERIC_TOKEN.test(t)),
@@ -103,7 +112,7 @@ export function extractDocument(lines: PdfLine[], requested: DocKind): DocumentE
       : null;
 
   // ---- Supplier: VAT numbers, then the letterhead line with a legal form
-  const ownVats = new Set(OWN_VAT_NUMBERS.map(vatKey));
+  const ownVats = new Set(ownCompany.vats.map(vatKey));
   const vats: string[] = [];
   for (const m of fullText.matchAll(/(?:p\.?\s?iva|partita\s+iva|vat(?:\s*(?:no|number|reg\.?|id))?|ust-?idnr|tax\s*id)\.?[ \t]*[:.]?[ \t]*((?:[A-Z]{2} ?)?[0-9][0-9 ]{6,16}[0-9])\b/gi)) {
     const v = m[1].replace(/\s/g, "");
@@ -118,7 +127,7 @@ export function extractDocument(lines: PdfLine[], requested: DocKind): DocumentE
     if (CUSTOMER_LABEL.test(l.text)) customerBlock = i;
     // Letterhead: a line with a legal form, not ours, not inside the customer block.
     for (const cell of l.cells) {
-      if (LEGAL_FORM.test(cell) && !isOwn(cell) && (customerBlock < 0 || i > customerBlock + 3 || i < customerBlock)) {
+      if (LEGAL_FORM.test(cell) && !isOwn(cell, ownCompany) && (customerBlock < 0 || i > customerBlock + 3 || i < customerBlock)) {
         const name = tidy(cell.replace(CUSTOMER_LABEL, "").replace(/^[:\s-]+/, ""));
         if (name.length >= 3 && !/\d{5,}/.test(name)) {
           supplierName = { value: name, confidence: 0.8, raw: l.text };
@@ -129,7 +138,7 @@ export function extractDocument(lines: PdfLine[], requested: DocKind): DocumentE
     if (supplierName.value) break;
   }
   if (!supplierName.value) {
-    const first = top.find((l) => /[a-z]{3,}/i.test(l.text) && !isOwn(l.text) && !/(fattura|invoice|offerta|preventivo|quotation)/i.test(l.text));
+    const first = top.find((l) => /[a-z]{3,}/i.test(l.text) && !isOwn(l.text, ownCompany) && !/(fattura|invoice|offerta|preventivo|quotation)/i.test(l.text));
     if (first) supplierName = { value: tidy(first.cells[0]), confidence: 0.4, raw: first.text };
   }
 
@@ -391,21 +400,21 @@ export function documentToItems(doc: DocumentExtraction): DraftItem[] {
       const lineGoods = l.amount ?? (l.quantity ?? 0) * (l.unitPrice ?? 0);
       data.freight = round2((freightTotal * lineGoods) / goods);
       if (doc.lines.length > 1) {
-        issues.push({ code: "freight_allocated", severity: "info", field: "freight", message: `Invoice freight ${freightTotal.toLocaleString("it-IT")} split across lines by value` });
+        issues.push({ code: "freight_allocated", severity: "info", field: "freight", ...say("Invoice freight {amount} split across lines by value", { amount: freightTotal.toLocaleString("it-IT") }) });
       }
     }
     if (doc.kind === "quote" && doc.freight.value != null) data.freight = doc.freight.value;
     if (l.ambiguousNumbers) {
-      issues.push({ code: "number_format_uncertain", severity: "review", message: "Some numbers on this line could be read in two ways — check quantity and price" });
+      issues.push({ code: "number_format_uncertain", severity: "review", ...say("Some numbers on this line could be read in two ways — check quantity and price") });
     }
     if (doc.date.value && doc.date.confidence < 0.7) {
-      issues.push({ code: "low_confidence", severity: "review", field: "date", message: "Document date found without a label — check it" });
+      issues.push({ code: "low_confidence", severity: "review", field: "date", ...say("Document date found without a label — check it") });
     }
     if (doc.detectedKind && doc.detectedKind !== doc.kind) {
       issues.push({
         code: "low_confidence",
         severity: "review",
-        message: `This document looks like ${doc.detectedKind === "quote" ? "a quote" : "an invoice"}, but was uploaded as ${doc.kind === "quote" ? "a quote" : "an invoice"}`,
+        ...say(doc.detectedKind === "quote" ? "This document looks like a quote, but was uploaded as an invoice" : "This document looks like an invoice, but was uploaded as a quote"),
       });
     }
     return {

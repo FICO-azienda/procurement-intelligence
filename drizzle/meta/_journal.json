@@ -22,6 +22,55 @@
       "when": 1790884858237,
       "tag": "0002_price_intelligence",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1790962238830,
+      "tag": "0003_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791020094526,
+      "tag": "0004_language",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791039795659,
+      "tag": "0005_catalog",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791050984030,
+      "tag": "0006_product_mapper",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1791111942682,
+      "tag": "0007_sourcing",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791142621315,
+      "tag": "0008_deep_research",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1791149201573,
+      "tag": "0009_rfq_requests",
+      "breakpoints": true
     }
   ]
 }

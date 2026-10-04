@@ -13,6 +13,7 @@
  *   (the last purchase on/before the window start, otherwise the oldest one).
  */
 
+import { TIME_ZONE } from "./config";
 import { conversionFactor } from "./import/normalize/units";
 
 export const RULES = {
@@ -47,6 +48,17 @@ export interface ProductData {
   name: string;
   description: string | null;
   category: string | null;
+  /**
+   * What it is for the company's spend (lib/catalog/kinds.ts). Absent or
+   * "needs_review" counts as a product of the catalogue.
+   */
+  kind?: string | null;
+  subcategory?: string | null;
+  familyId?: string | null;
+  /** What tells it from the others of its family ("TG 1204"). */
+  variant?: string | null;
+  /** False while its name and category are still what the import wrote (not confirmed by the user). */
+  mapped?: boolean;
   unit: string;
   technicalSpecifications: string | null;
   /** Structured specifications (name → value). */
@@ -77,6 +89,8 @@ export interface PurchaseData {
   otherCosts: number;
   totalAmount: number;
   invoiceReference: string | null;
+  /** The line's number on the invoice, when the document gave one. */
+  invoiceLine?: number | null;
   paymentTermsDays: number | null;
   incoterm: string | null;
   originalDescription: string | null;
@@ -118,7 +132,8 @@ export interface Dataset {
 // ---------- Date helpers (ISO date strings compare lexicographically) ----------
 
 export function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
+  // The calendar day where the company works — not UTC, or "today" is yesterday until 2 a.m.
+  return new Date().toLocaleDateString("sv-SE", { timeZone: TIME_ZONE });
 }
 
 export function minusMonths(iso: string, months: number): string {

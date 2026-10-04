@@ -1,10 +1,13 @@
 /**
- * Generates the import test files in test-data/ (scenarios A–G + a PDF quote).
+ * Generates the import test files in test-data/ (scenarios A–H + a PDF quote).
  * Run: npx tsx scripts/make-test-data.ts
  * They work against the demo dataset (npm run db:reset).
  */
-import { mkdirSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
+import { strToU8, zipSync } from "fflate";
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import * as XLSX from "xlsx";
 
@@ -161,7 +164,125 @@ async function quotePdf() {
   write("quote-turkish-wax.pdf", await pdf.save());
 }
 
-Promise.all([invoicePdf(), quotePdf()]).catch((err) => {
+// I — an Italian electronic invoice (FatturaPA), as it comes from the exchange system: a line with a
+// discount, a note without amounts, transport charged apart. And the same file signed (.p7m).
+const E_INVOICE = `<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="fatturaordinaria_v1.2.1.xsl"?>
+<p:FatturaElettronica versione="FPR12" xmlns:p="http://ivaservizi.agenziaentrate.gov.it/docs/xsd/fatture/v1.2" xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+  <FatturaElettronicaHeader>
+    <DatiTrasmissione>
+      <IdTrasmittente><IdPaese>IT</IdPaese><IdCodice>01234567890</IdCodice></IdTrasmittente>
+      <ProgressivoInvio>00118</ProgressivoInvio>
+      <FormatoTrasmissione>FPR12</FormatoTrasmissione>
+      <CodiceDestinatario>0000000</CodiceDestinatario>
+    </DatiTrasmissione>
+    <CedentePrestatore>
+      <DatiAnagrafici>
+        <IdFiscaleIVA><IdPaese>IT</IdPaese><IdCodice>01234567890</IdCodice></IdFiscaleIVA>
+        <Anagrafica><Denominazione>ABC Srl</Denominazione></Anagrafica>
+        <RegimeFiscale>RF01</RegimeFiscale>
+      </DatiAnagrafici>
+      <Sede><Indirizzo>Via delle Industrie 12</Indirizzo><CAP>20100</CAP><Comune>Milano</Comune><Provincia>MI</Provincia><Nazione>IT</Nazione></Sede>
+    </CedentePrestatore>
+    <CessionarioCommittente>
+      <DatiAnagrafici>
+        <IdFiscaleIVA><IdPaese>IT</IdPaese><IdCodice>09876543210</IdCodice></IdFiscaleIVA>
+        <Anagrafica><Denominazione>Cereria Cicogna</Denominazione></Anagrafica>
+      </DatiAnagrafici>
+      <Sede><Indirizzo>Via Roma 1</Indirizzo><CAP>37100</CAP><Comune>Verona</Comune><Provincia>VR</Provincia><Nazione>IT</Nazione></Sede>
+    </CessionarioCommittente>
+  </FatturaElettronicaHeader>
+  <FatturaElettronicaBody>
+    <DatiGenerali>
+      <DatiGeneraliDocumento>
+        <TipoDocumento>TD01</TipoDocumento>
+        <Divisa>EUR</Divisa>
+        <Data>2026-09-30</Data>
+        <Numero>FE/2026/118</Numero>
+        <ImportoTotaleDocumento>4312.70</ImportoTotaleDocumento>
+      </DatiGeneraliDocumento>
+    </DatiGenerali>
+    <DatiBeniServizi>
+      <DettaglioLinee>
+        <NumeroLinea>1</NumeroLinea>
+        <Descrizione>Vs. ordine n. 123 del 01/09/2026 - DDT n. 456 del 28/09/2026</Descrizione>
+        <PrezzoUnitario>0.00</PrezzoUnitario>
+        <PrezzoTotale>0.00</PrezzoTotale>
+        <AliquotaIVA>22.00</AliquotaIVA>
+      </DettaglioLinee>
+      <DettaglioLinee>
+        <NumeroLinea>2</NumeroLinea>
+        <CodiceArticolo><CodiceTipo>FORNITORE</CodiceTipo><CodiceValore>PAR5860</CodiceValore></CodiceArticolo>
+        <CodiceArticolo><CodiceTipo>EAN</CodiceTipo><CodiceValore>8001234567890</CodiceValore></CodiceArticolo>
+        <Descrizione>PARAFFINA 58/60 IN PASTIGLIE</Descrizione>
+        <Quantita>2000.00</Quantita>
+        <UnitaMisura>KG</UnitaMisura>
+        <PrezzoUnitario>1.60000000</PrezzoUnitario>
+        <PrezzoTotale>3200.00</PrezzoTotale>
+        <AliquotaIVA>22.00</AliquotaIVA>
+      </DettaglioLinee>
+      <DettaglioLinee>
+        <NumeroLinea>3</NumeroLinea>
+        <CodiceArticolo><CodiceTipo>FORNITORE</CodiceTipo><CodiceValore>STP120</CodiceValore></CodiceArticolo>
+        <Descrizione>Stoppino cotone 120 mm &amp; fondello</Descrizione>
+        <Quantita>10000.00</Quantita>
+        <UnitaMisura>PZ</UnitaMisura>
+        <PrezzoUnitario>0.03500000</PrezzoUnitario>
+        <ScontoMaggiorazione><Tipo>SC</Tipo><Percentuale>10.00</Percentuale></ScontoMaggiorazione>
+        <PrezzoTotale>315.00</PrezzoTotale>
+        <AliquotaIVA>22.00</AliquotaIVA>
+      </DettaglioLinee>
+      <DettaglioLinee>
+        <NumeroLinea>4</NumeroLinea>
+        <TipoCessionePrestazione>AC</TipoCessionePrestazione>
+        <Descrizione>Spese di trasporto</Descrizione>
+        <PrezzoUnitario>20.00</PrezzoUnitario>
+        <PrezzoTotale>20.00</PrezzoTotale>
+        <AliquotaIVA>22.00</AliquotaIVA>
+      </DettaglioLinee>
+      <DatiRiepilogo><AliquotaIVA>22.00</AliquotaIVA><ImponibileImporto>3535.00</ImponibileImporto><Imposta>777.70</Imposta></DatiRiepilogo>
+    </DatiBeniServizi>
+    <DatiPagamento>
+      <CondizioniPagamento>TP02</CondizioniPagamento>
+      <DettaglioPagamento><ModalitaPagamento>MP05</ModalitaPagamento><DataScadenzaPagamento>2026-11-30</DataScadenzaPagamento><ImportoPagamento>4312.70</ImportoPagamento></DettaglioPagamento>
+    </DatiPagamento>
+  </FatturaElettronicaBody>
+</p:FatturaElettronica>
+`;
+/** What the exchange system adds next to each invoice: XML, but not an invoice. */
+const METADATA = `<?xml version="1.0" encoding="UTF-8"?><ns2:FileMetadati xmlns:ns2="http://www.fatturapa.gov.it/sdi/messaggi/v1.0" versione="1.0"><IdentificativoSdI>111</IdentificativoSdI><NomeFile>IT01234567890_00118.xml</NomeFile></ns2:FileMetadati>`;
+
+function eInvoice() {
+  write("scenario-i-fattura-elettronica.xml", E_INVOICE);
+  // Signed like the files suppliers send (.xml.p7m): needs openssl; skipped where it is not installed.
+  const dir = mkdtempSync(path.join(tmpdir(), "p7m-"));
+  try {
+    const key = path.join(dir, "key.pem");
+    const cert = path.join(dir, "cert.pem");
+    execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", key, "-out", cert, "-days", "3650", "-subj", "/CN=ABC Srl (test)"], { stdio: "ignore" });
+    execFileSync("openssl", ["smime", "-sign", "-binary", "-nodetach", "-outform", "DER", "-in", path.join(OUT, "scenario-i-fattura-elettronica.xml"), "-signer", cert, "-inkey", key, "-out", path.join(OUT, "scenario-i-fattura-elettronica.xml.p7m")], { stdio: "ignore" });
+    console.log("wrote", "scenario-i-fattura-elettronica.xml.p7m");
+  } catch {
+    console.log("skipped scenario-i-fattura-elettronica.xml.p7m (openssl not available)");
+  }
+}
+
+// H — a zip, as a folder of documents arrives: an invoice, a quote in a subfolder, a spreadsheet,
+// an electronic invoice in XML, and two files the import leaves out and must say so.
+function archive() {
+  const file = (name: string) => new Uint8Array(readFileSync(path.join(OUT, name)));
+  const files = {
+    "Fatture settembre/Fattura ABC del 8 settembre.pdf": file("scenario-f-fattura-abc.pdf"),
+    "Fatture settembre/preventivi/quote-turkish-wax.pdf": file("quote-turkish-wax.pdf"),
+    "Fatture settembre/nuovo-prodotto.xlsx": file("scenario-e-nuovo-prodotto.xlsx"),
+    "Fatture settembre/IT01234567890_00118.xml": file("scenario-i-fattura-elettronica.xml"),
+    "Fatture settembre/IT01234567890_00118_metaDato.xml": strToU8(METADATA),
+    "Fatture settembre/foto-bancale.jpg": strToU8("not a document"),
+  };
+  write("scenario-h-fatture.zip", zipSync(files, { mtime: new Date(2026, 9, 1) }));
+}
+
+Promise.all([invoicePdf(), quotePdf()]).then(eInvoice).then(archive).catch((err) => {
   console.error(err);
   process.exit(1);
 });

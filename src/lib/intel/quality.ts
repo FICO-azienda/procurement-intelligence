@@ -4,6 +4,7 @@
  * thirty from this quarter.
  */
 import { daysBetween } from "../analytics";
+import { en, type T } from "../i18n";
 import { INTEL_CONFIG, type IntelConfig } from "./config";
 
 export type Quality = "high" | "medium" | "low";
@@ -35,44 +36,44 @@ export interface QualityInput {
   asOf: string;
 }
 
-export function dataQuality(i: QualityInput, cfg: IntelConfig = INTEL_CONFIG): DataQuality {
+export function dataQuality(i: QualityInput, cfg: IntelConfig = INTEL_CONFIG, t: T = en): DataQuality {
   const q = cfg.dataQuality;
   const factors: QualityFactor[] = [];
   const n = i.observations;
   factors.push({
-    label: "Price observations",
+    label: t("Price observations"),
     state: n >= q.highObservations ? "ok" : n >= q.mediumObservations ? "caution" : "poor",
-    detail: `${n} comparable purchase${n === 1 ? "" : "s"}`,
+    detail: t.n(n, "{n} comparable purchase", "{n} comparable purchases"),
   });
 
   if (!i.lastPurchaseDate) {
-    factors.push({ label: "Recency", state: "poor", detail: "No purchases recorded" });
+    factors.push({ label: t("Recency"), state: "poor", detail: t("No purchases recorded") });
   } else {
     const days = Math.max(0, daysBetween(i.lastPurchaseDate, i.asOf));
     factors.push({
-      label: "Recency",
+      label: t("Recency"),
       state: days <= q.freshDays ? "ok" : days <= q.staleDays ? "caution" : "poor",
-      detail: `Last purchase ${days} days ago`,
+      detail: t("Last purchase {days} days ago", { days }),
     });
   }
 
   factors.push(
     i.unitMismatch
-      ? { label: "Units", state: "poor", detail: `${i.unitMismatch} purchase${i.unitMismatch > 1 ? "s" : ""} in a unit that can't be converted` }
-      : { label: "Units", state: "ok", detail: "All purchases in a comparable unit" },
+      ? { label: t("Units"), state: "poor", detail: t.n(i.unitMismatch, "{n} purchase in a unit that can't be converted", "{n} purchases in a unit that can't be converted") }
+      : { label: t("Units"), state: "ok", detail: t("All purchases in a comparable unit") },
   );
   factors.push(
     i.fxMissing
-      ? { label: "Currency", state: "caution", detail: `${i.fxMissing} purchase${i.fxMissing > 1 ? "s" : ""} without an exchange rate` }
-      : { label: "Currency", state: "ok", detail: "All purchases comparable in EUR" },
+      ? { label: t("Currency"), state: "caution", detail: t.n(i.fxMissing, "{n} purchase without an exchange rate", "{n} purchases without an exchange rate") }
+      : { label: t("Currency"), state: "ok", detail: t("All purchases comparable in EUR") },
   );
   if (i.quantityMissing) {
-    factors.push({ label: "Quantities", state: "caution", detail: `${i.quantityMissing} purchase${i.quantityMissing > 1 ? "s" : ""} without a quantity` });
+    factors.push({ label: t("Quantities"), state: "caution", detail: t.n(i.quantityMissing, "{n} purchase without a quantity", "{n} purchases without a quantity") });
   }
   if (i.openOutliers) {
-    factors.push({ label: "Anomalies", state: "caution", detail: `${i.openOutliers} price${i.openOutliers > 1 ? "s" : ""} flagged as possible data errors` });
+    factors.push({ label: t("Anomalies"), state: "caution", detail: t.n(i.openOutliers, "{n} price flagged as possible data errors", "{n} prices flagged as possible data errors") });
   }
-  if (!i.hasSupplier) factors.push({ label: "Supplier", state: "caution", detail: "No current supplier set" });
+  if (!i.hasSupplier) factors.push({ label: t("Supplier"), state: "caution", detail: t("No current supplier set") });
 
   const level: Quality = factors.some((f) => f.state === "poor") ? "low" : factors.some((f) => f.state === "caution") ? "medium" : "high";
   return { level, factors };

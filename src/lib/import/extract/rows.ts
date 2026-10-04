@@ -2,9 +2,12 @@
  * Table rows + column mapping → draft items with normalized values and the
  * problems found while reading them. No database access here.
  */
+import { say, type Msg } from "../../i18n";
 import type { ColumnMapping, FieldKey } from "../fields";
+import { readCodes } from "../normalize/codes";
 import { currencyInText, isKnownCurrency, normalizeCurrency } from "../normalize/currency";
 import { detectDateOrder, parseDate, type DateOrder } from "../normalize/dates";
+import { isCreditNote } from "../normalize/documents";
 import { amountsMatch, detectDecimalStyle, parseNumber, round2, type DecimalStyle } from "../normalize/numbers";
 import { parseIncoterm, parseLeadTime, parsePaymentTerms } from "../normalize/terms";
 import { tidy } from "../normalize/text";
@@ -19,7 +22,7 @@ export interface RowOptions {
 }
 
 const NUMERIC_FIELDS: FieldKey[] = ["quantity", "unit_price", "total", "freight", "other_costs", "moq"];
-const LABELS: Partial<Record<keyof ItemData, string>> = {
+const LABELS: Partial<Record<keyof ItemData, Msg>> = {
   quantity: "Quantity",
   unitPrice: "Unit price",
   total: "Total",
@@ -36,7 +39,7 @@ export function buildRowItems(table: Table, mapping: ColumnMapping, options: Row
     return header ? table.headers.indexOf(header) : -1;
   };
   const cols = Object.fromEntries(
-    (["purchase_date", "supplier_name", "supplier_country", "supplier_vat", "product_name", "sku", "supplier_sku", "description", "category", "quantity", "unit", "unit_price", "currency", "freight", "other_costs", "total", "invoice_reference", "payment_terms", "incoterm", "moq", "lead_time", "valid_until", "notes"] as FieldKey[]).map((f) => [f, col(f)]),
+    (["purchase_date", "supplier_name", "supplier_country", "supplier_vat", "product_name", "sku", "supplier_sku", "description", "category", "quantity", "unit", "unit_price", "currency", "freight", "other_costs", "total", "invoice_reference", "payment_terms", "incoterm", "moq", "lead_time", "valid_until", "notes", "discount", "document_type", "invoice_line", "ean"] as FieldKey[]).map((f) => [f, col(f)]),
   ) as Record<FieldKey, number>;
 
   // Decimal style per numeric column, falling back to the whole file's evidence.
@@ -70,13 +73,13 @@ export function buildRowItems(table: Table, mapping: ColumnMapping, options: Row
     const num = (f: FieldKey, key: keyof ItemData, cellValue: Cell = cell(f)) => {
       if (cellValue == null || cellValue === "") return null;
       if (cellValue instanceof Date) {
-        issues.push({ code: "invalid_number", severity: "blocking", field: key, message: `${LABELS[key]} "${cellText(cellValue)}" is a date, not a number` });
+        issues.push({ code: "invalid_number", severity: "blocking", field: key, ...say('{~label} "{value}" is a date, not a number', { label: LABELS[key], value: cellText(cellValue) }) });
         return null;
       }
       const s = styles[f];
       const p = parseNumber(cellValue as string | number, s?.style ?? null);
       if (p.error) {
-        issues.push({ code: "invalid_number", severity: "blocking", field: key, message: `${LABELS[key]}: ${p.error}` });
+        issues.push({ code: "invalid_number", severity: "blocking", field: key, ...say('{~label}: "{value}" is not a valid number', { label: LABELS[key], value: cellText(cellValue) }) });
         return null;
       }
       if (p.ambiguous || s?.conflict) {
@@ -84,7 +87,7 @@ export function buildRowItems(table: Table, mapping: ColumnMapping, options: Row
           code: "number_format_uncertain",
           severity: "review",
           field: key,
-          message: `${LABELS[key]} "${cellText(cellValue)}" could be read in two ways — we read it as ${p.value?.toLocaleString("it-IT")}`,
+          ...say('{~label} "{value}" could be read in two ways — we read it as {read}', { label: LABELS[key], value: cellText(cellValue), read: p.value?.toLocaleString("it-IT") }),
         });
       }
       return p.value;
@@ -95,10 +98,17 @@ export function buildRowItems(table: Table, mapping: ColumnMapping, options: Row
     data.supplierCountry = text("supplier_country");
     data.supplierVat = text("supplier_vat");
     data.productName = text("product_name");
-    data.sku = text("sku");
-    data.supplierSku = text("supplier_sku");
+    // Invoices give each code a type ("AswArtFor:…", "EAN:…"): the type says whose code it is.
+    const ours = readCodes(text("sku"), "own");
+    const theirs = readCodes(text("supplier_sku"), "supplier");
+    data.sku = ours.own ?? theirs.own;
+    data.supplierSku = theirs.supplier ?? ours.supplier;
+    data.ean = text("ean") ?? ours.ean ?? theirs.ean;
+    data.documentType = text("document_type");
+    const lineText = text("invoice_line");
+    data.invoiceLine = lineText && /^\d{1,6}$/.test(lineText) ? Number(lineText) : null;
     data.description = text("description");
-    data.category = text("category");
+    data.category = text("category") ?? ours.commodity ?? theirs.commodity;
     data.invoiceReference = text("invoice_reference");
     data.notes = text("notes");
 
@@ -106,9 +116,9 @@ export function buildRowItems(table: Table, mapping: ColumnMapping, options: Row
     const dateCell = cell("purchase_date");
     if (dateCell != null && cellText(dateCell) !== "") {
       data.date = parseDate(dateCell, dateOrder.order);
-      if (!data.date) issues.push({ code: "invalid_date", severity: "blocking", field: "date", message: `"${cellText(dateCell)}" is not a valid date` });
+      if (!data.date) issues.push({ code: "invalid_date", severity: "blocking", field: "date", ...say('"{value}" is not a valid date', { value: cellText(dateCell) }) });
       else if (dateOrder.conflict && typeof dateCell === "string") {
-        issues.push({ code: "date_format_uncertain", severity: "review", field: "date", message: `The file mixes day/month orders — check the date "${dateCell}"` });
+        issues.push({ code: "date_format_uncertain", severity: "review", field: "date", ...say('The file mixes day/month orders — check the date "{value}"', { value: dateCell }) });
       }
     }
     const validCell = cell("valid_until");
@@ -131,7 +141,7 @@ export function buildRowItems(table: Table, mapping: ColumnMapping, options: Row
       data.unit = normalizeUnit(unitText);
       if (!data.unit) {
         data.unitRaw = unitText;
-        issues.push({ code: "unit_unknown", severity: "blocking", field: "unit", message: `Unknown unit "${unitText}" — choose the unit` });
+        issues.push({ code: "unit_unknown", severity: "blocking", field: "unit", ...say('Unknown unit "{value}" — choose the unit', { value: unitText }) });
       }
     } else if (unitFromQty) {
       data.unit = unitFromQty;
@@ -146,9 +156,23 @@ export function buildRowItems(table: Table, mapping: ColumnMapping, options: Row
     const moqCell = cell("moq");
     data.moq = typeof moqCell === "string" ? num("moq", "moq", splitQuantityAndUnit(moqCell).numberText) : num("moq", "moq");
 
+    const blocked = (field: keyof ItemData) => issues.some((i) => i.field === field && i.severity === "blocking");
+    // A line with an amount and no quantity is a lump sum (a service, a fee): one item at that amount.
+    if (options.recordType === "purchase" && data.quantity == null && data.total != null && !blocked("quantity") && !blocked("unitPrice") && (data.unitPrice == null || amountsMatch(data.unitPrice, data.total))) {
+      data.quantity = 1;
+      data.unitPrice ??= data.total;
+      issues.push({ code: "quantity_assumed", severity: "info", field: "quantity", ...say("No quantity in the file: read as one item at the line total") });
+    }
     if (data.unitPrice == null && data.total != null && data.quantity) {
       data.unitPrice = Math.round((data.total / data.quantity) * 1e6) / 1e6;
-      issues.push({ code: "unit_price_derived", severity: "info", field: "unitPrice", message: "Unit price calculated from total ÷ quantity" });
+      issues.push({ code: "unit_price_derived", severity: "info", field: "unitPrice", ...say("Unit price calculated from total ÷ quantity") });
+    }
+    // A discount on the line: the total is what was charged, so one unit cost total ÷ quantity.
+    if (text("discount") && data.quantity && data.total != null && data.unitPrice != null && !amountsMatch(data.quantity * data.unitPrice, data.total)) {
+      const list = data.unitPrice;
+      data.unitPrice = Math.round((data.total / data.quantity) * 1e6) / 1e6;
+      const price = (n: number) => n.toLocaleString("it-IT", { minimumFractionDigits: 2, maximumFractionDigits: 6 });
+      issues.push({ code: "unit_price_derived", severity: "info", field: "unitPrice", ...say("Unit price after the discount on the line: {net} (list price {list})", { net: price(data.unitPrice), list: price(list) }) });
     }
     if (data.total != null && data.unitPrice != null && data.quantity != null) {
       const goods = data.quantity * data.unitPrice;
@@ -158,7 +182,7 @@ export function buildRowItems(table: Table, mapping: ColumnMapping, options: Row
           code: "total_mismatch",
           severity: "review",
           field: "total",
-          message: `Quantity × price is ${round2(goods).toLocaleString("it-IT")} but the file says ${data.total.toLocaleString("it-IT")}`,
+          ...say("Quantity × price is {computed} but the file says {total}", { computed: round2(goods).toLocaleString("it-IT"), total: data.total.toLocaleString("it-IT") }),
         });
       }
     }
@@ -167,7 +191,7 @@ export function buildRowItems(table: Table, mapping: ColumnMapping, options: Row
     if (currencyText) {
       data.currency = normalizeCurrency(currencyText);
       if (!data.currency || !isKnownCurrency(data.currency)) {
-        issues.push({ code: "currency_unknown", severity: "blocking", field: "currency", message: `Unknown currency "${currencyText}"` });
+        issues.push({ code: "currency_unknown", severity: "blocking", field: "currency", ...say('Unknown currency "{value}"', { value: currencyText }) });
         data.currency = null;
       }
     } else {
@@ -183,13 +207,20 @@ export function buildRowItems(table: Table, mapping: ColumnMapping, options: Row
     if (payText != null && cellText(payText) !== "") {
       data.paymentTermsDays = parsePaymentTerms(typeof payText === "number" ? payText : cellText(payText));
       if (data.paymentTermsDays == null) {
-        issues.push({ code: "terms_not_understood", severity: "info", field: "paymentTermsDays", message: `Payment terms "${cellText(payText)}" kept as written in the file` });
+        issues.push({ code: "terms_not_understood", severity: "info", field: "paymentTermsDays", ...say('Payment terms "{value}" kept as written in the file', { value: cellText(payText) }) });
         data.notes = [data.notes, `Payment: ${cellText(payText)}`].filter(Boolean).join(" · ");
       }
     }
     const leadCell = cell("lead_time");
     if (leadCell != null && cellText(leadCell) !== "") data.leadTimeDays = parseLeadTime(typeof leadCell === "number" ? leadCell : cellText(leadCell));
     data.incoterm = parseIncoterm(text("incoterm"));
+
+    // Not purchases: set aside with the reason (the user can bring them back).
+    if (isCreditNote(data.documentType)) {
+      issues.push({ code: "excluded", severity: "info", excludes: true, ...say("Credit note: it corrects an earlier invoice and is not a purchase") });
+    } else if (options.recordType === "purchase" && data.total === 0 && !blocked("total")) {
+      issues.push({ code: "excluded", severity: "info", excludes: true, ...say("Line with no amount: nothing was bought") });
+    }
 
     const raw: Record<string, string> = {};
     table.headers.forEach((h, i) => {

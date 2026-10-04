@@ -24,6 +24,7 @@ import {
   type SupplierMetrics,
   type SupplierOrderStats,
 } from "../analytics";
+import { en, type T } from "../i18n";
 import { compareSuppliers, type ComparisonRow, type SupplierLink } from "./comparison";
 import { INTEL_CONFIG, type IntelConfig } from "./config";
 import { findOpportunities, type Opportunity } from "./opportunities";
@@ -146,6 +147,8 @@ export function analyze(
   states: OpportunityState[],
   asOf: string,
   cfg: IntelConfig = INTEL_CONFIG,
+  /** The language of every sentence the engine writes (reasons, summaries). Never changes a number. */
+  t: T = en,
 ): Intel {
   const purchasesByProduct = groupBy(data.purchases, (p) => p.productId);
   const purchasesBySupplier = groupBy(data.purchases, (p) => p.supplierId);
@@ -154,7 +157,7 @@ export function analyze(
   const linksByProduct = groupBy(links, (l) => l.productId);
   const supplierById = new Map(data.suppliers.map((s) => [s.id, s]));
   const stateByKey = new Map(states.map((s) => [s.key, s]));
-  const supplierName = (id: string | null) => (id ? (supplierById.get(id)?.name ?? "an unknown supplier") : "an unknown supplier");
+  const supplierName = (id: string | null) => (id ? (supplierById.get(id)?.name ?? t("an unknown supplier")) : t("an unknown supplier"));
   const start = windowStart(asOf);
 
   // ---- Pass 1: base metrics per product (needed for portfolio shares)
@@ -189,6 +192,7 @@ export function analyze(
         asOf,
       },
       cfg,
+      t,
     );
 
     const conc = concentration(own, asOf);
@@ -204,6 +208,7 @@ export function analyze(
         asOf,
       },
       cfg,
+      t,
     );
 
     const par0 = paretoByProduct.get(product.id);
@@ -223,6 +228,7 @@ export function analyze(
         currentCurrency: currentPurchase?.currency ?? null,
       },
       cfg,
+      t,
     ).map((o) => ({ ...o, status: stateByKey.get(o.key)?.status ?? "open", note: stateByKey.get(o.key)?.note ?? null }));
 
     // Offers the user rejected or closed no longer represent the product.
@@ -260,7 +266,7 @@ export function analyze(
         quality,
         currentPriceFlagged,
         supplierName,
-      }),
+      }, t),
     };
   });
 
@@ -268,11 +274,11 @@ export function analyze(
   const productById = new Map(products.map((p) => [p.product.id, p]));
   const recentPriced = data.purchases.filter((p) => p.date > start && isPriced(p));
   const spendBySupplier = spendBreakdown(
-    recentPriced.map((p) => ({ key: p.supplierId, label: supplierById.get(p.supplierId)?.name ?? "Unknown", spend: p.totalAmount * (p.fxRate ?? 0) })),
+    recentPriced.map((p) => ({ key: p.supplierId, label: supplierById.get(p.supplierId)?.name ?? t("Unknown"), spend: p.totalAmount * (p.fxRate ?? 0) })),
   );
   const spendByCategory = spendBreakdown(
     recentPriced.map((p) => {
-      const category = productById.get(p.productId)?.product.category?.trim() || "Uncategorised";
+      const category = productById.get(p.productId)?.product.category?.trim() || t("Uncategorised");
       return { key: category.toLowerCase(), label: category, spend: p.totalAmount * (p.fxRate ?? 0) };
     }),
   );
@@ -312,7 +318,7 @@ export function analyze(
         priceChange: change,
         productsWithAlternatives: productsWithAlternatives.length,
         singleSourcedHighSpend: singleSourcedHighSpend.length,
-      }),
+      }, t),
     };
   });
 

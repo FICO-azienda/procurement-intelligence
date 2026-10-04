@@ -15,25 +15,20 @@
  * The structure has a place for each (`estimatedTrueCost`, `ReferenceType`),
  * to be filled by the phases that compute them.
  */
+import { countryKey, countryName } from "../countries";
 import * as f from "../format";
+import { en, list, lowerFirst, upperFirst, type Msg, type T } from "../i18n";
 import type { Comparability, ComparisonRow } from "./comparison";
 import type { IntelConfig } from "./config";
 import { topOpportunities, type Intel, type ProductIntel, type SupplierIntel } from "./engine";
 import { DELIVERED_INCOTERMS, type Confidence } from "./opportunities";
 import type { AlertLevel } from "./portfolio";
 import type { Quality } from "./quality";
-import type { OpportunityStatus } from "./statuses";
+import { DECISION_STATUS, isDataGap, type DecisionStatus, type OpportunityStatus } from "./statuses";
 
 // ---------------- Shapes ----------------
 
-export type DecisionStatus = "action" | "review" | "data_needed" | "good";
-
-export const DECISION_STATUS: Record<DecisionStatus, { label: string; meaning: string }> = {
-  action: { label: "Action", meaning: "High-confidence opportunity worth reviewing." },
-  review: { label: "Review", meaning: "Possible opportunity or unusual price movement." },
-  data_needed: { label: "Data needed", meaning: "Not enough information to judge the price." },
-  good: { label: "Good", meaning: "No significant issue identified." },
-};
+export { DATA_GAPS, DECISION_STATUS, isDataGap, type DecisionStatus } from "./statuses";
 
 /**
  * What the current price is compared with. Only the last two are produced
@@ -42,12 +37,12 @@ export const DECISION_STATUS: Record<DecisionStatus, { label: string; meaning: s
  */
 export type ReferenceType = "direct_market" | "market_range" | "trade" | "cost_driver" | "internal_quotes" | "not_available";
 
-export const REFERENCE_LABEL: Record<ReferenceType, string> = {
+export const REFERENCE_LABEL: Record<ReferenceType, Msg> = {
   direct_market: "Direct market benchmark",
   market_range: "Market range",
   trade: "Trade benchmark",
   cost_driver: "Cost driver benchmark",
-  internal_quotes: "Quotes on file",
+  internal_quotes: "Other suppliers on file",
   not_available: "Not available",
 };
 
@@ -215,7 +210,6 @@ export interface ProductDecision {
 const pct1 = (n: number) => Math.abs(n).toLocaleString("it-IT", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const qty = (n: number) => n.toLocaleString("it-IT", { useGrouping: "always", maximumFractionDigits: 2 });
 const per = (price: number | null, unit: string) => `${f.priceShort(price)}/${unit}`;
-const list = (items: string[]) => (items.length <= 1 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`);
 const COMPARABILITY_RANK: Record<Comparability, number> = { comparable: 2, partial: 1, not: 0 };
 const CONFIDENCE_RANK: Record<Confidence, number> = { high: 3, medium: 2, low: 1 };
 const INACTIVE: OpportunityStatus[] = ["rejected", "closed"];
@@ -233,6 +227,7 @@ interface AlternativeContext {
   typicalOrderQuantity: number | null;
   unit: string;
   cfg: IntelConfig;
+  t: T;
 }
 
 /** Short warnings and reassurances about one offer, most important first. */
@@ -241,43 +236,43 @@ function flagsFor(row: ComparisonRow, ctx: AlternativeContext, setAside: boolean
   const ok: AlternativeFlag[] = [];
   const w = (key: FlagKey, label: string) => warn.push({ key, tone: "warn", label });
   const o = (key: FlagKey, label: string) => ok.push({ key, tone: "ok", label });
-  const { current, unit, cfg } = ctx;
+  const { current, unit, cfg, t } = ctx;
 
-  if (setAside) w("set_aside", "Set aside by you");
-  if (row.expired) w("expired", "Quote expired");
-  else if (row.age === "old") w("old", `Old ${row.kind === "quote" ? "quote" : "price"} (${row.ageDays} days)`);
-  else o("recent", row.kind === "quote" ? "Recent quote" : "Recent price paid");
+  if (setAside) w("set_aside", t("Set aside by you"));
+  if (row.expired) w("expired", t("Quote expired"));
+  else if (row.age === "old") w("old", t(row.kind === "quote" ? "Old quote ({days} days)" : "Old price ({days} days)", { days: row.ageDays }));
+  else o("recent", t(row.kind === "quote" ? "Recent quote" : "Recent price paid"));
 
-  if (row.specDifferences.length) w("specs_differ", "Specifications differ");
-  else if (row.specsKnown) o("specs_match", "Similar specifications");
+  if (row.specDifferences.length) w("specs_differ", t("Specifications differ"));
+  else if (row.specsKnown) o("specs_match", t("Similar specifications"));
 
   if (row.moq != null) {
-    if (ctx.annualQuantity > 0 && row.moq > ctx.annualQuantity) w("moq_annual", "MOQ above your annual volume");
-    else if (ctx.typicalOrderQuantity != null && row.moq > ctx.typicalOrderQuantity * cfg.moqToleranceFactor) w("moq", `Higher MOQ (${qty(row.moq)} ${unit})`);
-    else o("moq_ok", "MOQ fits your orders");
+    if (ctx.annualQuantity > 0 && row.moq > ctx.annualQuantity) w("moq_annual", t("Minimum order above your yearly volume"));
+    else if (ctx.typicalOrderQuantity != null && row.moq > ctx.typicalOrderQuantity * cfg.moqToleranceFactor) w("moq", t("Higher minimum order ({moq} {unit})", { moq: qty(row.moq), unit }));
+    else o("moq_ok", t("Minimum order fits your orders"));
   }
 
   if (row.currency && current?.currency) {
-    if (row.currency !== current.currency) w("currency", `Different currency (${row.currency})`);
-    else o("same_currency", "Same currency");
+    if (row.currency !== current.currency) w("currency", t("Different currency ({currency})", { currency: row.currency }));
+    else o("same_currency", t("Same currency"));
   }
 
   if (row.freightCost == null) {
-    if (row.incoterm && DELIVERED_INCOTERMS.has(row.incoterm)) o("delivered", `Delivered price (${row.incoterm})`);
-    else w("freight", row.incoterm ? `Freight not included (${row.incoterm})` : "Freight unknown");
+    if (row.incoterm && DELIVERED_INCOTERMS.has(row.incoterm)) o("delivered", t("Delivered price ({incoterm})", { incoterm: row.incoterm }));
+    else w("freight", row.incoterm ? t("Freight not included ({incoterm})", { incoterm: row.incoterm }) : t("Freight unknown"));
   }
   // Same rule as the opportunity engine: a different (or unknown) country means import costs are open.
-  if (!row.supplier.country || !current?.supplier.country || row.supplier.country !== current.supplier.country) {
-    w("import", "Import costs not assessed");
+  if (!row.supplier.country || !current?.supplier.country || countryKey(row.supplier.country) !== countryKey(current.supplier.country)) {
+    w("import", t("Import costs not assessed"));
   }
   if (row.leadTimeDays != null && current?.leadTimeDays != null && row.leadTimeDays > current.leadTimeDays + cfg.overview.leadTimeToleranceDays) {
-    w("lead_time", `Longer lead time (${row.leadTimeDays} vs ${current.leadTimeDays} days)`);
+    w("lead_time", t("Longer lead time ({offer} vs {current} days)", { offer: row.leadTimeDays, current: current.leadTimeDays }));
   }
   if (row.paymentTermsDays != null && current?.paymentTermsDays != null && row.paymentTermsDays < current.paymentTermsDays) {
-    w("payment", row.paymentTermsDays === 0 ? "Payment in advance" : `Shorter payment terms (${row.paymentTermsDays} vs ${current.paymentTermsDays} days)`);
+    w("payment", row.paymentTermsDays === 0 ? t("Payment in advance") : t("Shorter payment terms ({offer} vs {current} days)", { offer: row.paymentTermsDays, current: current.paymentTermsDays }));
   }
-  if (!row.specsKnown && !row.specDifferences.length) w("specs_unknown", "Specifications not compared");
-  w("quality", "Quality not validated");
+  if (!row.specsKnown && !row.specDifferences.length) w("specs_unknown", t("Specifications not compared"));
+  w("quality", t("Quality not validated"));
   return [...warn, ...ok];
 }
 
@@ -299,7 +294,7 @@ function toAlternative(row: ComparisonRow, p: ProductIntel, ctx: AlternativeCont
     potentialSaving: opp?.potentialSaving ?? null,
     confidence: opp?.confidence ?? null,
     comparability: row.comparability,
-    notComparableReason: row.comparability === "not" ? (row.comparabilityReasons[0] ?? "Can't be compared yet") : null,
+    notComparableReason: row.comparability === "not" ? (row.comparabilityReasons[0] ?? ctx.t("Can't be compared yet")) : null,
     leadTimeDays: row.leadTimeDays,
     moq: row.moq,
     paymentTermsDays: row.paymentTermsDays,
@@ -355,18 +350,46 @@ function marketReference(p: ProductIntel): MarketReference {
 
 // ---------------- Next actions ----------------
 
-const FOLLOW_UP: Partial<Record<FlagKey, { kind: ActionKind; label: (name: string, a: DecisionAlternative) => string; caveat: string }>> = {
-  expired: { kind: "update_quote", label: (n) => `Ask ${n} for an updated quote`, caveat: "ask for an updated quote" },
-  old: { kind: "update_quote", label: (n) => `Ask ${n} for an updated quote`, caveat: "ask for an updated quote" },
-  specs_differ: { kind: "check_specs", label: (n) => `Check the specification differences with ${n}`, caveat: "check the specification differences" },
-  moq_annual: { kind: "check_moq", label: (n) => `Check the minimum order with ${n}`, caveat: "check the minimum order quantity" },
-  moq: { kind: "check_moq", label: (n) => `Check whether ${n}'s minimum order works for you`, caveat: "check the minimum order quantity" },
-  freight: { kind: "get_freight", label: (n) => `Get a transport cost for ${n}`, caveat: "add the cost of transport" },
-  import: { kind: "check_import", label: (n, a) => `Check duties and import costs${a.country ? ` from ${a.country}` : ""}`, caveat: "check import costs" },
-  payment: { kind: "check_payment", label: (n) => `Weigh ${n}'s payment terms against yours today`, caveat: "consider the shorter payment terms" },
-  specs_unknown: { kind: "check_specs", label: (n) => `Confirm ${n}'s product matches your specifications`, caveat: "confirm the specifications match" },
-  quality: { kind: "validate_quality", label: (n) => `Ask ${n} for a sample to validate quality`, caveat: "validate quality" },
+const FOLLOW_UP: Partial<Record<FlagKey, { kind: ActionKind; label: (t: T, name: string, a: DecisionAlternative) => string; caveat: Msg }>> = {
+  expired: { kind: "update_quote", label: (t, name) => t("Ask {name} for an updated quote", { name }), caveat: "ask for an updated quote" },
+  old: { kind: "update_quote", label: (t, name) => t("Ask {name} for an updated quote", { name }), caveat: "ask for an updated quote" },
+  specs_differ: { kind: "check_specs", label: (t, name) => t("Check the specification differences with {name}", { name }), caveat: "check the specification differences" },
+  moq_annual: { kind: "check_moq", label: (t, name) => t("Check the minimum order with {name}", { name }), caveat: "check the minimum order quantity" },
+  moq: { kind: "check_moq", label: (t, name) => t("Check whether {name}'s minimum order works for you", { name }), caveat: "check the minimum order quantity" },
+  freight: { kind: "get_freight", label: (t, name) => t("Get a transport cost for {name}", { name }), caveat: "add the cost of transport" },
+  import: {
+    kind: "check_import",
+    label: (t, _name, a) => (a.country ? t("Check duties and import costs from {country}", { country: countryName(a.country, t.locale) }) : t("Check duties and import costs")),
+    caveat: "check import costs",
+  },
+  payment: { kind: "check_payment", label: (t, name) => t("Weigh {name}'s payment terms against yours today", { name }), caveat: "consider the shorter payment terms" },
+  specs_unknown: { kind: "check_specs", label: (t, name) => t("Confirm {name}'s product matches your specifications", { name }), caveat: "confirm the specifications match" },
+  quality: { kind: "validate_quality", label: (t, name) => t("Ask {name} for a sample to validate quality", { name }), caveat: "validate quality" },
 };
+
+/** Where a suggested check is carried out in the app, and what the button says. */
+export interface ActionStep {
+  label: Msg;
+  target: "compare" | "quote" | "product" | "purchase";
+}
+
+export function actionStep(kind: ActionKind): ActionStep {
+  switch (kind) {
+    case "request_quote":
+    case "second_source":
+    case "update_quote":
+      return { label: "Add quote", target: "quote" };
+    case "check_price":
+    case "confirm_price":
+      return { label: "Check price", target: "product" };
+    case "add_purchases":
+      return { label: "Add purchase", target: "purchase" };
+    case "record_fx":
+      return { label: "Complete data", target: "compare" };
+    default:
+      return { label: "Compare suppliers", target: "compare" };
+  }
+}
 
 /** What decides whether an offer is real comes before what merely changes its terms. */
 const FOLLOW_UP_ORDER: FlagKey[] = ["expired", "old", "specs_differ", "moq_annual", "moq", "freight", "import", "specs_unknown", "quality", "payment"];
@@ -385,10 +408,79 @@ function followUps(a: DecisionAlternative) {
 export interface DecisionContext {
   suppliers: Map<string, SupplierIntel>;
   cfg: IntelConfig;
+  /** The language of the sentences; English when left out. */
+  t?: T;
+}
+
+// ---------------- Side-by-side comparison ----------------
+
+/** One supplier in the Compare view: the few things a buyer weighs, on the same basis. */
+export interface CompareColumn extends Omit<DecisionAlternative, "differencePct"> {
+  isCurrent: boolean;
+  /** vs the price paid today, in %. Null for the current supplier. */
+  differencePct: number | null;
+  /**
+   * What this offer is the best at, stated as a fact ("Shortest lead time").
+   * Never a verdict: which supplier to buy from is the buyer's judgement.
+   */
+  highlights: string[];
+}
+
+/** The current supplier first, then the alternatives in the order of the product summary. */
+export function compareColumns(p: ProductIntel, cfg: IntelConfig, t: T = en): CompareColumn[] {
+  const current = p.comparison.find((r) => r.isCurrent) ?? null;
+  const ctx: AlternativeContext = { current, annualQuantity: p.metrics.annualQuantity, typicalOrderQuantity: p.typicalOrderQuantity, unit: p.product.unit, cfg, t };
+  const columns: CompareColumn[] = [];
+  if (current && current.price != null && current.kind) {
+    columns.push({
+      supplierId: current.supplier.id,
+      supplierName: current.supplier.name,
+      country: current.supplier.country,
+      kind: current.kind,
+      quotedPrice: current.price,
+      currency: current.currency ?? "EUR",
+      priceEUR: p.price.current?.price ?? current.priceEUR,
+      date: p.price.current?.date ?? current.date,
+      differencePct: null,
+      estimatedTrueCost: null,
+      potentialSaving: null,
+      confidence: null,
+      comparability: "comparable",
+      notComparableReason: null,
+      leadTimeDays: current.leadTimeDays,
+      moq: current.moq,
+      paymentTermsDays: current.paymentTermsDays,
+      incoterm: current.incoterm,
+      flags: [],
+      setAside: false,
+      opportunityKey: null,
+      isCurrent: true,
+      highlights: [],
+    });
+  }
+  const alternatives = rankAlternatives(
+    p.comparison.flatMap((r) => toAlternative(r, p, ctx) ?? []),
+    p.bestSaving?.alternativeSupplierId ?? null,
+  );
+  for (const a of alternatives) columns.push({ ...a, isCurrent: false, highlights: [] });
+
+  // A highlight needs something to be compared with, and a single holder.
+  const award = (label: Msg, value: (c: CompareColumn) => number | null, pick: "min" | "max", among = columns) => {
+    const known = among.filter((c) => value(c) != null && c.comparability !== "not");
+    if (known.length < 2) return;
+    const best = known.reduce((m, c) => ((pick === "min" ? value(c)! < value(m)! : value(c)! > value(m)!) ? c : m));
+    if (known.filter((c) => value(c) === value(best)).length === 1) best.highlights.push(t(label));
+  };
+  award("Lowest quoted price", (c) => c.estimatedTrueCost ?? c.priceEUR, "min");
+  award("Shortest lead time", (c) => c.leadTimeDays, "min");
+  award("Lowest minimum order", (c) => c.moq, "min");
+  award("Most recent quote", (c) => (c.kind === "quote" && c.date ? Date.parse(c.date) : null), "max", columns.filter((c) => !c.isCurrent));
+  return columns;
 }
 
 export function productDecision(p: ProductIntel, ctx: DecisionContext): ProductDecision {
   const { cfg } = ctx;
+  const t = ctx.t ?? en;
   const { product, metrics, price } = p;
   const unit = product.unit;
   const o = cfg.overview;
@@ -409,7 +501,7 @@ export function productDecision(p: ProductIntel, ctx: DecisionContext): ProductD
     : null;
 
   // ---- Alternatives
-  const altCtx: AlternativeContext = { current: currentRow, annualQuantity: metrics.annualQuantity, typicalOrderQuantity: p.typicalOrderQuantity, unit, cfg };
+  const altCtx: AlternativeContext = { current: currentRow, annualQuantity: metrics.annualQuantity, typicalOrderQuantity: p.typicalOrderQuantity, unit, cfg, t };
   const allAlternatives = rankAlternatives(
     p.comparison.flatMap((r) => toAlternative(r, p, altCtx) ?? []),
     p.bestSaving?.alternativeSupplierId ?? null,
@@ -429,9 +521,11 @@ export function productDecision(p: ProductIntel, ctx: DecisionContext): ProductD
     cheapestNotFirst = {
       supplierName: cheapest.supplierName,
       price: cheapest.priceEUR!,
-      explanation: `${cheapest.supplierName} has the lowest quoted price (${per(cheapest.priceEUR, unit)}), but it is not listed first: ${
-        reasons.length ? list(reasons) : "the comparison is less reliable"
-      }. Its true cost has not been estimated yet.`,
+      explanation: t("{name} has the lowest quoted price ({price}), but it is not listed first: {reasons}. Its true cost has not been estimated yet.", {
+        name: cheapest.supplierName,
+        price: per(cheapest.priceEUR, unit),
+        reasons: reasons.length ? list(t, reasons) : t("the comparison is less reliable"),
+      }),
     };
   }
 
@@ -442,19 +536,21 @@ export function productDecision(p: ProductIntel, ctx: DecisionContext): ProductD
   const share = `${pct1(p.spendShare * 100)}%`;
   const supplyRisk: ProductDecision["supplyRisk"] =
     sourcing === "none"
-      ? { level: "unknown", label: "No purchases", detail: "No purchases on record.", suppliers: 0, alternativesQuoted }
+      ? { level: "unknown", label: t("No purchases"), detail: t("No purchases on record."), suppliers: 0, alternativesQuoted }
       : sourcing === "single"
         ? {
             level: p.highSpend ? "high" : "moderate",
-            label: "Single source",
-            detail: `${p.highSpend ? `${share} of your spend is bought` : "Bought"} from one supplier${alternativesQuoted ? ` · ${alternativesQuoted} other supplier${alternativesQuoted > 1 ? "s" : ""} on file` : " · no other supplier on file"}.`,
+            label: t("Single source"),
+            detail: `${p.highSpend ? t("{share} of your spend is bought from one supplier", { share }) : t("Bought from one supplier")} · ${
+              alternativesQuoted ? t.n(alternativesQuoted, "{n} other supplier on file", "{n} other suppliers on file") : t("no other supplier on file")
+            }.`,
             suppliers: 1,
             alternativesQuoted,
           }
         : {
             level: "low",
-            label: `${suppliersUsed} suppliers`,
-            detail: `Bought from ${suppliersUsed} suppliers; the largest has ${pct1(p.concentration.shares[0].share * 100)}% of the spend.`,
+            label: t("{n} suppliers", { n: suppliersUsed }),
+            detail: t("Bought from {n} suppliers; the largest has {pct}% of the spend.", { n: suppliersUsed, pct: pct1(p.concentration.shares[0].share * 100) }),
             suppliers: suppliersUsed,
             alternativesQuoted,
           };
@@ -465,32 +561,39 @@ export function productDecision(p: ProductIntel, ctx: DecisionContext): ProductD
   let status: DecisionStatus;
   let statusReason: string;
   if (currentPrice == null) {
-    status = "data_needed";
-    statusReason = "No purchase price on record yet.";
+    status = "needs_cost";
+    statusReason = t("No purchase price on record yet.");
   } else if (p.currentPriceFlagged) {
     status = "review";
-    statusReason = "The last price looks unusual — check the data first.";
+    statusReason = t("The last price looks unusual — check the data first.");
   } else if (savingMaterial && p.bestSaving!.confidence === "high") {
     status = "action";
-    statusReason = "A comparable, recent offer is below what you pay.";
+    statusReason = t("A comparable, recent offer is below what you pay.");
   } else if (savingMaterial) {
     status = "review";
-    statusReason = "A lower quote exists, but the comparison is not fully reliable yet.";
+    statusReason = t("A lower quote exists, but the comparison is not fully reliable yet.");
   } else if (p.alert) {
     status = "review";
-    statusReason = `Price up ${pct1(trendPct!)}% ${price.changes.m12.partial ? "since your first purchase on record" : "in 12 months"}.`;
+    statusReason = t(price.changes.m12.partial ? "Price up {pct}% since your first purchase on record." : "Price up {pct}% in 12 months.", { pct: pct1(trendPct!) });
+  } else if (product.mapped === false || product.kind === "needs_review") {
+    status = "needs_classification";
+    statusReason = t("Its name and category still come from the invoice: confirm what it is.");
   } else if (stale) {
-    status = "data_needed";
-    statusReason = "No purchase in the last 6 months — the price may be outdated.";
+    status = "needs_history";
+    statusReason = t("No purchase in the last 6 months — the price may be outdated.");
+  } else if (market.type === "not_available" && (alternativesQuoted || p.highSpend)) {
+    status = "needs_alternative";
+    statusReason = alternativesQuoted ? t("The offers on file can't be compared yet.") : t("It is among the products that make up most of your spend, and there is no quote from another supplier to compare with.");
   } else if (market.type === "not_available") {
-    status = "data_needed";
-    statusReason = alternativesQuoted ? "The offers on file can't be compared yet." : "No quote from another supplier to compare with.";
+    // Nothing is wrong with a product whose price and supplier are known: a comparison is something more, not something missing.
+    status = "ready";
+    statusReason = t("Price and supplier known. No other offer to compare with yet.");
   } else if (market.recent === 0) {
-    status = "data_needed";
-    statusReason = "The quotes on file are too old to judge today's price.";
+    status = "needs_alternative";
+    statusReason = t("The quotes on file are too old to judge today's price.");
   } else {
     status = "good";
-    statusReason = "No significant issue identified.";
+    statusReason = t("No significant issue identified.");
   }
 
   // ---- Money view: the saving formula, shown as two annual costs
@@ -501,74 +604,77 @@ export function productDecision(p: ProductIntel, ctx: DecisionContext): ProductD
 
   // ---- Next actions
   const actions: NextAction[] = [];
-  const supplierLabel = currentSupplier?.name ?? "your supplier";
+  const supplierLabel = currentSupplier?.name ?? t("your supplier");
   if (currentPrice == null) {
-    actions.push({ kind: "add_purchases", label: "Add or import purchases for this product", why: [{ label: "Purchases on record", value: "none with a usable price" }] });
+    actions.push({ kind: "add_purchases", label: t("Add or import purchases for this product"), why: [{ label: t("Purchases on record"), value: t("none with a usable price") }] });
   }
   if (p.currentPriceFlagged && currentPrice != null) {
     const out = price.outliers.find((x) => x.purchaseId === price.current!.purchaseId);
     actions.push({
       kind: "check_price",
-      label: "Check the last invoice: the price looks unusual",
+      label: t("Check the last invoice: the price looks unusual"),
       why: [
-        { label: "Last price", value: per(currentPrice, unit) },
-        ...(out ? [{ label: "Your usual level", value: per(out.median, unit) }] : []),
+        { label: t("Last price"), value: per(currentPrice, unit) },
+        ...(out ? [{ label: t("Your usual level"), value: per(out.median, unit) }] : []),
       ],
     });
   }
   if (best && savingMaterial && currentPrice != null && !p.currentPriceFlagged) {
     actions.push({
       kind: "negotiate",
-      label: `Ask ${supplierLabel} to review their price`,
+      label: t("Ask {supplier} to review their price", { supplier: supplierLabel }),
       why: [
-        { label: "You pay", value: `${per(currentPrice, unit)} (${supplierLabel})` },
-        { label: `${best.comparability === "partial" ? "Partly comparable" : "Comparable"} ${best.kind === "quote" ? "quote" : "price"}`, value: `${per(best.priceEUR, unit)} (${best.supplierName})` },
-        { label: "Gap", value: `${per(currentPrice - best.priceEUR!, unit)} · ${pct1(best.differencePct ?? 0)}%` },
-        { label: "Annual volume", value: `${qty(metrics.annualQuantity)} ${unit}` },
+        { label: t("You pay"), value: `${per(currentPrice, unit)} (${supplierLabel})` },
+        {
+          label: t(best.comparability === "partial" ? (best.kind === "quote" ? "Partly comparable quote" : "Partly comparable price") : best.kind === "quote" ? "Comparable quote" : "Comparable price"),
+          value: `${per(best.priceEUR, unit)} (${best.supplierName})`,
+        },
+        { label: t("Gap"), value: `${per(currentPrice - best.priceEUR!, unit)} · ${pct1(best.differencePct ?? 0)}%` },
+        { label: t("Annual volume"), value: `${qty(metrics.annualQuantity)} ${unit}` },
       ],
     });
     for (const { flag, step } of followUps(best).slice(0, 2)) {
-      actions.push({ kind: step.kind, label: step.label(best.supplierName, best), why: [{ label: best.supplierName, value: flag.label }] });
+      actions.push({ kind: step.kind, label: step.label(t, best.supplierName, best), why: [{ label: best.supplierName, value: flag.label }] });
     }
   } else if (p.alert && currentPrice != null && !p.currentPriceFlagged) {
     actions.push({
       kind: "explain_increase",
-      label: `Ask ${supplierLabel} to explain the increase`,
+      label: t("Ask {supplier} to explain the increase", { supplier: supplierLabel }),
       why: [
-        { label: f.month(price.changes.m12.referenceDate), value: per(price.changes.m12.referencePrice, unit) },
-        { label: "Today", value: per(currentPrice, unit) },
-        ...(metrics.changeImpact != null && metrics.changeImpact > 0 ? [{ label: "Extra cost at your volume", value: `${f.moneyApprox(metrics.changeImpact)}/year` }] : []),
+        { label: f.month(price.changes.m12.referenceDate, t), value: per(price.changes.m12.referencePrice, unit) },
+        { label: t("Today"), value: per(currentPrice, unit) },
+        ...(metrics.changeImpact != null && metrics.changeImpact > 0 ? [{ label: t("Extra cost at your volume"), value: t("{amount}/year", { amount: f.moneyApprox(metrics.changeImpact) }) }] : []),
       ],
     });
   }
   for (const a of allAlternatives.filter((x) => x.comparability === "not" && x.priceEUR == null && x.currency !== "EUR").slice(0, 1)) {
     actions.push({
       kind: "record_fx",
-      label: `Record the exchange rate for ${a.supplierName}'s offer`,
+      label: t("Record the exchange rate for {supplier}'s offer", { supplier: a.supplierName }),
       why: [
-        { label: "Offer", value: `${f.price(a.quotedPrice, a.currency)}/${unit}` },
-        { label: "Exchange rate", value: "not on record — the offer can't be compared" },
+        { label: t("Offer"), value: `${f.price(a.quotedPrice, a.currency)}/${unit}` },
+        { label: t("Exchange rate"), value: t("not on record — the offer can't be compared") },
       ],
     });
   }
   if (currentPrice != null && !savingMaterial && (market.type === "not_available" || market.recent === 0)) {
     actions.push({
       kind: "request_quote",
-      label: market.count ? "Ask for an up-to-date quote from another supplier" : "Get a quote from another supplier",
-      why: [{ label: "Comparable quotes on file", value: market.count ? `${market.count}, none recent` : "none" }],
+      label: market.count ? t("Ask for an up-to-date quote from another supplier") : t("Get a quote from another supplier"),
+      why: [{ label: t("Comparable quotes on file"), value: market.count ? t("{n}, none recent", { n: market.count }) : t("none") }],
     });
   }
   if (stale) {
-    actions.push({ kind: "confirm_price", label: `Confirm today's price with ${supplierLabel}`, why: [{ label: "Last purchase", value: f.date(metrics.currentDate) }] });
+    actions.push({ kind: "confirm_price", label: t("Confirm today's price with {supplier}", { supplier: supplierLabel }), why: [{ label: t("Last purchase"), value: f.date(metrics.currentDate) }] });
   }
   if (supplyRisk.level === "high") {
     actions.push({
       kind: "second_source",
-      label: alternativesQuoted ? "Keep a second supplier qualified" : "Find and qualify a second supplier",
+      label: alternativesQuoted ? t("Keep a second supplier qualified") : t("Find and qualify a second supplier"),
       why: [
-        { label: "Bought from", value: `one supplier (${supplierLabel})` },
-        { label: "Annual spend", value: `${f.money(Math.round(metrics.annualSpend))} · ${share} of the total` },
-        { label: "Other suppliers on file", value: String(alternativesQuoted) },
+        { label: t("Bought from"), value: t("one supplier ({supplier})", { supplier: supplierLabel }) },
+        { label: t("Annual spend"), value: t("{amount} · {share} of the total", { amount: f.money(Math.round(metrics.annualSpend)), share }) },
+        { label: t("Other suppliers on file"), value: String(alternativesQuoted) },
       ],
     });
   }
@@ -578,10 +684,10 @@ export function productDecision(p: ProductIntel, ctx: DecisionContext): ProductD
   const missingData = p.bestSaving
     ? p.bestSaving.missing
     : [
-        ...(currentPrice == null ? ["A purchase with a usable price"] : []),
-        ...(market.type === "not_available" ? ["A comparable quote from another supplier"] : market.recent === 0 ? ["A recent quote from another supplier"] : []),
-        ...(product.specs && Object.keys(product.specs).length ? [] : ["Structured specifications for this product"]),
-        "External market benchmark",
+        ...(currentPrice == null ? [t("A purchase with a usable price")] : []),
+        ...(market.type === "not_available" ? [t("A comparable quote from another supplier")] : market.recent === 0 ? [t("A recent quote from another supplier")] : []),
+        ...(product.specs && Object.keys(product.specs).length ? [] : [t("Structured specifications for this product")]),
+        t("External market benchmark"),
       ];
 
   // ---- Priority (internal)
@@ -594,7 +700,7 @@ export function productDecision(p: ProductIntel, ctx: DecisionContext): ProductD
         ? { tier: 2, value: metrics.annualSpend }
         : status === "review"
           ? { tier: 3, value: Math.max(savingMaterial ? (potentialSaving ?? 0) : 0, increaseImpact) }
-          : status === "data_needed"
+          : isDataGap(status)
             ? { tier: 4, value: metrics.annualSpend }
             : { tier: 5, value: metrics.annualSpend };
 
@@ -643,7 +749,7 @@ export function productDecision(p: ProductIntel, ctx: DecisionContext): ProductD
     lastUpdated: { purchases: metrics.currentDate, quotes: quoteDates.length ? quoteDates.reduce((a, b) => (b > a ? b : a)) : null },
     priority,
   };
-  d.summary = easySummary(d);
+  d.summary = easySummary(d, t);
   return d;
 }
 
@@ -655,65 +761,96 @@ export function productDecision(p: ProductIntel, ctx: DecisionContext): ProductD
  * at stake, what is the catch. Rules and templates — no language model — so
  * the same data always gives the same words.
  */
-export function easySummary(d: ProductDecision): string[] {
+export function easySummary(d: ProductDecision, t: T = en): string[] {
   const s: string[] = [];
   const unit = d.unit;
   if (d.currentPrice == null) {
-    s.push("There are no purchases with a usable price for this product yet, so there is nothing to assess.");
-    if (d.alternativesTotal) s.push(`${d.alternativesTotal} offer${d.alternativesTotal > 1 ? "s are" : " is"} on file and will be compared as soon as a purchase is recorded.`);
+    s.push(t("There are no purchases with a usable price for this product yet, so there is nothing to assess."));
+    if (d.alternativesTotal) {
+      s.push(t.n(d.alternativesTotal, "{n} offer is on file and will be compared as soon as a purchase is recorded.", "{n} offers are on file and will be compared as soon as a purchase is recorded."));
+    }
     return s;
   }
 
   // What you pay, to whom, and how it moved
-  const to = d.currentSupplier ? ` to ${d.currentSupplier.name}` : "";
-  const t = d.priceTrend;
+  const to = d.currentSupplier ? t(" to {supplier}", { supplier: d.currentSupplier.name }) : "";
+  const trend = d.priceTrend;
+  const since = f.month(trend.referenceDate, t);
   let moved: string;
-  if (t.pct == null) moved = ". There is only one purchase on record, so no price history yet";
-  else if (Math.abs(t.pct) < 0.05) moved = `, unchanged since ${f.month(t.referenceDate)}`;
-  else moved = `, ${pct1(t.pct)}% ${t.pct > 0 ? "more" : "less"} than ${t.partial ? `at your first purchase on record (${f.month(t.referenceDate)})` : "12 months ago"}`;
-  s.push(`You pay ${per(d.currentPrice, unit)}${to}${moved}.`);
-  if (d.currentPriceFlagged) s.push("This last price is far from your usual level and may be a data error: check it before relying on the figures here.");
+  if (trend.pct == null) moved = t(". There is only one purchase on record, so no price history yet");
+  else if (Math.abs(trend.pct) < 0.05) moved = t(", unchanged since {month}", { month: since });
+  else if (trend.partial) moved = t(trend.pct > 0 ? ", {pct}% more than at your first purchase on record ({month})" : ", {pct}% less than at your first purchase on record ({month})", { pct: pct1(trend.pct), month: since });
+  else moved = t(trend.pct > 0 ? ", {pct}% more than 12 months ago" : ", {pct}% less than 12 months ago", { pct: pct1(trend.pct) });
+  s.push(t("You pay {price}{to}{moved}.", { price: per(d.currentPrice, unit), to, moved }));
+  if (d.currentPriceFlagged) s.push(t("This last price is far from your usual level and may be a data error: check it before relying on the figures here."));
 
   // How it compares
   const m = d.market;
   if (m.type === "internal_quotes" && m.position) {
-    const what = m.count === 1 ? "the one comparable quote on file" : m.position === "within" ? `the ${m.count} comparable quotes on file` : `all ${m.count} comparable quotes on file`;
-    const where = m.position === "above" ? "above" : m.position === "below" ? "below" : "within the range of";
-    s.push(`That is ${m.count === 1 && m.position === "within" ? "in line with" : where} ${what} (${range(m.low, m.high, unit)}).`);
+    // "Prices", not "quotes": another supplier's price may be one you actually paid.
+    const one: Record<"within" | "above" | "below", Msg> = {
+      within: "That is in line with the one other supplier's price on file ({range}).",
+      above: "That is above the one other supplier's price on file ({range}).",
+      below: "That is below the one other supplier's price on file ({range}).",
+    };
+    const many: Record<"within" | "above" | "below", Msg> = {
+      within: "That is within the range of the {n} other suppliers' prices on file ({range}).",
+      above: "That is above all {n} other suppliers' prices on file ({range}).",
+      below: "That is below all {n} other suppliers' prices on file ({range}).",
+    };
+    s.push(t((m.count === 1 ? one : many)[m.position], { n: m.count, range: range(m.low, m.high, unit) }));
   }
 
   // The alternative and what it is worth
   const best = d.best;
   if (best && d.savingMaterial && d.potentialSaving != null) {
-    const lead = best.comparability === "partial" ? "The most relevant alternative on file" : "The best comparable alternative on file";
     s.push(
-      `${lead} is ${best.supplierName}${best.country ? ` (${best.country})` : ""} at ${per(best.priceEUR, unit)} — about ${pct1(best.differencePct ?? 0)}% less, or roughly ${f.moneyApprox(d.potentialSaving)} a year at your current volume.`,
+      t(
+        best.comparability === "partial"
+          ? "The most relevant alternative on file is {who} at {price} — about {pct}% less, or roughly {amount} a year at your current volume."
+          : "The best comparable alternative on file is {who} at {price} — about {pct}% less, or roughly {amount} a year at your current volume.",
+        {
+          who: best.country ? `${best.supplierName} (${countryName(best.country, t.locale)})` : best.supplierName,
+          price: per(best.priceEUR, unit),
+          pct: pct1(best.differencePct ?? 0),
+          amount: f.moneyApprox(d.potentialSaving),
+        },
+      ),
     );
   } else if (best && d.potentialSaving != null) {
-    s.push(`The lowest comparable quote is only about ${f.moneyApprox(d.potentialSaving)} a year below what you pay: not a meaningful opportunity at current volumes.`);
+    s.push(t("The lowest comparable price is only about {amount} a year below what you pay: not a meaningful opportunity at current volumes.", { amount: f.moneyApprox(d.potentialSaving) }));
   } else if (m.type === "internal_quotes" && m.recent > 0) {
-    s.push("Your price appears broadly in line with the comparisons available. No meaningful price opportunity has been identified at current volumes.");
+    s.push(t("Your price appears broadly in line with the comparisons available. No meaningful price opportunity has been identified at current volumes."));
   } else if (m.type === "internal_quotes") {
-    s.push("The quotes on file are too old to say whether today's price is competitive.");
+    s.push(t("The other prices on file are too old to say whether today's price is competitive."));
   } else if (d.alternativesTotal) {
     const why = d.alternatives.find((a) => a.notComparableReason)?.notComparableReason;
-    s.push(`${d.alternativesTotal} offer${d.alternativesTotal > 1 ? "s from other suppliers are" : " from another supplier is"} on file but can't be compared yet${why ? ` (${why.charAt(0).toLowerCase()}${why.slice(1)})` : ""}.`);
+    s.push(
+      why
+        ? t.n(d.alternativesTotal, "{n} offer from another supplier is on file but can't be compared yet ({why}).", "{n} offers from other suppliers are on file but can't be compared yet ({why}).", { why: lowerFirst(why) })
+        : t.n(d.alternativesTotal, "{n} offer from another supplier is on file but can't be compared yet.", "{n} offers from other suppliers are on file but can't be compared yet."),
+    );
   } else {
-    s.push("We know what you pay and how the price has moved, but there are no comparable quotes from other suppliers yet, so we cannot say whether a saving is possible.");
+    s.push(t("We know what you pay and how the price has moved, but there is no comparable price from another supplier yet, so we cannot say whether a saving is possible."));
   }
 
   if (d.cheapestNotFirst) {
-    s.push(`${d.cheapestNotFirst.supplierName} quotes even less (${per(d.cheapestNotFirst.price, unit)}), but that offer is harder to compare and its true cost is not estimated yet.`);
+    s.push(
+      t("{name} quotes even less ({price}), but that offer is harder to compare and its true cost is not estimated yet.", {
+        name: d.cheapestNotFirst.supplierName,
+        price: per(d.cheapestNotFirst.price, unit),
+      }),
+    );
   }
 
   // The catch
   if (best && d.savingMaterial) {
     const caveats = [...new Set(followUps(best).map((x) => x.step.caveat))].slice(0, 2);
-    s.push(`This is a price comparison only: before treating it as a saving, ${list(caveats)}.`);
+    s.push(t("This is a price comparison only: before treating it as a saving, {caveats}.", { caveats: list(t, caveats.map((c) => t(c))) }));
   }
   // Kept short: the supply block on the card says it anyway.
   if (d.supplyRisk.level === "high" && s.length < 5) {
-    s.push(`Everything is bought from one supplier, and this product is ${pct1(d.spendShare * 100)}% of your purchasing spend.`);
+    s.push(t("Everything is bought from one supplier, and this product is {pct}% of your purchasing spend.", { pct: pct1(d.spendShare * 100) }));
   }
   return s;
 }
@@ -759,6 +896,8 @@ export interface PurchasingOverview {
     validatedSavings: number;
     productsToReview: number;
     byStatus: Record<DecisionStatus, number>;
+    /** Products with enough data to judge the price (every status but "data needed"). */
+    productsJudged: number;
   };
   topOpportunities: OverviewOpportunity[];
   recentChanges: RecentChange[];
@@ -772,8 +911,22 @@ export interface PurchasingOverview {
     singleSourceSpend: number;
     singleSourceProducts: number;
   };
-  /** The first check of the highest-priority products. */
-  checkFirst: { productId: string; productName: string; action: NextAction }[];
+  /** The first check of the highest-priority products, with what is at stake. */
+  checkFirst: {
+    productId: string;
+    productName: string;
+    status: DecisionStatus;
+    action: NextAction;
+    /** Why this product is on the list. */
+    reason: string;
+    /** EUR/year: a potential saving, or what a price increase costs. */
+    impact: number | null;
+    impactKind: "saving" | "increase" | null;
+    /** The percentage behind it: the alternative vs what you pay, or the 12-month price change. */
+    pct: number | null;
+    /** Where the action is carried out. */
+    step: ActionStep;
+  }[];
   executiveSummary: string[];
   lastUpdated: { purchases: string | null; quotes: string | null };
 }
@@ -783,17 +936,17 @@ export function byPriority(a: ProductDecision, b: ProductDecision) {
   return a.priority.tier - b.priority.tier || b.priority.value - a.priority.value || b.annualSpend - a.annualSpend || a.name.localeCompare(b.name);
 }
 
-export function purchasingOverview(intel: Intel): PurchasingOverview {
+export function purchasingOverview(intel: Intel, t: T = en): PurchasingOverview {
   const cfg = intel.config;
   const o = cfg.overview;
   const suppliers = new Map(intel.suppliers.map((s) => [s.supplier.id, s]));
-  const ctx: DecisionContext = { suppliers, cfg };
+  const ctx: DecisionContext = { suppliers, cfg, t };
   const byId = new Map(intel.products.map((p) => [p.product.id, p]));
   const products = intel.products.map((p) => productDecision(p, ctx)).sort(byPriority);
-  const name = (id: string) => byId.get(id)?.product.name ?? "Unknown product";
+  const name = (id: string) => byId.get(id)?.product.name ?? t("Unknown product");
 
   // ---- Totals
-  const byStatus: Record<DecisionStatus, number> = { action: 0, review: 0, data_needed: 0, good: 0 };
+  const byStatus: Record<DecisionStatus, number> = { action: 0, review: 0, needs_classification: 0, needs_cost: 0, needs_history: 0, needs_alternative: 0, ready: 0, good: 0 };
   let highConfidenceSavings = 0;
   let validatedSavings = 0;
   for (const d of products) {
@@ -805,14 +958,14 @@ export function purchasingOverview(intel: Intel): PurchasingOverview {
 
   // ---- Top opportunities, in plain words
   const top: OverviewOpportunity[] = topOpportunities(intel, 5).map((op) => {
-    const who = op.alternativeSupplierId ? (suppliers.get(op.alternativeSupplierId)?.supplier.name ?? "another supplier") : null;
+    const who = op.alternativeSupplierId ? (suppliers.get(op.alternativeSupplierId)?.supplier.name ?? t("another supplier")) : null;
     const reason =
       op.type === "lower_quote"
-        ? `${op.comparability === "partial" ? "A partly comparable" : "A comparable"} quote from ${who} is below what you pay.`
+        ? t(op.comparability === "partial" ? "A partly comparable quote from {who} is below what you pay." : "A comparable quote from {who} is below what you pay.", { who })
         : op.type === "price_increase"
-          ? `The price went up ${pct1(op.priceDifferencePct ?? 0)}% in 12 months.`
+          ? t("The price went up {pct}% in 12 months.", { pct: pct1(op.priceDifferencePct ?? 0) })
           : op.type === "above_average"
-            ? `You pay ${pct1(op.priceDifferencePct ?? 0)}% more than your own average.`
+            ? t("You pay {pct}% more than your own average.", { pct: pct1(op.priceDifferencePct ?? 0) })
             : op.reason;
     return { key: op.key, productId: op.productId, productName: name(op.productId), amount: op.impact!, isSaving: op.potentialSaving != null, confidence: op.confidence, reason };
   });
@@ -824,12 +977,12 @@ export function purchasingOverview(intel: Intel): PurchasingOverview {
     for (const e of p.price.timeline) {
       const ago = daysAgo(e.date);
       if (e.pct == null || ago < 0 || ago > o.recentDays) continue;
-      const who = suppliers.get(e.supplierId)?.supplier.name ?? "supplier";
-      changes.push({ date: e.date, daysAgo: ago, productId: p.product.id, productName: p.product.name, kind: "price", text: `${who} price ${e.pct > 0 ? "up" : "down"}`, pct: e.pct });
+      const who = suppliers.get(e.supplierId)?.supplier.name ?? t("supplier");
+      changes.push({ date: e.date, daysAgo: ago, productId: p.product.id, productName: p.product.name, kind: "price", text: t(e.pct > 0 ? "{who} price up" : "{who} price down", { who }), pct: e.pct });
     }
     for (const r of p.comparison) {
       if (r.isCurrent || r.kind !== "quote" || r.ageDays == null || r.ageDays > o.recentDays) continue;
-      changes.push({ date: r.date!, daysAgo: r.ageDays, productId: p.product.id, productName: p.product.name, kind: "quote", text: `Quote received from ${r.supplier.name}`, pct: null });
+      changes.push({ date: r.date!, daysAgo: r.ageDays, productId: p.product.id, productName: p.product.name, kind: "quote", text: t("Quote received from {supplier}", { supplier: r.supplier.name }), pct: null });
     }
   }
   changes.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.productName.localeCompare(b.productName)));
@@ -841,7 +994,26 @@ export function purchasingOverview(intel: Intel): PurchasingOverview {
   const topSupplier = intel.spendBySupplier[0];
 
   // ---- What to check first: one step per product, in page order
-  const checkFirst = products.flatMap((d) => (d.nextActions[0] && d.status !== "good" ? [{ productId: d.productId, productName: d.name, action: d.nextActions[0] }] : [])).slice(0, 3);
+  const checkFirst = products
+    .flatMap((d) =>
+      d.nextActions[0] && d.status !== "good"
+        ? [
+            {
+              productId: d.productId,
+              productName: d.name,
+              status: d.status,
+              action: d.nextActions[0],
+              reason: d.statusReason,
+              impact: d.savingMaterial ? d.potentialSaving : d.priceIncreaseCost,
+              impactKind: d.savingMaterial ? ("saving" as const) : d.priceIncreaseCost != null ? ("increase" as const) : null,
+              pct: d.savingMaterial ? (d.best?.differencePct ?? null) : d.priceTrend.alert ? d.priceTrend.pct : null,
+              // "Compare suppliers" needs someone to compare with.
+              step: d.alternativesTotal === 0 && actionStep(d.nextActions[0].kind).target === "compare" ? actionStep("request_quote") : actionStep(d.nextActions[0].kind),
+            },
+          ]
+        : [],
+    )
+    .slice(0, 3);
 
   const totals = {
     annualSpend: intel.totals.annualSpend,
@@ -852,6 +1024,7 @@ export function purchasingOverview(intel: Intel): PurchasingOverview {
     validatedSavings,
     productsToReview: byStatus.action + byStatus.review,
     byStatus,
+    productsJudged: byStatus.action + byStatus.review + byStatus.good,
   };
 
   const purchaseDates = products.flatMap((d) => (d.lastUpdated.purchases ? [d.lastUpdated.purchases] : []));
@@ -884,44 +1057,51 @@ export function purchasingOverview(intel: Intel): PurchasingOverview {
     executiveSummary: [],
     lastUpdated: { purchases: latest(purchaseDates), quotes: latest(quoteDates) },
   };
-  overview.executiveSummary = executiveSummary(overview, intel);
+  overview.executiveSummary = executiveSummary(overview, intel, t);
   return overview;
 }
 
 /** The decision summary of one product (what the Overview card shows). */
-export function decisionFor(intel: Intel, productId: string): ProductDecision | null {
+export function decisionFor(intel: Intel, productId: string, t: T = en): ProductDecision | null {
   const p = intel.products.find((x) => x.product.id === productId);
-  return p ? productDecision(p, { suppliers: new Map(intel.suppliers.map((s) => [s.supplier.id, s])), cfg: intel.config }) : null;
+  return p ? productDecision(p, { suppliers: new Map(intel.suppliers.map((s) => [s.supplier.id, s])), cfg: intel.config, t }) : null;
 }
 
-const n = (count: number, one: string, many = `${one}s`) => `${count.toLocaleString("it-IT", { useGrouping: "always" })} ${count === 1 ? one : many}`;
-
 /** Five to seven sentences that stand on their own, without opening a single card. */
-export function executiveSummary(ov: PurchasingOverview, intel: Intel): string[] {
+export function executiveSummary(ov: PurchasingOverview, intel: Intel, t: T = en): string[] {
   const s: string[] = [];
-  const t = ov.totals;
-  if (t.productsTotal === 0) return ["No products yet. Import invoices or spreadsheets to see where your purchasing money goes."];
+  const tot = ov.totals;
+  if (tot.productsTotal === 0) return [t("No products yet. Import invoices or spreadsheets to see where your purchasing money goes.")];
   const activeSuppliers = intel.spendBySupplier.length;
   s.push(
-    t.annualSpend > 0
-      ? `You spent ${f.money(Math.round(t.annualSpend))} on purchases in the last 12 months, across ${n(t.productsAnalyzed, "product")} and ${n(activeSuppliers, "supplier")}.`
-      : `${n(t.productsTotal, "product")} on file, with no purchases in the last 12 months.`,
+    tot.annualSpend > 0
+      ? t("You spent {amount} on purchases in the last 12 months, across {products} and {suppliers}.", {
+          amount: f.money(Math.round(tot.annualSpend)),
+          products: t.n(tot.productsAnalyzed, "{n} product", "{n} products"),
+          suppliers: t.n(activeSuppliers, "{n} supplier", "{n} suppliers"),
+        })
+      : t.n(tot.productsTotal, "{n} product on file, with no purchases in the last 12 months.", "{n} products on file, with no purchases in the last 12 months."),
   );
 
   const parts: string[] = [];
-  if (t.productsToReview) parts.push(`${n(t.productsToReview, "product")} ${t.productsToReview === 1 ? "shows" : "show"} a price opportunity or a price increase worth a look`);
-  if (t.byStatus.data_needed) parts.push(`${n(t.byStatus.data_needed, "product")} ${t.byStatus.data_needed === 1 ? "has" : "have"} nothing to be compared with yet`);
-  if (t.byStatus.good) parts.push(`${n(t.byStatus.good, "product")} ${t.byStatus.good === 1 ? "looks" : "look"} fairly priced`);
-  if (parts.length) s.push(`${parts.join("; ").replace(/^./, (c) => c.toUpperCase())}.`);
+  if (tot.productsToReview) parts.push(t.n(tot.productsToReview, "{n} product shows a price opportunity or a price increase worth a look", "{n} products show a price opportunity or a price increase worth a look"));
+  const uncompared = tot.productsTotal - tot.productsJudged;
+  if (uncompared) parts.push(t.n(uncompared, "{n} product has nothing to be compared with yet", "{n} products have nothing to be compared with yet"));
+  if (tot.byStatus.good) parts.push(t.n(tot.byStatus.good, "{n} product looks fairly priced", "{n} products look fairly priced"));
+  if (parts.length) s.push(`${upperFirst(parts.join("; "))}.`);
 
-  if (t.potentialSavings > 0) {
-    const high =
-      t.highConfidenceSavings <= 0
-        ? "none of it yet supported by high-confidence comparable quotes"
-        : Math.round(t.highConfidenceSavings) >= Math.round(t.potentialSavings)
-          ? "all of it supported by high-confidence comparable quotes"
-          : `of which ${f.moneyApprox(t.highConfidenceSavings)} is supported by high-confidence comparable quotes`;
-    s.push(`About ${f.moneyApprox(t.potentialSavings)} a year of potential savings has been identified, ${high}. These compare prices only: transport, duties and quality checks are not included.`);
+  if (tot.potentialSavings > 0) {
+    const amount = f.moneyApprox(tot.potentialSavings);
+    s.push(
+      tot.highConfidenceSavings <= 0
+        ? t("About {amount} a year of potential savings has been identified, none of it yet supported by high-confidence comparable quotes. These compare prices only: transport, duties and quality checks are not included.", { amount })
+        : Math.round(tot.highConfidenceSavings) >= Math.round(tot.potentialSavings)
+          ? t("About {amount} a year of potential savings has been identified, all of it supported by high-confidence comparable quotes. These compare prices only: transport, duties and quality checks are not included.", { amount })
+          : t("About {amount} a year of potential savings has been identified, of which {high} is supported by high-confidence comparable quotes. These compare prices only: transport, duties and quality checks are not included.", {
+              amount,
+              high: f.moneyApprox(tot.highConfidenceSavings),
+            }),
+    );
     const categories = [
       ...new Set(
         ov.products
@@ -930,16 +1110,18 @@ export function executiveSummary(ov: PurchasingOverview, intel: Intel): string[]
           .map((d) => d.category?.trim() || d.name),
       ),
     ].slice(0, 3);
-    if (categories.length) s.push(`The largest ${categories.length === 1 ? "opportunity is" : "opportunities are"} in ${list(categories.map((c) => c.toLowerCase()))}.`);
+    if (categories.length) {
+      s.push(t(categories.length === 1 ? "The largest opportunity is in {where}." : "The largest opportunities are in {where}.", { where: list(t, categories.map((c) => c.toLowerCase())) }));
+    }
   } else {
-    s.push("No potential saving has been identified yet: that needs comparable quotes from other suppliers.");
+    s.push(t("No potential saving has been identified yet: that needs comparable quotes from other suppliers."));
   }
 
   if (ov.supplyRisks.length) {
-    s.push(`${n(ov.supplyRisks.length, "high-spend product")} ${ov.supplyRisks.length === 1 ? "is" : "are"} bought from a single supplier.`);
+    s.push(t.n(ov.supplyRisks.length, "{n} high-spend product is bought from a single supplier.", "{n} high-spend products are bought from a single supplier."));
   }
   const first = ov.checkFirst[0];
-  if (first) s.push(`First thing to look at: ${first.productName} — ${first.action.label.charAt(0).toLowerCase()}${first.action.label.slice(1)}.`);
+  if (first) s.push(t("First thing to look at: {product} — {action}.", { product: first.productName, action: lowerFirst(first.action.label) }));
   return s;
 }
 
@@ -947,7 +1129,7 @@ export function executiveSummary(ov: PurchasingOverview, intel: Intel): string[]
 
 export type OverviewSort = "priority" | "spend" | "saving";
 
-export const OVERVIEW_SORTS: { key: OverviewSort; label: string }[] = [
+export const OVERVIEW_SORTS: { key: OverviewSort; label: Msg }[] = [
   { key: "priority", label: "Priority" },
   { key: "spend", label: "Annual spend" },
   { key: "saving", label: "Potential saving" },

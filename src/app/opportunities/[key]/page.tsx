@@ -7,16 +7,21 @@ import { AgeTag, ComparabilityBadge, ConfidenceBadge, OpportunityStatusBadge } f
 import { OpportunityNote, OpportunityStatusSelect } from "@/components/intel/controls";
 import { PriceOnlyNotice } from "@/components/intel/supplier-comparison";
 import { ButtonLink, PageHeader, Section, cx } from "@/components/ui";
-import { getIntel, getOpportunityStates } from "@/lib/data";
+import { countryName } from "@/lib/countries";
+import { getIntel, getOpportunityStates, getT } from "@/lib/data";
 import * as f from "@/lib/format";
-import { EXPLAIN } from "@/lib/intel/explain";
+import { rich } from "@/lib/i18n/rich";
+import { explain } from "@/lib/intel/explain";
 import { OPPORTUNITY_LABEL } from "@/lib/intel/opportunities";
 
-export const metadata: Metadata = { title: "Opportunity" };
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: (await getT())("Opportunity") };
+}
 
 export default async function OpportunityPage({ params }: PageProps<"/opportunities/[key]">) {
   const key = decodeURIComponent((await params).key);
-  const [intel, states] = await Promise.all([getIntel(), getOpportunityStates()]);
+  const [intel, states, t] = await Promise.all([getIntel(), getOpportunityStates(), getT()]);
+  const EXPLAIN = explain(t);
   const o = intel.opportunities.find((x) => x.key === key);
   const state = states.find((s) => s.key === key);
 
@@ -29,23 +34,23 @@ export default async function OpportunityPage({ params }: PageProps<"/opportunit
         <PageHeader
           eyebrow={
             <Link href="/opportunities" className="hover:text-ink">
-              Opportunities
+              {t("Opportunities")}
             </Link>
           }
-          title={String(snap.productName ?? "Opportunity")}
+          title={String(snap.productName ?? t("Opportunity"))}
           meta={
             <span className="flex flex-wrap items-center gap-3">
-              <OpportunityStatusBadge status={state.status} /> No longer detected in the current data
+              <OpportunityStatusBadge status={state.status} /> {t("No longer detected in the current data")}
             </span>
           }
         />
-        <Section title="As it was when you set the status" description={state.updatedAt.slice(0, 10).split("-").reverse().join("/")}>
+        <Section title={t("As it was when you set the status")} description={state.updatedAt.slice(0, 10).split("-").reverse().join("/")}>
           <dl className="max-w-md divide-y divide-rule text-[13px]">
-            <Row label="Reason">{String(snap.reason ?? "—")}</Row>
-            <Row label="Alternative">{String(snap.alternativeName ?? "—")}</Row>
-            <Row label="Current price">{f.price(snap.currentPrice as number | null)}</Row>
-            <Row label="Compared with">{f.price(snap.comparePrice as number | null)}</Row>
-            <Row label="Potential saving">{snap.potentialSaving != null ? `${f.money(snap.potentialSaving as number)}/yr` : "—"}</Row>
+            <Row label={t("Reason")}>{String(snap.reason ?? "—")}</Row>
+            <Row label={t("Alternative")}>{String(snap.alternativeName ?? "—")}</Row>
+            <Row label={t("Current price")}>{f.price(snap.currentPrice as number | null)}</Row>
+            <Row label={t("Compared with")}>{f.price(snap.comparePrice as number | null)}</Row>
+            <Row label={t("Potential saving")}>{snap.potentialSaving != null ? t("{amount}/yr", { amount: f.money(snap.potentialSaving as number) }) : "—"}</Row>
           </dl>
           {state.note && <p className="mt-4 text-[13px] text-ink-2">{state.note}</p>}
         </Section>
@@ -64,19 +69,19 @@ export default async function OpportunityPage({ params }: PageProps<"/opportunit
       <PageHeader
         eyebrow={
           <Link href="/opportunities" className="hover:text-ink">
-            Opportunities
+            {t("Opportunities")}
           </Link>
         }
         title={product.name}
         meta={
           <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="font-medium text-ink-2">{OPPORTUNITY_LABEL[o.type]}</span>
+            <span className="font-medium text-ink-2">{t(OPPORTUNITY_LABEL[o.type])}</span>
             <span>{o.reason}</span>
           </span>
         }
         actions={
           <>
-            <ButtonLink href={`/products/${product.id}`}>Open product</ButtonLink>
+            <ButtonLink href={`/products/${product.id}`}>{t("Open product")}</ButtonLink>
             <OpportunityStatusSelect opportunityKey={o.key} status={o.status} />
           </>
         }
@@ -86,20 +91,30 @@ export default async function OpportunityPage({ params }: PageProps<"/opportunit
         <div className="mb-6 flex items-center gap-3 rounded-lg border border-rule-strong px-4 py-3 text-[13.5px]">
           <Handshake size={17} className="shrink-0 text-ledger" />
           <div>
-            <span className="font-semibold">Negotiation opportunity.</span> Current supplier increased price {f.pct(pi.price.changes.m12.pct)}. {alt.supplier.name} quoted{" "}
-            {f.pct(-o.priceDifferencePct!).replace("−", "")} less. Potential price gap:{" "}
-            <span className="num font-medium">
-              {f.price(o.priceDifference)}/{unit}
-            </span>
-            . <span className="text-ink-3">Whether to renegotiate, switch or stay is your decision.</span>
+            <span className="font-semibold">{t("Negotiation opportunity.")}</span>{" "}
+            {rich(
+              t("Current supplier increased price {increase}. {supplier} quoted {less} less. Potential price gap: {gap}.", {
+                increase: f.pct(pi.price.changes.m12.pct),
+                supplier: alt.supplier.name,
+                less: f.pct(-o.priceDifferencePct!).replace("−", ""),
+              }),
+              {
+                gap: (
+                  <span className="num font-medium">
+                    {f.price(o.priceDifference)}/{unit}
+                  </span>
+                ),
+              },
+            )}{" "}
+            <span className="text-ink-3">{t("Whether to renegotiate, change supplier or stay is your decision.")}</span>
           </div>
         </div>
       )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <Section title="Current situation">
+        <Section title={t("Current situation")}>
           <dl className="divide-y divide-rule text-[13px]">
-            <Row label="Current supplier">
+            <Row label={t("Current supplier")}>
               {current ? (
                 <Link href={`/suppliers/${current.supplier.id}`} className="font-medium hover:text-ledger">
                   {current.supplier.name}
@@ -108,64 +123,64 @@ export default async function OpportunityPage({ params }: PageProps<"/opportunit
                 "—"
               )}
             </Row>
-            <Row label="Current price" hint={EXPLAIN.currentPrice}>
+            <Row label={t("Current price")} hint={EXPLAIN.currentPrice}>
               <span className="num font-medium">{o.currentPrice != null ? `${f.price(o.currentPrice)}/${unit}` : "—"}</span>
             </Row>
-            <Row label="12M change">{f.pct(pi.price.changes.m12.pct)}</Row>
-            <Row label="Annual volume" hint={EXPLAIN.annualQuantity}>
-              <span className="num">{o.annualQuantity > 0 ? f.quantity(o.annualQuantity, unit) : "No purchases in 12 months"}</span>
+            <Row label={t("Change in 12 months")}>{f.pct(pi.price.changes.m12.pct)}</Row>
+            <Row label={t("Annual volume")} hint={EXPLAIN.annualQuantity}>
+              <span className="num">{o.annualQuantity > 0 ? f.quantity(o.annualQuantity, unit) : t("No purchases in 12 months")}</span>
             </Row>
-            <Row label="Annual spend" hint={EXPLAIN.annualSpend}>
+            <Row label={t("Annual spend")} hint={EXPLAIN.annualSpend}>
               <span className="num">{f.money(o.annualSpend)}</span>
             </Row>
-            <Row label="Share of total spend">
+            <Row label={t("Share of total spend")}>
               <span className="num">{f.number(pi.spendShare * 100, 1)}%</span>
             </Row>
           </dl>
         </Section>
 
-        <Section title={o.type === "lower_quote" ? "Alternative" : "Compared with"}>
+        <Section title={o.type === "lower_quote" ? t("Alternative") : t("Compared with")}>
           {alt ? (
             <dl className="divide-y divide-rule text-[13px]">
-              <Row label="Supplier">
+              <Row label={t("Supplier")}>
                 <Link href={`/suppliers/${alt.supplier.id}`} className="font-medium hover:text-ledger">
                   {alt.supplier.name}
                 </Link>
-                {alt.supplier.country && <span className="text-ink-3"> · {alt.supplier.country}</span>}
+                {alt.supplier.country && <span className="text-ink-3"> · {countryName(alt.supplier.country, t.locale)}</span>}
               </Row>
-              <Row label={alt.kind === "quote" ? "Quoted price" : "Last price paid"}>
+              <Row label={alt.kind === "quote" ? t("Quoted price") : t("Last price paid")}>
                 <span className="num font-medium">
                   {f.price(alt.priceEUR)}/{unit}
                 </span>
                 {alt.currency !== "EUR" && <span className="num text-ink-3"> ({f.price(alt.price, alt.currency ?? "EUR")})</span>}
               </Row>
-              <Row label="MOQ">
-                <span className="num">{alt.moq != null ? f.quantity(alt.moq, unit) : "Unknown"}</span>
+              <Row label={t("Minimum order")}>
+                <span className="num">{alt.moq != null ? f.quantity(alt.moq, unit) : t("Unknown")}</span>
               </Row>
-              <Row label="Lead time">{alt.leadTimeDays != null ? f.days(alt.leadTimeDays) : "Unknown"}</Row>
-              <Row label="Payment terms">{alt.paymentTermsDays != null ? f.paymentTerms(alt.paymentTermsDays) : "Unknown"}</Row>
-              <Row label={alt.kind === "quote" ? "Quote date" : "Purchase date"} hint={EXPLAIN.quoteAge}>
+              <Row label={t("Lead time")}>{alt.leadTimeDays != null ? f.days(alt.leadTimeDays, t) : t("Unknown")}</Row>
+              <Row label={t("Payment terms")}>{alt.paymentTermsDays != null ? f.paymentTerms(alt.paymentTermsDays, t) : t("Unknown")}</Row>
+              <Row label={alt.kind === "quote" ? t("Quote date") : t("Purchase date")} hint={EXPLAIN.quoteAge}>
                 <span className="num">{f.date(alt.date)}</span> · <AgeTag age={alt.age} days={alt.ageDays} expired={alt.expired} />
               </Row>
-              <Row label="Comparability" hint={EXPLAIN.comparability}>
+              <Row label={t("Comparability")} hint={EXPLAIN.comparability}>
                 <ComparabilityBadge level={alt.comparability} />
               </Row>
             </dl>
           ) : o.comparePrice != null ? (
             <dl className="divide-y divide-rule text-[13px]">
-              <Row label={o.type === "above_average" ? "Your historical weighted average" : "Price 12 months ago"} hint={o.type === "above_average" ? EXPLAIN.weightedAverage : EXPLAIN.change}>
+              <Row label={o.type === "above_average" ? t("Your historical weighted average") : t("Price 12 months ago")} hint={o.type === "above_average" ? EXPLAIN.weightedAverage : EXPLAIN.change}>
                 <span className="num font-medium">
                   {f.price(o.comparePrice)}/{unit}
                 </span>
               </Row>
-              <Row label="Difference">
+              <Row label={t("Gap")}>
                 <span className="num">
                   {f.price(o.priceDifference)}/{unit} ({f.pct(o.priceDifferencePct)})
                 </span>
               </Row>
             </dl>
           ) : (
-            <p className="text-[13px] text-ink-3">No price to compare with: this is a signal about how the product is sourced, not about a price.</p>
+            <p className="text-[13px] text-ink-3">{t("No price to compare with: this is a signal about how the product is sourced, not about a price.")}</p>
           )}
           {alt && alt.comparabilityReasons.length > 0 && (
             <ul className="mt-3 space-y-1 text-[12.5px] text-ink-3">
@@ -179,30 +194,30 @@ export default async function OpportunityPage({ params }: PageProps<"/opportunit
 
       <Section
         className="mt-6"
-        title="Calculation"
+        title={t("Calculation")}
         description={
           o.impactBasis === "alternative_quote"
-            ? "(current price − alternative price) × annual volume"
+            ? t("(current price − alternative price) × annual volume")
             : o.impactBasis
-              ? "annual volume × price difference — a price signal, not a potential saving"
-              : "No monetary figure for this opportunity"
+              ? t("annual volume × price difference — a price signal, not a potential saving")
+              : t("No monetary figure for this opportunity")
         }
       >
         {o.impact != null && o.priceDifference != null ? (
           <div className="flex flex-wrap items-center gap-x-3 gap-y-4 text-[13px]">
-            <Term label="Price difference" value={`${f.price(o.priceDifference)}/${unit}`} />
+            <Term label={t("Price difference")} value={`${f.price(o.priceDifference)}/${unit}`} />
             <span className="text-ink-4">×</span>
-            <Term label="Annual quantity" value={f.quantity(o.annualQuantity, unit)} />
+            <Term label={t("Annual quantity")} value={f.quantity(o.annualQuantity, unit)} />
             <span className="text-ink-4">=</span>
-            <Term label={o.potentialSaving != null ? "Potential saving" : "Annual price impact"} value={`${f.money(o.impact)}/year`} strong />
+            <Term label={o.potentialSaving != null ? t("Potential saving") : t("Annual price impact")} value={t("{amount}/year", { amount: f.money(o.impact) })} strong />
             {o.confidence && (
               <span className="ml-2 inline-flex items-center gap-1.5">
-                <ConfidenceBadge level={o.confidence} suffix=" confidence" /> <Hint text={EXPLAIN.confidence} />
+                <ConfidenceBadge level={o.confidence} long /> <Hint text={EXPLAIN.confidence} />
               </span>
             )}
           </div>
         ) : (
-          <p className="text-[13px] text-ink-3">{o.annualQuantity > 0 ? "Nothing to calculate: there is no alternative price to compare with." : "No annual volume in the last 12 months to multiply by."}</p>
+          <p className="text-[13px] text-ink-3">{o.annualQuantity > 0 ? t("Nothing to calculate: there is no alternative price to compare with.") : t("No annual volume in the last 12 months to multiply by.")}</p>
         )}
         <p className="mt-4 text-[12.5px] text-ink-3">
           {o.potentialSaving != null ? EXPLAIN.potentialSaving : EXPLAIN.annualImpact}
@@ -211,7 +226,7 @@ export default async function OpportunityPage({ params }: PageProps<"/opportunit
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
         {o.factors.length > 0 && (
-          <Section title="Why this confidence" description="Rules, not a model: each line is a check on the data">
+          <Section title={t("Why this confidence")} description={t("Rules, not a model: each line is a check on the data")}>
             <ul className="space-y-2 text-[13px]">
               {o.factors.map((x) => (
                 <li key={x.key} className="flex items-start gap-2.5">
@@ -227,7 +242,7 @@ export default async function OpportunityPage({ params }: PageProps<"/opportunit
           </Section>
         )}
 
-        <Section title="Missing information" description="What is not known yet, before deciding">
+        <Section title={t("Missing information")} description={t("What is not known yet, before deciding")}>
           {o.missing.length ? (
             <ul className="space-y-1.5 text-[13px]">
               {o.missing.map((x) => (
@@ -238,14 +253,14 @@ export default async function OpportunityPage({ params }: PageProps<"/opportunit
               ))}
             </ul>
           ) : (
-            <p className="text-[13px] text-ink-3">Nothing specific flagged.</p>
+            <p className="text-[13px] text-ink-3">{t("Nothing specific flagged.")}</p>
           )}
         </Section>
       </div>
 
       {o.type === "lower_quote" && <PriceOnlyNotice className="mt-6" />}
 
-      <Section className="mt-6" title="Notes" description="Kept with the status of this opportunity">
+      <Section className="mt-6" title={t("Notes")} description={t("Kept with the status of this opportunity")}>
         <OpportunityNote opportunityKey={o.key} status={o.status} note={o.note ?? ""} />
       </Section>
     </>

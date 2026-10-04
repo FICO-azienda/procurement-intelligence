@@ -1,4 +1,5 @@
-/** Display formatting. Numbers in Italian style (1.234,56), labels in English. */
+/** Display formatting. Numbers and dates in Italian style (1.234,56 · 15/09/2026) in both languages; words through the translator. */
+import { en, type Msg, type T } from "./i18n";
 
 const LOCALE = "it-IT";
 // it-IT skips grouping below 10.000 by default ("6000"); we always want "6.000".
@@ -79,22 +80,21 @@ export function date(iso: string | null | undefined) {
   return `${d}/${m}/${y}`;
 }
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MONTHS: Msg[] = ["Jan", "Feb", "Mar", "Apr", "May|month", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 /** 2026-09-15 → Sep 2026 */
-export function month(iso: string | null | undefined) {
+export function month(iso: string | null | undefined, t: T = en) {
   if (!iso) return "—";
   const [y, m] = iso.split("-");
-  return `${MONTHS[Number(m) - 1]} ${y}`;
+  return `${t(MONTHS[Number(m) - 1])} ${y}`;
 }
 
-export function days(n: number | null | undefined) {
+export function days(n: number | null | undefined, t: T = en) {
   if (n == null) return "—";
-  const r = Math.round(n);
-  return `${r} ${r === 1 ? "day" : "days"}`;
+  return t.n(Math.round(n), "{n} day", "{n} days");
 }
 
-export function paymentTerms(n: number | null | undefined) {
+export function paymentTerms(n: number | null | undefined, t: T = en) {
   if (n == null) return "—";
-  return n === 0 ? "Advance" : `${n} days`;
+  return n === 0 ? t("Advance") : t("{n} days", { n });
 }

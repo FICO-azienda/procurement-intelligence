@@ -15,3 +15,5 @@ export const COMPANY_ID = process.env.COMPANY_ID ?? "cereria-cicogna";
 export const OWN_COMPANY_NAMES = [COMPANY_NAME, ...(process.env.COMPANY_ALIASES?.split(",") ?? [])].map((s) => s.trim()).filter(Boolean);
 export const OWN_VAT_NUMBERS = (process.env.COMPANY_VAT ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 export const BASE_CURRENCY = "EUR";
+/** Where "today" is decided (dates on purchases, the start of the 12-month window). */
+export const TIME_ZONE = process.env.TIME_ZONE ?? "Europe/Rome";

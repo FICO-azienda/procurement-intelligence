@@ -26,26 +26,40 @@ import {
   type Source,
 } from "@/db/schema";
 import { computeTotal, productMetrics, todayISO, type Dataset } from "@/lib/analytics";
-import { readDataset, readLearning, type Learning } from "@/lib/data";
+import { isStrategic } from "@/lib/catalog/kinds";
+import { en, type Msg, type T } from "@/lib/i18n";
+import { ownCompany, readDataset, readLearning, readSettings, type Learning } from "@/lib/data";
 import { documentToItems, extractDocument, type DocKind, type DocumentExtraction } from "@/lib/import/extract/document";
+import { eInvoiceToItems, issuedByUs, readEInvoice } from "@/lib/import/extract/einvoice";
+import { unwrapSigned } from "@/lib/import/extract/p7m";
 import { readPdfLines } from "@/lib/import/extract/pdf";
 import { buildRowItems } from "@/lib/import/extract/rows";
 import { ImportError, readTable, SPREADSHEET_TYPES, cellText, type Table } from "@/lib/import/extract/tabular";
 import { evaluateItems, inProductUnit, type ItemState } from "@/lib/import/evaluate";
-import { missingRequired, proposeMapping, type ColumnMapping } from "@/lib/import/fields";
+import { inferByContent, isConfidentMapping, missingRequired, proposeMapping, type ColumnMapping } from "@/lib/import/fields";
+import { MAX_FILE_BYTES } from "@/lib/import/files";
 import { productGroupKey, supplierGroupKey } from "@/lib/import/groups";
 import { matchProduct, matchSupplier, type MatchContext, type MatchResult } from "@/lib/import/match";
 import { companyKey, productKey, tidy } from "@/lib/import/normalize/text";
 import { normalizeUnit } from "@/lib/import/normalize/units";
 import type { CurrentData, DraftItem, ExtractedData, Issue, ItemData, RecordType } from "@/lib/import/types";
+import { uniqueSku } from "@/lib/sku";
 import { getStorage, storageKey } from "@/lib/storage";
 
-export type UploadKind = "spreadsheet" | "invoice" | "quote";
+/** "auto": the file says what it is (spreadsheet, or a PDF that reads as an invoice or a quote). */
+export type UploadKind = "auto" | "spreadsheet" | "invoice" | "quote";
 
 export interface MappingInfo {
   columns: ColumnMapping;
   recordType: RecordType;
   defaultCurrency: string | null;
+  /** The columns were recognised and applied without asking (can be reopened). */
+  auto?: boolean;
+}
+
+export interface UploadOptions {
+  /** Skip the column screen when every needed column has a known name. */
+  autoMap?: boolean;
 }
 
 export interface SpreadsheetExtraction {
@@ -55,10 +69,13 @@ export interface SpreadsheetExtraction {
   sample: string[][];
   rowCount: number;
   skippedRows?: number;
+  /** The file had no header row: columns were guessed from their values. */
+  headerless?: boolean;
 }
 
 export interface PdfSessionExtraction {
-  type: "pdf";
+  /** "xml": an electronic invoice, read from its own fields (every value is certain). */
+  type: "pdf" | "xml";
   kind: DocKind;
   detectedKind: DocKind | null;
   fields: Record<string, { value: string | number | null; confidence: number }>;
@@ -89,7 +106,14 @@ export interface ImportSummary {
   increaseImpact: number;
 }
 
-export const MAX_FILE_BYTES = 20 * 1024 * 1024;
+export { MAX_FILE_BYTES };
+
+/**
+ * Errors are messages: written in English here (and stored so), shown in the
+ * reader's language by whoever displays them (`t.any`).
+ */
+const error = (msg: Msg): { error: string } => ({ error: msg });
+const SOMETHING_WRONG: Msg = "Something went wrong while reading this file. It has been saved; try again or contact support.";
 
 const MIME: Record<string, string> = {
   csv: "text/csv",
@@ -97,11 +121,14 @@ const MIME: Record<string, string> = {
   xls: "application/vnd.ms-excel",
   ods: "application/vnd.oasis.opendocument.spreadsheet",
   pdf: "application/pdf",
+  xml: "application/xml",
+  p7m: "application/pkcs7-mime",
 };
 
 function fileTypeOf(name: string, bytes: Uint8Array): string | null {
   const ext = name.toLowerCase().split(".").pop() ?? "";
   if (ext === "pdf" || (bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46)) return "pdf";
+  if (ext === "xml" || ext === "p7m") return ext;
   if (ext === "txt" || ext === "tsv") return "csv";
   if ((SPREADSHEET_TYPES as readonly string[]).includes(ext)) return ext;
   return null;
@@ -116,13 +143,35 @@ function fileTypeOf(name: string, bytes: Uint8Array): string | null {
 export async function createUpload(
   db: DB,
   file: { name: string; bytes: Uint8Array },
-  kind: UploadKind,
+  requested: UploadKind,
+  options: UploadOptions = {},
 ): Promise<{ sessionId: string }> {
-  const fileType = fileTypeOf(file.name, file.bytes);
-  const sourceType: Source = fileType === "pdf" ? (kind === "quote" ? "quote" : "invoice") : fileType === "csv" ? "csv" : "excel";
+  let fileType = fileTypeOf(file.name, file.bytes);
+  // A signed file (.p7m) is an envelope: what is inside decides how it is read. The envelope is what gets stored.
+  const signed = fileType === "p7m";
+  let payload = file.bytes;
+  let signedError: Msg | null = null;
+  if (signed) {
+    try {
+      payload = unwrapSigned(file.bytes);
+      const start = payload.findIndex((x, i) => i > 2 || !(x === 0xef || x === 0xbb || x === 0xbf || x === 0x20 || x === 0x0a || x === 0x0d));
+      if (payload[0] === 0x25 && payload[1] === 0x50 && payload[2] === 0x44 && payload[3] === 0x46) fileType = "pdf";
+      else if (payload[Math.max(start, 0)] === 0x3c) fileType = "xml";
+      else signedError = "This signed file holds neither an XML invoice nor a PDF.";
+    } catch (err) {
+      signedError = err instanceof ImportError ? (err.message as Msg) : SOMETHING_WRONG;
+    }
+  }
+  const eInvoice = fileType === "xml";
+  // "auto": spreadsheets are spreadsheets; a PDF is read as what it says it is (decided while reading it).
+  const autoPdf = requested === "auto" && fileType === "pdf";
+  const kind: Exclude<UploadKind, "auto"> = eInvoice
+    ? "invoice"
+    : requested !== "auto" ? requested : fileType === "pdf" ? (/(offerta|preventivo|quot|listino|price)/i.test(file.name) ? "quote" : "invoice") : "spreadsheet";
+  const sourceType: Source = eInvoice ? "invoice" : fileType === "pdf" ? (kind === "quote" ? "quote" : "invoice") : fileType === "csv" ? "csv" : "excel";
   const recordType: RecordType = kind === "quote" ? "quote" : "purchase";
 
-  const fail = async (message: string, documentId: string | null = null) => {
+  const fail = async (message: Msg, documentId: string | null = null) => {
     const [s] = await db
       .insert(importSessions)
       .values({ filename: file.name, fileType: fileType ?? "unknown", sourceType, recordType, status: "failed", errorMessage: message, documentId })
@@ -130,11 +179,12 @@ export async function createUpload(
     return { sessionId: s.id };
   };
 
-  if (!fileType) return fail("This file type isn't supported. Upload CSV, Excel (.xlsx, .xls, .ods) or PDF files.");
+  if (!fileType) return fail("This file type isn't supported. Upload PDF, XML invoices, Excel (.xlsx, .xls, .ods) or CSV files.");
   if (file.bytes.length === 0) return fail("The file is empty.");
   if (file.bytes.length > MAX_FILE_BYTES) return fail("This file is larger than 20 MB. Split it into smaller files and upload them separately.");
-  if (kind !== "spreadsheet" && fileType !== "pdf") return fail("Invoices and quotes must be PDF files. Use “Upload CSV” or “Upload Excel” for spreadsheets.");
-  if (kind === "spreadsheet" && fileType === "pdf") return fail("This is a PDF. Use “Upload invoice” or “Upload quote” for PDF documents.");
+  if (signedError) return fail(signedError);
+  if (kind !== "spreadsheet" && fileType !== "pdf" && !eInvoice) return fail("Invoices and quotes must be PDF files.");
+  if (kind === "spreadsheet" && fileType === "pdf") return fail("This is a PDF, not a spreadsheet.");
 
   // Store the original once (same content = same document).
   const sha256 = createHash("sha256").update(file.bytes).digest("hex");
@@ -142,13 +192,13 @@ export async function createUpload(
   if (!doc) {
     const key = storageKey(file.name, sha256);
     try {
-      await getStorage().put(key, file.bytes, MIME[fileType] ?? "application/octet-stream");
+      await getStorage().put(key, file.bytes, MIME[signed ? "p7m" : fileType] ?? "application/octet-stream");
     } catch {
       return fail("We couldn't save the file. Please try again.");
     }
     [doc] = await db
       .insert(documents)
-      .values({ filename: file.name, mimeType: MIME[fileType], sizeBytes: file.bytes.length, sha256, storagePath: key })
+      .values({ filename: file.name, mimeType: MIME[signed ? "p7m" : fileType], sizeBytes: file.bytes.length, sha256, storagePath: key })
       .returning();
   }
 
@@ -174,25 +224,35 @@ export async function createUpload(
 
   try {
     if (fileType === "pdf") {
-      await processPdf(db, session, file.bytes, kind === "quote" ? "quote" : "invoice");
+      await processPdf(db, session, payload, kind === "quote" ? "quote" : "invoice", autoPdf);
+    } else if (eInvoice) {
+      await processEInvoice(db, session, payload);
     } else {
       const table = readTable(file.bytes, fileType);
-      const mapping: MappingInfo = {
-        columns: proposeMapping(table.headers, table.rows.slice(0, 20)),
-        recordType: guessRecordType(table),
-        defaultCurrency: "EUR",
-      };
+      let columns = proposeMapping(table.headers, table.rows.slice(0, 20));
+      // Columns the headers don't explain (or no headers at all): look at the values.
+      if (table.headerless || missingRequired(columns, "purchase").length) {
+        const known = await db.select({ name: suppliers.name }).from(suppliers);
+        const knownProducts = await db.select({ name: products.name }).from(products);
+        columns = inferByContent(table.headers, table.rows, columns, { suppliers: known.map((x) => x.name), products: knownProducts.map((x) => x.name) });
+      }
+      const mapping: MappingInfo = { columns, recordType: guessRecordType(table), defaultCurrency: "EUR" };
       const extraction: SpreadsheetExtraction = {
         type: "spreadsheet",
         sheetName: table.sheetName,
         headers: table.headers,
         sample: table.rows.slice(0, 6).map((r) => r.map(cellText)),
         rowCount: table.rows.length,
+        headerless: table.headerless,
       };
       await db.update(importSessions).set({ status: "uploaded", extraction, mapping, updatedAt: new Date() }).where(eq(importSessions.id, session.id));
+      // Known column names: nothing to ask. Guessed from values: the user checks first.
+      if (options.autoMap && !table.headerless && !previous && isConfidentMapping(columns, mapping.recordType)) {
+        await applyMapping(db, session.id, { ...mapping, auto: true });
+      }
     }
   } catch (err) {
-    const message = err instanceof ImportError ? err.message : "Something went wrong while reading this file. It has been saved; try again or contact support.";
+    const message = err instanceof ImportError ? err.message : SOMETHING_WRONG;
     if (!(err instanceof ImportError)) console.error("[import] processing failed", err);
     await db.update(importSessions).set({ status: "failed", errorMessage: message, updatedAt: new Date() }).where(eq(importSessions.id, session.id));
   }
@@ -210,16 +270,17 @@ async function loadFile(db: DB, session: ImportSession): Promise<Uint8Array> {
   const [doc] = await db.select().from(documents).where(eq(documents.id, session.documentId));
   const bytes = doc ? await getStorage().get(doc.storagePath) : null;
   if (!bytes) throw new ImportError("The original file is no longer available. Upload it again.");
-  return bytes;
+  // A signed file is stored as it arrived: what is read is the document inside it.
+  return /\.p7m$/i.test(doc.filename) ? unwrapSigned(bytes) : bytes;
 }
 
 // ======================= Spreadsheet mapping =======================
 
-export async function applyMapping(db: DB, sessionId: string, mapping: MappingInfo): Promise<{ error?: string }> {
+export async function applyMapping(db: DB, sessionId: string, mapping: MappingInfo, t: T = en): Promise<{ error?: string }> {
   const session = await getSession(db, sessionId);
-  if (!session || session.status !== "uploaded") return { error: "This import has already been processed." };
+  if (!session || session.status !== "uploaded") return error("This import has already been processed.");
   const missing = missingRequired(mapping.columns, mapping.recordType);
-  if (missing.length) return { error: `Map a column for: ${missing.join(", ")}.` };
+  if (missing.length) return { error: t("Map a column for: {fields}.", { fields: missing.map((m) => t(m)).join(", ") }) };
 
   try {
     const table = readTable(await loadFile(db, session), session.fileType);
@@ -227,7 +288,7 @@ export async function applyMapping(db: DB, sessionId: string, mapping: MappingIn
       recordType: mapping.recordType,
       defaultCurrency: mapping.defaultCurrency,
     });
-    if (items.length === 0) return { error: "No rows with products or prices were found with this mapping." };
+    if (items.length === 0) return error("No rows with products or prices were found with this mapping.");
     await db
       .update(importSessions)
       .set({
@@ -242,16 +303,29 @@ export async function applyMapping(db: DB, sessionId: string, mapping: MappingIn
   } catch (err) {
     if (err instanceof ImportError) return { error: err.message };
     console.error("[import] mapping failed", err);
-    return { error: "Something went wrong while reading the rows. Please try again." };
+    return error("Something went wrong while reading the rows. Please try again.");
   }
   return {};
 }
 
 // ======================= PDF =======================
 
-async function processPdf(db: DB, session: ImportSession, bytes: Uint8Array, kind: DocKind) {
+async function processPdf(db: DB, session: ImportSession, bytes: Uint8Array, requested: DocKind, auto = false) {
   const { lines } = await readPdfLines(bytes);
-  const doc = extractDocument(lines, kind);
+  let kind = requested;
+  const own = ownCompany(await readSettings(db));
+  let doc = extractDocument(lines, kind, own);
+  // Uploaded without saying what it is: believe the document's own title.
+  if (auto && doc.detectedKind && doc.detectedKind !== kind) {
+    kind = doc.detectedKind;
+    doc = extractDocument(lines, kind, own);
+  }
+  if (kind !== requested) {
+    await db
+      .update(importSessions)
+      .set({ sourceType: kind === "quote" ? "quote" : "invoice", recordType: kind === "quote" ? "quote" : "purchase" })
+      .where(eq(importSessions.id, session.id));
+  }
   if (doc.lines.length === 0) {
     throw new ImportError(
       kind === "quote"
@@ -275,6 +349,37 @@ async function processPdf(db: DB, session: ImportSession, bytes: Uint8Array, kin
   await insertItems(db, session.id, kind === "quote" ? "quote" : "purchase", documentToItems(doc), doc);
 }
 
+// ======================= Electronic invoice (XML) =======================
+
+async function processEInvoice(db: DB, session: ImportSession, bytes: Uint8Array) {
+  const file = readEInvoice(bytes);
+  if (issuedByUs(file, ownCompany(await readSettings(db)))) {
+    throw new ImportError("This invoice was issued by your own company: it is a sale, not a purchase. Only invoices received from suppliers are imported.");
+  }
+  const { items, freight, read } = eInvoiceToItems(file);
+  if (items.length === 0) throw new ImportError("We couldn't find product lines (quantity × price) in this invoice. You can add the purchases manually.");
+  // Every value comes from its own field in the file: nothing here is a guess.
+  const known = (value: string | number | null) => ({ value, confidence: value == null ? 0 : 1 });
+  const extraction: PdfSessionExtraction = {
+    type: "xml",
+    kind: "invoice",
+    detectedKind: "invoice",
+    fields: {
+      supplierName: known(file.supplier.name),
+      supplierVat: known(file.supplier.vat ?? file.supplier.taxCode),
+      number: known(read[0].number),
+      date: known(read[0].date),
+      currency: known(read[0].currency),
+      paymentTermsDays: known(read[0].paymentTermsDays),
+      freight: known(freight > 0 ? freight : null),
+      total: known(read[0].total),
+    },
+    lineCount: items.length,
+  };
+  await db.update(importSessions).set({ extraction, updatedAt: new Date() }).where(eq(importSessions.id, session.id));
+  await insertItems(db, session.id, "purchase", items);
+}
+
 // ======================= Items: match + evaluate =======================
 
 async function matchContext(db: DB, data?: Dataset, learning?: Learning): Promise<{ ctx: MatchContext; data: Dataset }> {
@@ -284,7 +389,7 @@ async function matchContext(db: DB, data?: Dataset, learning?: Learning): Promis
     data: d,
     ctx: {
       suppliers: d.suppliers.map((s) => ({ id: s.id, name: s.name, vatNumber: s.vatNumber })),
-      products: d.products.map((p) => ({ id: p.id, sku: p.sku, name: p.name, description: p.description })),
+      products: d.products.map((p) => ({ id: p.id, sku: p.sku, name: p.name, description: p.description, kind: p.kind })),
       supplierAliases: l.supplierAliases,
       productAliases: l.productAliases,
       supplierProducts: l.supplierProducts,
@@ -403,8 +508,24 @@ export async function refreshSession(db: DB, sessionId: string, opts: { rematch?
   if (opts.rematch) states = states.map((s) => ({ ...s, ...matchItem(s, ctx) }));
   const results = evaluateItems(states, { data });
 
+  const before = new Map(open.map((r) => [r.id, r]));
+  const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
   for (const s of states) {
     const r = results.get(s.id)!;
+    const was = before.get(s.id)!;
+    // A large file is re-evaluated after every answer: only the lines that changed are written.
+    if (
+      was.status === r.status &&
+      was.supplierId === s.supplierId &&
+      was.productId === s.productId &&
+      was.supplierResolution === s.supplierResolution &&
+      was.productResolution === s.productResolution &&
+      same(was.issues, r.issues) &&
+      same(was.supplierMatch, s.supplierMatch) &&
+      same(was.productMatch, s.productMatch)
+    ) {
+      continue;
+    }
     await db
       .update(importItems)
       .set({
@@ -472,7 +593,7 @@ export type SupplierDecision =
   | { type: "use"; supplierId: string }
   | { type: "create"; name: string; country: string | null; vatNumber: string | null };
 
-export async function resolveSupplier(db: DB, sessionId: string, groupKey: string, decision: SupplierDecision) {
+export async function resolveSupplier(db: DB, sessionId: string, groupKey: string, decision: SupplierDecision, opts: { defer?: boolean } = {}) {
   const items = (await openItems(db, sessionId)).filter((i) => supplierGroupKey(i.data as ItemData) === groupKey);
   if (!items.length) return;
   const sample = items[0].data as ItemData;
@@ -511,6 +632,7 @@ export async function resolveSupplier(db: DB, sessionId: string, groupKey: strin
     .update(importItems)
     .set({ supplierId, supplierResolution: resolution, updatedAt: new Date() })
     .where(inArray(importItems.id, items.map((i) => i.id)));
+  if (opts.defer) return;
   // Supplier codes can now be recognised for these lines.
   await refreshSession(db, sessionId, { rematch: true });
   await rematchOpenSessions(db, sessionId);
@@ -518,20 +640,21 @@ export async function resolveSupplier(db: DB, sessionId: string, groupKey: strin
 
 export type ProductDecision =
   | { type: "use"; productId: string }
-  | { type: "create"; name: string; sku: string; unit: string; category: string | null };
+  | { type: "create"; name: string; sku?: string | null; unit: string; category: string | null };
 
-export async function resolveProduct(db: DB, sessionId: string, groupKey: string, decision: ProductDecision): Promise<{ error?: string }> {
+export async function resolveProduct(db: DB, sessionId: string, groupKey: string, decision: ProductDecision, opts: { defer?: boolean } = {}): Promise<{ error?: string }> {
   const items = (await openItems(db, sessionId)).filter((i) => productGroupKey(i.data as ItemData) === groupKey);
   if (!items.length) return {};
 
   let productId: string;
   let resolution: string;
   if (decision.type === "create") {
-    const sku = decision.sku.trim().toUpperCase();
     const unit = normalizeUnit(decision.unit) ?? decision.unit.trim();
-    if (!decision.name.trim() || !sku || !unit) return { error: "Name, SKU and unit are required." };
-    const [clash] = await db.select({ id: products.id }).from(products).where(eq(products.sku, sku));
-    if (clash) return { error: "Another product already uses this SKU." };
+    if (!decision.name.trim() || !unit) return error("Name and unit are required.");
+    const taken = (await db.select({ sku: products.sku }).from(products)).map((x) => x.sku);
+    // No code of their own? One is made from the name.
+    const sku = decision.sku?.trim().toUpperCase() || uniqueSku(decision.name, taken);
+    if (taken.some((code) => code.toUpperCase() === sku)) return error("Another product already uses this code.");
     const [p] = await db
       .insert(products)
       .values({ name: tidy(decision.name), sku, unit, category: decision.category?.trim() || null, currentSupplierId: items[0].supplierId })
@@ -545,31 +668,105 @@ export async function resolveProduct(db: DB, sessionId: string, groupKey: string
     resolution = suggested === productId ? "confirmed" : "chosen";
   }
 
-  await learnProduct(db, productId, items);
+  await learnProduct(db, productId, items, { sessionId });
   await db
     .update(importItems)
     .set({ productId, productResolution: resolution, updatedAt: new Date() })
     .where(inArray(importItems.id, items.map((i) => i.id)));
+  if (opts.defer) return {};
   await refreshSession(db, sessionId);
   await rematchOpenSessions(db, sessionId);
   return {};
 }
 
+/**
+ * A first import is mostly new names. Instead of one question per supplier or
+ * product, the user can create all the unknown ones at once, as the file
+ * writes them. Products need a unit: those whose lines carry none are left as
+ * questions. Names we only suspect to be known (suggestions) are never touched.
+ */
+export async function createAllNew(db: DB, sessionId: string, kind: "supplier" | "product"): Promise<{ created: number; left: number }> {
+  const items = await openItems(db, sessionId);
+  const seen = new Set<string>();
+  let created = 0;
+  let left = 0;
+  for (const item of items) {
+    const d = item.data as ItemData;
+    if (kind === "supplier") {
+      const key = supplierGroupKey(d);
+      if (item.supplierId || (item.supplierMatch as MatchResult | null)?.status === "probable" || seen.has(key)) continue;
+      seen.add(key);
+      const name = tidy(d.supplierName);
+      if (!name) {
+        left++;
+        continue;
+      }
+      await resolveSupplier(db, sessionId, key, { type: "create", name, country: d.supplierCountry ?? null, vatNumber: d.supplierVat ?? null }, { defer: true });
+      created++;
+    } else {
+      const key = productGroupKey(d);
+      if (item.productId || (item.productMatch as MatchResult | null)?.status === "probable" || seen.has(key)) continue;
+      seen.add(key);
+      const name = tidy(d.productName ?? d.description);
+      const unit = normalizeUnit(d.unit);
+      if (!name || !unit) {
+        left++;
+        continue;
+      }
+      const res = await resolveProduct(db, sessionId, key, { type: "create", name, sku: d.sku ?? null, unit, category: d.category ?? null }, { defer: true });
+      if (res.error) left++;
+      else created++;
+    }
+  }
+  if (created > 0) {
+    await refreshSession(db, sessionId, { rematch: true });
+    await rematchOpenSessions(db, sessionId);
+  }
+  return { created, left };
+}
+
+/**
+ * One description, as one supplier writes it, now means this product. The
+ * same words from the same supplier never point to two products: the latest
+ * decision replaces the earlier one.
+ */
+export async function saveAlias(
+  db: DB,
+  a: { productId: string; alias: string; supplierId: string | null; supplierSku?: string | null; ean?: string | null; confidence?: string | null; confirmedByUser?: boolean; sessionId?: string | null },
+) {
+  const normalized = productKey(a.alias);
+  if (!normalized) return;
+  await db.delete(productAliases).where(and(eq(productAliases.normalized, normalized), a.supplierId ? eq(productAliases.supplierId, a.supplierId) : sql`${productAliases.supplierId} is null`));
+  await db.insert(productAliases).values({
+    productId: a.productId,
+    alias: a.alias,
+    normalized,
+    supplierId: a.supplierId,
+    supplierSku: a.supplierSku ?? null,
+    ean: a.ean ?? null,
+    confidence: a.confidence ?? null,
+    confirmedByUser: a.confirmedByUser ?? true,
+    sourceSessionId: a.sessionId ?? null,
+  });
+}
+
 /** Save how this product was written (alias) and the supplier's code for it. */
-async function learnProduct(db: DB, productId: string, items: ImportItemRecord[]) {
+export async function learnProduct(db: DB, productId: string, items: ImportItemRecord[], opts: { sessionId?: string | null; confidence?: string | null } = {}) {
   const [product] = await db.select().from(products).where(eq(products.id, productId));
   if (!product) return;
+  const saved = new Set<string>();
+  const linked = new Set<string>();
   for (const i of items) {
     const d = i.data as ItemData;
     for (const text of [d.productName, d.description]) {
       const alias = tidy(text);
-      if (!alias || productKey(alias) === productKey(product.name)) continue;
-      await db
-        .insert(productAliases)
-        .values({ productId, alias, normalized: productKey(alias), supplierId: i.supplierId })
-        .onConflictDoUpdate({ target: productAliases.normalized, set: { productId, alias } });
+      const once = `${i.supplierId}|${productKey(alias)}`;
+      if (!alias || saved.has(once)) continue;
+      saved.add(once);
+      await saveAlias(db, { productId, alias, supplierId: i.supplierId, supplierSku: d.supplierSku, ean: d.ean, confidence: opts.confidence, sessionId: opts.sessionId ?? i.sessionId });
     }
-    if (i.supplierId && (d.supplierSku || d.productName)) {
+    if (i.supplierId && (d.supplierSku || d.productName || d.description) && !linked.has(`${i.supplierId}|${d.supplierSku ?? ""}`)) {
+      linked.add(`${i.supplierId}|${d.supplierSku ?? ""}`);
       await db
         .insert(supplierProducts)
         .values({ supplierId: i.supplierId, productId, supplierSku: d.supplierSku, supplierProductName: tidy(d.productName ?? d.description) || null })
@@ -653,9 +850,16 @@ export async function decideDuplicate(db: DB, target: { itemId: string } | { ses
 export async function setSkipped(db: DB, itemId: string, skipped: boolean) {
   const [item] = await db.select().from(importItems).where(eq(importItems.id, itemId));
   if (!item || item.status === "imported") return;
-  await db.update(importItems).set({ status: skipped ? "skipped" : "attention" }).where(eq(importItems.id, itemId));
+  // Bringing back a line the system had set aside (a credit note…) is saying "import it anyway".
+  const setAside = (item.extracted as ExtractedData).parseIssues?.some((x) => x.excludes);
+  await db
+    .update(importItems)
+    .set(skipped ? { status: "skipped", acknowledged: false } : { status: "attention", ...(setAside ? { acknowledged: true } : {}) })
+    .where(eq(importItems.id, itemId));
   await refreshSession(db, item.sessionId);
 }
+
+const SKIPPED_SAME_FILE: Msg = "Skipped — this file had already been imported.";
 
 /** The same file was imported before: stop here, or go on anyway. */
 export async function decideDuplicateFile(db: DB, sessionId: string, decision: "skip" | "continue") {
@@ -666,7 +870,7 @@ export async function decideDuplicateFile(db: DB, sessionId: string, decision: "
   await db.update(importItems).set({ status: "skipped", duplicateDecision: "skip" }).where(eq(importItems.sessionId, sessionId));
   await db
     .update(importSessions)
-    .set({ status: "completed", completedAt: new Date(), errorMessage: "Skipped — this file had already been imported." })
+    .set({ status: "completed", completedAt: new Date(), errorMessage: SKIPPED_SAME_FILE })
     .where(eq(importSessions.id, sessionId));
   await updateCountsKeepStatus(db, sessionId);
 }
@@ -684,10 +888,10 @@ async function updateCountsKeepStatus(db: DB, sessionId: string) {
 /** Writes every ready line as a purchase/quote. Lines needing attention stay in review. */
 export async function approveSession(db: DB, sessionId: string): Promise<{ imported: number; summary?: ImportSummary; error?: string }> {
   const session = await getSession(db, sessionId);
-  if (!session) return { imported: 0, error: "Import not found." };
+  if (!session) return { imported: 0, ...error("Import not found.") };
   const before = await readDataset(db);
   const ready = (await db.select().from(importItems).where(and(eq(importItems.sessionId, sessionId), eq(importItems.status, "ready"))));
-  if (!ready.length) return { imported: 0, error: "No lines are ready to import yet." };
+  if (!ready.length) return { imported: 0, ...error("No lines are ready to import yet.") };
 
   const touched = new Set<string>();
   await db.transaction(async (tx) => {
@@ -695,7 +899,9 @@ export async function approveSession(db: DB, sessionId: string): Promise<{ impor
       const d = item.data as CurrentData;
       const product = before.products.find((p) => p.id === item.productId);
       if (!product || !item.supplierId || !d.date || d.unitPrice == null || !d.currency) continue;
-      const v = inProductUnit(d, product.unit);
+      // A product is stored in its own unit; spend that is not a product keeps the invoice's.
+      const spend = !isStrategic(product.kind);
+      const v = spend ? { quantity: d.quantity, unitPrice: d.unitPrice, moq: d.moq } : inProductUnit(d, product.unit);
       if (!v || v.unitPrice == null) continue;
       const fxRate = d.currency === "EUR" ? "1" : d.fxRate != null ? String(d.fxRate) : null;
       const originalDescription = tidy(d.productName ?? d.description) || null;
@@ -727,7 +933,7 @@ export async function approveSession(db: DB, sessionId: string): Promise<{ impor
           supplierId: item.supplierId,
           date: d.date,
           quantity: String(v.quantity),
-          unit: product.unit,
+          unit: spend ? (d.unit ?? product.unit) : product.unit,
           unitPrice: String(v.unitPrice),
           currency: d.currency,
           fxRate,
@@ -735,6 +941,7 @@ export async function approveSession(db: DB, sessionId: string): Promise<{ impor
           otherCosts: String(d.otherCosts ?? 0),
           totalAmount: String(computeTotal(v.quantity, v.unitPrice, d.freight ?? 0, d.otherCosts ?? 0)),
           invoiceReference: d.invoiceReference,
+          invoiceLine: d.invoiceLine ?? null,
           paymentTermsDays: d.paymentTermsDays,
           incoterm: d.incoterm,
           originalDescription,
@@ -744,7 +951,7 @@ export async function approveSession(db: DB, sessionId: string): Promise<{ impor
         });
       }
       // Supplier-specific terms for this product
-      if (d.supplierSku || d.moq != null || d.leadTimeDays != null) {
+      if (!spend && (d.supplierSku || d.moq != null || d.leadTimeDays != null)) {
         await tx
           .insert(supplierProducts)
           .values({
@@ -770,7 +977,7 @@ export async function approveSession(db: DB, sessionId: string): Promise<{ impor
         product.currentSupplierId = item.supplierId;
       }
       await tx.update(importItems).set({ status: "imported", updatedAt: new Date() }).where(eq(importItems.id, item.id));
-      touched.add(product.id);
+      if (!spend) touched.add(product.id); // price changes are watched on products only
     }
   });
 
@@ -825,6 +1032,63 @@ async function buildSummary(db: DB, sessionId: string, before: Dataset, after: D
   };
 }
 
+// ======================= Starting over =======================
+
+/**
+ * Back to the column screen (spreadsheets) — only while nothing of the file
+ * has been imported, so no saved purchase loses its source line.
+ */
+export async function reopenMapping(db: DB, sessionId: string): Promise<{ error?: string }> {
+  const session = await getSession(db, sessionId);
+  if (!session || session.fileType === "pdf" || session.fileType === "xml") return error("This import has no columns to change.");
+  const items = await getSessionItems(db, sessionId);
+  if (items.some((i) => i.status === "imported")) return error("Some lines of this file are already imported. Upload the file again to map it differently.");
+  await db.delete(importItems).where(eq(importItems.sessionId, sessionId));
+  await db
+    .update(importSessions)
+    .set({ status: "uploaded", mapping: { ...(session.mapping as MappingInfo), auto: false }, recordsDetected: 0, recordsReview: 0, recordsRejected: 0, updatedAt: new Date() })
+    .where(eq(importSessions.id, sessionId));
+  return {};
+}
+
+/** Read a PDF again as the other kind of document (invoice ↔ quote), while nothing is imported. */
+export async function reclassifyPdf(db: DB, sessionId: string, kind: DocKind): Promise<{ error?: string }> {
+  const session = await getSession(db, sessionId);
+  if (!session || session.fileType !== "pdf") return error("Only PDF documents can be read as an invoice or a quote.");
+  const items = await getSessionItems(db, sessionId);
+  if (items.some((i) => i.status === "imported")) return error("Some lines of this document are already imported.");
+  try {
+    const bytes = await loadFile(db, session);
+    await db.delete(importItems).where(eq(importItems.sessionId, sessionId));
+    await db
+      .update(importSessions)
+      .set({ sourceType: kind === "quote" ? "quote" : "invoice", recordType: kind === "quote" ? "quote" : "purchase", status: "processing", errorMessage: null, updatedAt: new Date() })
+      .where(eq(importSessions.id, sessionId));
+    await processPdf(db, { ...session, recordType: kind === "quote" ? "quote" : "purchase" }, bytes, kind);
+  } catch (err) {
+    const message: string = err instanceof ImportError ? err.message : ("Something went wrong while reading this document again." satisfies Msg);
+    if (!(err instanceof ImportError)) console.error("[import] reclassify failed", err);
+    await db.update(importSessions).set({ status: "failed", errorMessage: message, updatedAt: new Date() }).where(eq(importSessions.id, sessionId));
+    return { error: message };
+  }
+  return {};
+}
+
+/** Imports the ready lines of every open file at once. */
+export async function approveAllReady(db: DB): Promise<{ imported: number; files: number }> {
+  const open = await db.select({ id: importSessions.id }).from(importSessions).where(eq(importSessions.status, "needs_review"));
+  let imported = 0;
+  let files = 0;
+  for (const s of open) {
+    const res = await approveSession(db, s.id);
+    if (res.imported > 0) {
+      imported += res.imported;
+      files++;
+    }
+  }
+  return { imported, files };
+}
+
 // ======================= Reads =======================
 
 export async function getSession(db: DB, id: string) {
@@ -853,6 +1117,51 @@ export async function attentionCount(db: DB) {
     .innerJoin(importSessions, eq(importItems.sessionId, importSessions.id))
     .where(and(eq(importItems.status, "attention"), eq(importSessions.status, "needs_review")));
   return r?.n ?? 0;
+}
+
+export interface Inbox {
+  /** Files still open: waiting for columns, for review, or simply ready. */
+  files: { session: ImportSession; lines: number; ready: number; review: number; duplicates: number; needsColumns: boolean; sameFile: boolean }[];
+  lines: number;
+  ready: number;
+  review: number;
+  duplicates: number;
+  needColumns: number;
+  /** Files identical to one uploaded before, not processed yet. */
+  sameFiles: number;
+}
+
+const DUPLICATE_CODES = new Set(["duplicate", "duplicate_in_file"]);
+
+/** What is waiting in Import, across files — the numbers the user acts on. */
+export async function inbox(db: DB): Promise<Inbox> {
+  const sessions = (await listSessions(db, 200)).filter((s) => s.status === "needs_review" || s.status === "uploaded");
+  const ids = sessions.filter((s) => s.status === "needs_review").map((s) => s.id);
+  const items = ids.length ? await db.select().from(importItems).where(inArray(importItems.sessionId, ids)) : [];
+  const files = sessions.map((session) => {
+    const open = items.filter((i) => i.sessionId === session.id && (i.status === "ready" || i.status === "attention"));
+    const attention = open.filter((i) => i.status === "attention");
+    const duplicates = attention.filter((i) => (i.issues as Issue[]).some((x) => DUPLICATE_CODES.has(x.code))).length;
+    return {
+      session,
+      lines: open.length,
+      ready: open.length - attention.length,
+      review: attention.length - duplicates,
+      duplicates,
+      needsColumns: session.status === "uploaded" && !session.duplicateOfSessionId,
+      sameFile: session.status === "uploaded" && !!session.duplicateOfSessionId,
+    };
+  });
+  const sum = (k: "lines" | "ready" | "review" | "duplicates") => files.reduce((s, f) => s + f[k], 0);
+  return {
+    files,
+    lines: sum("lines"),
+    ready: sum("ready"),
+    review: sum("review"),
+    duplicates: sum("duplicates"),
+    needColumns: files.filter((f) => f.needsColumns).length,
+    sameFiles: files.filter((f) => f.sameFile).length,
+  };
 }
 
 export async function getSessionItems(db: DB, sessionId: string) {

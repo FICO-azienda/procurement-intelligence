@@ -3,7 +3,9 @@
  * decision ("ABC S.r.l. is ABC Srl") is taken once for all its lines.
  */
 import type { Dataset } from "../analytics";
+import { en, type T } from "../i18n";
 import type { MatchResult } from "./match";
+import { suggestSku } from "../sku";
 import { codeKey, companyKey, productKey, tidy, vatKey } from "./normalize/text";
 import type { ItemData } from "./types";
 
@@ -49,12 +51,7 @@ export interface MatchGroup {
   create: Record<string, string>;
 }
 
-function suggestSku(name: string) {
-  const words = tidy(name).toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, "").split(/[^A-Z0-9]+/).filter(Boolean);
-  return words.map((w) => (/\d/.test(w) ? w : w.slice(0, 3))).join("-").slice(0, 24);
-}
-
-export function buildGroups(items: GroupItem[], data: Dataset) {
+export function buildGroups(items: GroupItem[], data: Dataset, t: T = en) {
   const open = items.filter((i) => i.status === "ready" || i.status === "attention");
   const supplierName = (id: string | null) => data.suppliers.find((s) => s.id === id)?.name ?? null;
   const productName = (id: string | null) => data.products.find((p) => p.id === id)?.name ?? null;
@@ -72,14 +69,14 @@ export function buildGroups(items: GroupItem[], data: Dataset) {
     const target = i.supplierId ?? (state === "suggested" ? m!.id : null);
     suppliers.set(key, {
       key,
-      label: tidy(i.data.supplierName) || i.data.supplierVat || "No supplier in the file",
-      detail: i.data.supplierVat ? `VAT ${i.data.supplierVat}` : null,
+      label: tidy(i.data.supplierName) || i.data.supplierVat || t("No supplier in the file"),
+      detail: i.data.supplierVat ? t("VAT {vat}", { vat: i.data.supplierVat }) : null,
       lines: 1,
       state,
       targetId: target,
       targetName: supplierName(target),
       confidence: state === "matched" ? null : (m?.confidence ?? null),
-      reason: m?.reason ?? null,
+      reason: m?.reason ? t.any(m.reason) : null,
       resolution: i.supplierResolution,
       alternatives: (m?.alternatives ?? []).map((a) => ({ id: a.id, name: supplierName(a.id) ?? "", confidence: a.confidence })),
       create: {
@@ -104,14 +101,14 @@ export function buildGroups(items: GroupItem[], data: Dataset) {
     const name = tidy(i.data.productName ?? i.data.description) || i.data.supplierSku || i.data.sku || "";
     products.set(key, {
       key,
-      label: name || "No product in the file",
-      detail: [i.data.supplierSku && `Supplier code ${i.data.supplierSku}`, i.data.sku && `Code ${i.data.sku}`].filter(Boolean).join(" · ") || null,
+      label: name || t("No product in the file"),
+      detail: [i.data.supplierSku && t("Supplier code {code}", { code: i.data.supplierSku }), i.data.sku && t("Code {code}", { code: i.data.sku })].filter(Boolean).join(" · ") || null,
       lines: 1,
       state,
       targetId: target,
       targetName: productName(target),
       confidence: state === "matched" ? null : (m?.confidence ?? null),
-      reason: m?.reason ?? null,
+      reason: m?.reason ? t.any(m.reason) : null,
       resolution: i.productResolution,
       alternatives: (m?.alternatives ?? []).map((a) => ({ id: a.id, name: productName(a.id) ?? "", confidence: a.confidence })),
       create: {

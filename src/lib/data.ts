@@ -5,6 +5,7 @@
  * true, push the aggregations into SQL behind these same functions.
  */
 import { eq } from "drizzle-orm";
+import { unstable_rethrow } from "next/navigation";
 import { connection } from "next/server";
 import { cache } from "react";
 import { getDb, type DB } from "@/db";
@@ -13,16 +14,23 @@ import {
   importSessions,
   opportunities,
   productAliases,
+  productFamilies,
+  productSeparations,
   products,
   purchases,
   quotes,
+  settings,
   supplierAliases,
   supplierProducts,
   suppliers,
 } from "@/db/schema";
-import { todayISO, type Dataset, type SourceDoc } from "./analytics";
+import { supplierMetrics, todayISO, type Dataset, type SourceDoc } from "./analytics";
+import { COMPANY_NAME, OWN_COMPANY_NAMES, OWN_VAT_NUMBERS } from "./config";
+import { DEFAULT_LOCALE, en, isLocale, translator, type Locale, type T } from "./i18n";
 import { purchasingOverview, type PurchasingOverview } from "./intel/decision";
 import { analyze, type Intel, type OpportunityState } from "./intel/engine";
+import { mapCatalogue, toMapInput, type MapAnalysis } from "./catalog/mapper";
+import { catalogueOf, companySpend, type CompanySpend } from "./catalog/spend";
 
 const num = (v: string) => Number(v);
 const numOrNull = (v: string | null) => (v == null ? null : Number(v));
@@ -81,6 +89,11 @@ export async function readDataset(db: DB): Promise<Dataset> {
       name: r.name,
       description: r.description,
       category: r.category,
+      kind: r.kind,
+      subcategory: r.subcategory,
+      familyId: r.familyId,
+      variant: r.variant,
+      mapped: r.mappedAt != null,
       unit: r.unit,
       technicalSpecifications: r.technicalSpecifications,
       specs: r.specs ?? null,
@@ -100,6 +113,7 @@ export async function readDataset(db: DB): Promise<Dataset> {
       otherCosts: num(r.otherCosts),
       totalAmount: num(r.totalAmount),
       invoiceReference: r.invoiceReference,
+      invoiceLine: r.invoiceLine,
       paymentTermsDays: r.paymentTermsDays,
       incoterm: r.incoterm,
       originalDescription: r.originalDescription,
@@ -139,7 +153,18 @@ export async function readLearning(db: DB) {
     db.select().from(supplierProducts),
   ]);
   return {
-    productAliases: pa.map((a) => ({ id: a.id, productId: a.productId, alias: a.alias, normalized: a.normalized, supplierId: a.supplierId })),
+    productAliases: pa.map((a) => ({
+      id: a.id,
+      productId: a.productId,
+      alias: a.alias,
+      normalized: a.normalized,
+      supplierId: a.supplierId,
+      supplierSku: a.supplierSku,
+      ean: a.ean,
+      confidence: a.confidence,
+      confirmedByUser: a.confirmedByUser,
+      sourceSessionId: a.sourceSessionId,
+    })),
     supplierAliases: sa.map((a) => ({ id: a.id, supplierId: a.supplierId, alias: a.alias, normalized: a.normalized })),
     supplierProducts: sp.map((l) => ({
       id: l.id,
@@ -178,11 +203,102 @@ export const getOpportunityStates = cache(async () => {
   return readOpportunityStates(await getDb());
 });
 
-/** The whole intelligence picture, computed once per request. */
+/**
+ * The whole intelligence picture, computed once per request — on the
+ * catalogue: the products that are compared and negotiated. Transport,
+ * services and the rest of the company's spend are counted by `getSpend()`.
+ */
 export const getIntel = cache(async (): Promise<Intel> => {
-  const [data, learning, states] = await Promise.all([getDataset(), getLearning(), getOpportunityStates()]);
-  return analyze(data, learning.supplierProducts, states, todayISO());
+  const [data, learning, states, t] = await Promise.all([getDataset(), getLearning(), getOpportunityStates(), getT()]);
+  const catalogue = catalogueOf(data);
+  const intel = analyze(catalogue, learning.supplierProducts, states, todayISO(), undefined, t);
+  if (catalogue !== data) {
+    // A supplier is who the company pays: its spend, dates and status count every purchase, not only the catalogue's.
+    const full = new Map(data.suppliers.map((s) => [s.id, supplierMetrics(s, data, intel.asOf)]));
+    const total = [...full.values()].reduce((sum, m) => sum + m.annualSpend, 0);
+    for (const s of intel.suppliers) {
+      const m = full.get(s.supplier.id);
+      if (!m) continue;
+      s.metrics = { ...s.metrics, annualSpend: m.annualSpend, purchaseCount: m.purchaseCount, firstPurchaseDate: m.firstPurchaseDate, lastPurchaseDate: m.lastPurchaseDate, status: m.status };
+      s.spendShare = total > 0 ? m.annualSpend / total : 0;
+    }
+  }
+  return intel;
+});
+
+/** The company's whole spend of the last 12 months: catalogue and everything else. */
+export const getSpend = cache(async (): Promise<CompanySpend> => companySpend(await getDataset(), todayISO()));
+
+/** Product families, by id. */
+export const getFamilies = cache(async () => {
+  await connection();
+  const rows = await (await getDb()).select().from(productFamilies).orderBy(productFamilies.name);
+  return new Map(rows.map((f) => [f.id, { id: f.id, name: f.name, category: f.category, subcategory: f.subcategory }]));
+});
+
+/** The Product Mapper's reading of the catalogue: what each product is, families, possible duplicates, what to ask. */
+export const getMapAnalysis = cache(async (): Promise<MapAnalysis> => {
+  const [data, learning, families, t] = await Promise.all([getDataset(), getLearning(), getFamilies(), getT()]);
+  const pairs = await (await getDb()).select().from(productSeparations);
+  const names = new Map([...families.values()].map((f) => [f.id, f.name]));
+  return mapCatalogue(toMapInput(data, learning.productAliases, names, todayISO()), { separated: pairs.map((x) => [x.productA, x.productB]), t });
 });
 
 /** The Overview page's decision summaries: one pass over the intelligence, once per request. */
-export const getOverview = cache(async (): Promise<PurchasingOverview> => purchasingOverview(await getIntel()));
+export const getOverview = cache(async (): Promise<PurchasingOverview> => purchasingOverview(await getIntel(), await getT()));
+
+// ---------------- Company settings ----------------
+
+export interface CompanySettings {
+  companyName: string;
+  country: string | null;
+  vatNumber: string | null;
+  userName: string | null;
+  /** Language of the interface. */
+  language: Locale;
+  /** False until the company has been named in Settings (the name then comes from the app defaults). */
+  configured: boolean;
+}
+
+export async function readSettings(db: DB): Promise<CompanySettings> {
+  const [row] = await db.select().from(settings).limit(1);
+  return {
+    companyName: row?.companyName?.trim() || COMPANY_NAME,
+    country: row?.country ?? null,
+    vatNumber: row?.vatNumber ?? null,
+    userName: row?.userName ?? null,
+    language: isLocale(row?.language) ? row.language : DEFAULT_LOCALE,
+    configured: !!row?.companyName?.trim(),
+  };
+}
+
+/** Our own names and VAT numbers, so a document never takes us for the supplier. */
+export function ownCompany(s: CompanySettings) {
+  return {
+    names: [...new Set([s.companyName, ...OWN_COMPANY_NAMES])],
+    vats: [...new Set([...(s.vatNumber ? [s.vatNumber] : []), ...OWN_VAT_NUMBERS])],
+  };
+}
+
+export const getSettings = cache(async (): Promise<CompanySettings> => {
+  await connection();
+  return readSettings(await getDb());
+});
+
+// ---------------- Language ----------------
+
+/**
+ * The translator for this request: the language chosen in Settings. Pages,
+ * route handlers and server actions all ask here. A database that can't be
+ * read must not take the words away too, so it falls back to English.
+ */
+export const getT = cache(async (): Promise<T> => {
+  try {
+    return translator((await getSettings()).language);
+  } catch (err) {
+    // Next's own signals (a page that must be rendered per request) are not failures.
+    unstable_rethrow(err);
+    console.error("[language]", err);
+    return en;
+  }
+});

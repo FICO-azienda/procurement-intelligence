@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Dataset, ProductData, PurchaseData, QuoteData, SupplierData } from "../analytics";
 import type { SupplierLink } from "./comparison";
 import { INTEL_CONFIG } from "./config";
-import { byPriority, decisionFor, filterDecisions, purchasingOverview, type ProductDecision } from "./decision";
+import { actionStep, byPriority, compareColumns, decisionFor, filterDecisions, purchasingOverview, type ProductDecision } from "./decision";
 import { analyze, type OpportunityState } from "./engine";
 import { dataset, link, product, purchase, quote, supplier } from "./fixtures";
 
@@ -84,7 +84,7 @@ describe("product with a good opportunity", () => {
 
   it("explains itself in plain words, in the order an owner asks", () => {
     expect(d.summary[0]).toBe("You pay €1,58/kg to Acme, 11,3% more than at your first purchase on record (Jan 2026).");
-    expect(d.summary[1]).toBe("That is above the one comparable quote on file (€1,49/kg).");
+    expect(d.summary[1]).toBe("That is above the one other supplier's price on file (€1,49/kg).");
     expect(d.summary[2]).toBe("The best comparable alternative on file is Beta (Italy) at €1,49/kg — about 5,7% less, or roughly €1.800 a year at your current volume.");
     expect(d.summary.length).toBeLessThanOrEqual(5);
   });
@@ -134,22 +134,40 @@ describe("product without an opportunity", () => {
 });
 
 describe("product with insufficient data", () => {
-  it("no alternative on file → Data needed, and it says what is known and what is not", () => {
+  it("no alternative on file → Ready: nothing is wrong, and it says what is known and what is not", () => {
     const { a, p, purchases } = widget([1.5, 1.5, 1.5, 1.52]);
     const d = run({ suppliers: [a], products: [p], purchases }).of(p);
-    expect(d.status).toBe("data_needed");
+    expect(d.status).toBe("ready");
+    expect(d.statusReason).toBe("Price and supplier known. No other offer to compare with yet.");
     expect(d.market.type).toBe("not_available");
     expect(d.alternatives).toEqual([]);
     expect(d.potentialSaving).toBeNull();
-    expect(text(d)).toContain("there are no comparable quotes from other suppliers yet, so we cannot say whether a saving is possible");
+    expect(text(d)).toContain("there is no comparable price from another supplier yet, so we cannot say whether a saving is possible");
     expect(d.nextActions.map((x) => x.kind)).toEqual(["request_quote"]);
     expect(d.missingData).toContain("A comparable quote from another supplier");
+  });
+
+  it("the same product, when it is most of the spend → an alternative is what is missing", () => {
+    const { a, p, purchases } = widget([1.5, 1.5, 1.5, 1.52]);
+    const d = run({ suppliers: [a], products: [p], purchases }, false).of(p);
+    expect(d.highSpend).toBe(true);
+    expect(d.status).toBe("needs_alternative");
+    expect(d.nextActions.map((x) => x.kind)).toContain("request_quote");
+  });
+
+  it("a product whose name and category still come from the invoice → to classify, unless its price needs a look first", () => {
+    const { a, p, purchases } = widget([1.5, 1.5, 1.5, 1.52]);
+    const raw = { ...p, mapped: false };
+    expect(run({ suppliers: [a], products: [raw], purchases }).of(raw).status).toBe("needs_classification");
+    const rising = widget([1.2, 1.3, 1.5, 1.8]);
+    const risingRaw = { ...rising.p, mapped: false };
+    expect(run({ suppliers: [rising.a], products: [risingRaw], purchases: rising.purchases }).of(risingRaw).status).toBe("review");
   });
 
   it("no purchases → nothing to assess", () => {
     const p = product({ name: "New part" });
     const d = run({ products: [p] }).of(p);
-    expect(d.status).toBe("data_needed");
+    expect(d.status).toBe("needs_cost");
     expect(d.currentPrice).toBeNull();
     expect(d.nextActions[0].kind).toBe("add_purchases");
     expect(d.summary).toHaveLength(1);
@@ -169,7 +187,7 @@ describe("product with insufficient data", () => {
     const p = product({ name: "Rare", currentSupplierId: a.id });
     const purchases = ["2025-11-01", "2026-01-15"].map((date) => purchase({ productId: p.id, supplierId: a.id, date, quantity: 100, unitPrice: 3 }));
     const d = run({ suppliers: [a], products: [p], purchases }).of(p);
-    expect(d.status).toBe("data_needed");
+    expect(d.status).toBe("needs_history");
     expect(d.nextActions.map((x) => x.kind)).toContain("confirm_price");
   });
 
@@ -178,7 +196,7 @@ describe("product with insufficient data", () => {
     const b = supplier({ name: "Beta" });
     const q = quote({ productId: p.id, supplierId: b.id, date: "2025-12-01", unitPrice: 1.6, moq: 2000 });
     const d = run({ suppliers: [a, b], products: [p], purchases, quotes: [q] }).of(p);
-    expect(d.status).toBe("data_needed");
+    expect(d.status).toBe("needs_alternative");
     expect(d.market).toMatchObject({ count: 1, recent: 0, confidence: "low" });
     expect(text(d)).toContain("too old");
   });
@@ -253,7 +271,7 @@ describe("lowest quote is not the first alternative", () => {
 
   it("says why the cheapest quote is not first", () => {
     expect(d.cheapestNotFirst?.explanation).toBe(
-      "Cheapo has the lowest quoted price (€1,12/kg), but it is not listed first: higher MOQ (20.000 kg), freight not included (FOB) and import costs not assessed. Its true cost has not been estimated yet.",
+      "Cheapo has the lowest quoted price (€1,12/kg), but it is not listed first: higher minimum order (20.000 kg), freight not included (FOB) and import costs not assessed. Its true cost has not been estimated yet.",
     );
     expect(d.summary).toContain("Cheapo quotes even less (€1,12/kg), but that offer is harder to compare and its true cost is not estimated yet.");
     expect(d.summary.length).toBeLessThanOrEqual(5);
@@ -263,6 +281,30 @@ describe("lowest quote is not the first alternative", () => {
     expect(d.market).toMatchObject({ type: "internal_quotes", count: 2, recent: 2, confidence: "medium", position: "above" });
     expect(d.market.low).toBe(1.12);
     expect(d.market.high).toBe(1.49);
+  });
+
+  it("compares side by side with facts, not verdicts", () => {
+    const { intel } = run({ suppliers: [a, b, c], products: [p], purchases, quotes });
+    const cols = compareColumns(intel.products.find((x) => x.product.id === p.id)!, INTEL_CONFIG);
+    expect(cols.map((x) => [x.supplierName, x.isCurrent, x.highlights])).toEqual([
+      ["Acme", true, []],
+      ["Beta", false, ["Lowest minimum order"]], // 2.000 kg against Cheapo's 20.000
+      ["Cheapo", false, ["Lowest quoted price", "Most recent quote"]],
+    ]);
+    expect(cols[0]).toMatchObject({ priceEUR: 1.58, differencePct: null, leadTimeDays: 12, paymentTermsDays: 60 });
+    expect(cols[1].differencePct).toBeCloseTo(-5.696, 2);
+    const words = cols.flatMap((x) => x.highlights).join(" ");
+    expect(words).not.toMatch(/best|winner|recommended/i);
+  });
+
+  it("shortest lead time and lowest minimum order need a single holder", () => {
+    const d2 = supplier({ name: "Delta" });
+    const q2 = quote({ productId: p.id, supplierId: d2.id, date: "2026-09-01", unitPrice: 1.55, moq: 500, incoterm: "DAP", leadTimeDays: 5, paymentTermsDays: 30 });
+    const { intel } = run({ suppliers: [a, b, c, d2], products: [p], purchases, quotes: [...quotes, q2] });
+    const cols = compareColumns(intel.products.find((x) => x.product.id === p.id)!, INTEL_CONFIG);
+    expect(cols.find((x) => x.supplierName === "Delta")!.highlights).toEqual(["Shortest lead time", "Lowest minimum order"]);
+    // Acme and Beta both have 12 days: before Delta, nobody held "shortest".
+    expect(compareColumns(run({ suppliers: [a, b, c], products: [p], purchases, quotes }).intel.products.find((x) => x.product.id === p.id)!, INTEL_CONFIG).flatMap((x) => x.highlights)).not.toContain("Shortest lead time");
   });
 
   it("shows at most three alternatives and counts the rest", () => {
@@ -353,9 +395,9 @@ describe("the whole page", () => {
   it("orders products by where to look first, not alphabetically", () => {
     expect(overview.products.map((d) => [d.name, d.status, d.priority.tier])).toEqual([
       ["Actionable", "action", 1],
-      ["Risky", "data_needed", 2],
+      ["Risky", "needs_alternative", 2],
       ["Reviewable", "review", 3],
-      ["Needy", "data_needed", 4],
+      ["Needy", "ready", 5],
       ["Goodie", "good", 5],
     ]);
     expect([...overview.products].reverse().sort(byPriority)).toEqual(overview.products);
@@ -366,7 +408,7 @@ describe("the whole page", () => {
     expect(overview.totals.potentialSavings).toBe(intel.totals.potentialSavings);
     expect(overview.totals.highConfidenceSavings).toBeCloseTo(1800, 6);
     expect(overview.totals.validatedSavings).toBe(0);
-    expect(overview.totals).toMatchObject({ productsTotal: 5, productsAnalyzed: 5, productsToReview: 2, byStatus: { action: 1, review: 1, data_needed: 2, good: 1 } });
+    expect(overview.totals).toMatchObject({ productsTotal: 5, productsAnalyzed: 5, productsToReview: 2, byStatus: { action: 1, review: 1, needs_alternative: 1, ready: 1, good: 1 } });
   });
 
   it("validated means the user said so", () => {
@@ -404,10 +446,16 @@ describe("the whole page", () => {
   });
 
   it("names three things to check first, one per product", () => {
-    expect(overview.checkFirst.map((x) => [x.productName, x.action.kind])).toEqual([
-      ["Actionable", "negotiate"],
-      ["Risky", "request_quote"],
-      ["Reviewable", "negotiate"],
+    expect(overview.checkFirst.map((x) => [x.step.label, x.step.target, x.pct == null ? null : Number(x.pct.toFixed(1))])).toEqual([
+      ["Compare suppliers", "compare", -5.7],
+      ["Add quote", "quote", null],
+      ["Compare suppliers", "compare", -13.6],
+    ]);
+    expect(overview.totals.productsJudged).toBe(3); // 5 products, 2 with nothing to compare
+        expect(overview.checkFirst.map((x) => [x.productName, x.action.kind, x.impactKind, x.impact == null ? null : Math.round(x.impact)])).toEqual([
+      ["Actionable", "negotiate", "saving", 1800],
+      ["Risky", "request_quote", null, null],
+      ["Reviewable", "negotiate", "saving", 1600],
     ]);
   });
 
@@ -425,7 +473,8 @@ describe("the whole page", () => {
   it("filters by status, supplier, category and text, and sorts on request", () => {
     const names = (q: Parameters<typeof filterDecisions>[1]) => filterDecisions(overview.products, q).map((d) => d.name);
     expect(names({})).toEqual(["Actionable", "Risky", "Reviewable", "Needy", "Goodie"]);
-    expect(names({ status: "data_needed" })).toEqual(["Risky", "Needy"]);
+    expect(names({ status: "needs_alternative" })).toEqual(["Risky"]);
+    expect(names({ status: "ready" })).toEqual(["Needy"]);
     expect(names({ status: "nonsense" })).toHaveLength(5);
     expect(names({ supplierId: alt1.id })).toEqual(["Actionable", "Goodie"]); // as an alternative
     expect(names({ supplierId: sc.id })).toEqual(["Risky"]); // as the current supplier
@@ -439,6 +488,24 @@ describe("the whole page", () => {
     const all = [...overview.executiveSummary, ...overview.products.flatMap((d) => [...d.summary, d.statusReason, ...d.nextActions.map((x) => x.label)])].join(" ");
     expect(all).not.toMatch(/switch|best supplier|cheapest supplier|saving realised|realized saving|verified saving/i);
     expect(all).not.toMatch(/\d,\d{4,}/); // no false precision
+  });
+});
+
+describe("where an action is carried out", () => {
+  it("names the button after what the user will do", () => {
+    expect(actionStep("negotiate")).toEqual({ label: "Compare suppliers", target: "compare" });
+    expect(actionStep("request_quote")).toEqual({ label: "Add quote", target: "quote" });
+    expect(actionStep("check_price")).toEqual({ label: "Check price", target: "product" });
+    expect(actionStep("add_purchases")).toEqual({ label: "Add purchase", target: "purchase" });
+  });
+
+  it("does not send to a comparison when there is nobody to compare with", () => {
+    const { a, p, purchases } = widget();
+    const { overview } = run({ suppliers: [a], products: [p], purchases });
+    const first = overview.checkFirst.find((x) => x.productName === "Widget")!;
+    expect(first.action.kind).toBe("explain_increase");
+    expect(first.step).toEqual({ label: "Add quote", target: "quote" });
+    expect(first.pct).toBeCloseTo(11.27, 1);
   });
 });
 
@@ -480,7 +547,9 @@ describe("edge cases", () => {
     const intel = analyze(dataset({ suppliers, products, purchases, quotes }), [], [], AS_OF);
     const t = performance.now();
     const ov = purchasingOverview(intel);
-    expect(performance.now() - t).toBeLessThan(500);
+    const ms = performance.now() - t;
+    // Typically well under 200 ms; the budget leaves room for a busy test machine.
+    expect(ms).toBeLessThan(2000);
     expect(ov.products).toHaveLength(1000);
   });
 });

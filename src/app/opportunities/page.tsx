@@ -4,24 +4,28 @@ import { Handshake } from "lucide-react";
 import { Hint } from "@/components/hint";
 import { ConfidenceBadge, OpportunityStatusBadge } from "@/components/intel/badges";
 import { OpportunityStatusSelect } from "@/components/intel/controls";
-import { Empty, ExportLink, PageHeader, Table, Td, Th, cx, rowClass } from "@/components/ui";
-import { getDataset, getIntel, getOpportunityStates } from "@/lib/data";
+import { QuoteDialog } from "@/components/dialogs";
+import { ButtonLink, Empty, ExportLink, PageHeader, Table, Td, Th, cx, rowClass } from "@/components/ui";
+import { getDataset, getIntel, getOpportunityStates, getT } from "@/lib/data";
 import * as f from "@/lib/format";
+import type { Msg } from "@/lib/i18n";
 import type { TrackedOpportunity } from "@/lib/intel/engine";
-import { EXPLAIN } from "@/lib/intel/explain";
-import { OPPORTUNITY_LABEL, type OpportunityType } from "@/lib/intel/opportunities";
+import { explain } from "@/lib/intel/explain";
+import { OPPORTUNITY_LABEL, type ImpactBasis, type OpportunityType } from "@/lib/intel/opportunities";
 import { lookups } from "@/lib/lookups";
 
-export const metadata: Metadata = { title: "Opportunities" };
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: (await getT())("Opportunities") };
+}
 
 const VIEWS = [
-  { key: "active", label: "Active", statuses: ["open", "reviewing", "negotiating"] },
-  { key: "validated", label: "Validated", statuses: ["validated"] },
+  { key: "active", label: "Active|plural", statuses: ["open", "reviewing", "negotiating"] },
+  { key: "validated", label: "Validated|plural", statuses: ["validated"] },
   { key: "dismissed", label: "Rejected / closed", statuses: ["rejected", "closed"] },
-  { key: "all", label: "All", statuses: null },
-] as const;
+  { key: "all", label: "All|feminine", statuses: null },
+] as const satisfies readonly { key: string; label: Msg; statuses: readonly string[] | null }[];
 
-const BASIS_LABEL = { alternative_quote: "potential saving", historical_average: "gap to average", price_increase: "increase impact" } as const;
+const BASIS_LABEL: Record<ImpactBasis, Msg> = { alternative_quote: "potential saving", historical_average: "gap to average", price_increase: "increase impact" };
 
 interface Snapshot {
   type?: string;
@@ -39,7 +43,8 @@ export default async function OpportunitiesPage({ searchParams }: PageProps<"/op
   const sp = await searchParams;
   const view = VIEWS.find((v) => v.key === sp.view) ?? VIEWS[0];
   const type = typeof sp.type === "string" && sp.type in OPPORTUNITY_LABEL ? (sp.type as OpportunityType) : null;
-  const [data, intel, states] = await Promise.all([getDataset(), getIntel(), getOpportunityStates()]);
+  const [data, intel, states, t] = await Promise.all([getDataset(), getIntel(), getOpportunityStates(), getT()]);
+  const EXPLAIN = explain(t);
   const l = lookups(data);
 
   const inView = (o: TrackedOpportunity) => (!view.statuses || (view.statuses as readonly string[]).includes(o.status)) && (!type || o.type === type);
@@ -60,33 +65,71 @@ export default async function OpportunitiesPage({ searchParams }: PageProps<"/op
     return s ? `/opportunities?${s}` : "/opportunities";
   };
 
+  const header = (
+    <PageHeader
+      title={t("Opportunities")}
+      meta={
+        <span className="inline-flex items-center gap-1.5">
+          {t("Situations worth a closer look, found in your own purchases and quotes. Estimates compare prices only")} <Hint text={EXPLAIN.trueCost} label={t("What is not included")} />
+        </span>
+      }
+      actions={intel.opportunities.length > 0 ? <ExportLink href="/export/opportunities" /> : undefined}
+    />
+  );
+
+  // Nothing found: say what makes opportunities appear, instead of a row of zeros.
+  if (intel.opportunities.length === 0 && past.length === 0) {
+    return (
+      <>
+        {header}
+        <div className="rounded-lg border border-dashed border-rule-strong">
+          <Empty
+            title={t("No opportunities yet")}
+            body={
+              data.products.length === 0
+                ? t("Import your invoices first. Opportunities appear when another supplier offers less than you pay, when a price rises sharply, or when a product that matters depends on one supplier.")
+                : t("They appear when another supplier offers less than you pay, when a price rises sharply, or when a product that matters depends on one supplier. Adding quotes from other suppliers is what makes them show up.")
+            }
+            action={
+              data.products.length === 0 ? (
+                <ButtonLink href="/import" variant="primary">
+                  {t("Import invoices")}
+                </ButtonLink>
+              ) : (
+                <QuoteDialog trigger={{ label: t("Add a quote"), variant: "primary" }} />
+              )
+            }
+          />
+        </div>
+      </>
+    );
+  }
+
   return (
     <>
-      <PageHeader
-        title="Opportunities"
-        meta="Situations worth a closer look, found in your own purchases and quotes. Figures are price-only estimates, before freight, duties, quality, inventory and commercial conditions."
-        actions={
-          <ExportLink href="/export/opportunities" />
-        }
-      />
+      {header}
 
-      <div className="mb-6 flex flex-wrap items-end gap-x-10 gap-y-4">
-        <div>
-          <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-ink-3">
-            Potential price opportunities <Hint text={EXPLAIN.potentialTotal} />
+      {intel.totals.potentialSavings > 0 && (
+        <div className="mb-6">
+          <div className="num text-[34px] leading-none font-semibold tracking-[-0.03em]">
+            {f.moneyApprox(intel.totals.potentialSavings)}
+            <span className="text-[16px] font-medium text-ink-3">{t("/year")}</span>
           </div>
-          <div className="num mt-1 text-[34px] leading-none font-semibold tracking-[-0.03em]">
-            {f.money(intel.totals.potentialSavings)}
-            <span className="text-[16px] font-medium text-ink-3">/year</span>
+          <div className="mt-2 flex items-center gap-1.5 text-[13px] font-medium text-ink-2">
+            {t("Potential savings")} <Hint text={EXPLAIN.potentialTotal} />
           </div>
-          <div className="mt-1.5 text-[12.5px] text-ink-3">
-            {intel.totals.potentialSavingsProducts} product{intel.totals.potentialSavingsProducts === 1 ? "" : "s"} with a comparable lower price · estimate, not a realised saving
+          <div className="mt-0.5 text-[12.5px] text-ink-3">
+            {t.n(
+              intel.totals.potentialSavingsProducts,
+              "on {n} product where another supplier offers less · an estimate, not money saved yet",
+              "on {n} products where another supplier offers less · an estimate, not money saved yet",
+            )}
           </div>
         </div>
-      </div>
+      )}
 
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <nav aria-label="Status" className="flex flex-wrap gap-1">
+        <nav aria-label={t("Status")} className="flex flex-wrap gap-1">
           {VIEWS.map((v) => (
             <Link
               key={v.key}
@@ -94,18 +137,18 @@ export default async function OpportunitiesPage({ searchParams }: PageProps<"/op
               aria-current={v.key === view.key ? "page" : undefined}
               className={cx("inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[13px] transition-colors", v.key === view.key ? "bg-ink text-white" : "text-ink-2 hover:bg-wash")}
             >
-              {v.label}
+              {t(v.label)}
               <span className={cx("num text-[12px]", v.key === view.key ? "text-white/60" : "text-ink-4")}>{count(v)}</span>
             </Link>
           ))}
         </nav>
-        <nav aria-label="Type" className="flex flex-wrap gap-1 text-[12.5px]">
+        <nav aria-label={t("Type")} className="flex flex-wrap gap-1 text-[12.5px]">
           <Link href={href({ type: null })} className={cx("rounded-md px-2 py-1", !type ? "bg-wash font-medium text-ink" : "text-ink-3 hover:bg-wash")}>
-            All types
+            {t("All types")}
           </Link>
-          {types.map((t) => (
-            <Link key={t} href={href({ type: t })} className={cx("rounded-md px-2 py-1", type === t ? "bg-wash font-medium text-ink" : "text-ink-3 hover:bg-wash")}>
-              {OPPORTUNITY_LABEL[t]}
+          {types.map((kind) => (
+            <Link key={kind} href={href({ type: kind })} className={cx("rounded-md px-2 py-1", type === kind ? "bg-wash font-medium text-ink" : "text-ink-3 hover:bg-wash")}>
+              {t(OPPORTUNITY_LABEL[kind])}
             </Link>
           ))}
         </nav>
@@ -113,31 +156,20 @@ export default async function OpportunitiesPage({ searchParams }: PageProps<"/op
 
       <div className="rounded-lg border border-rule">
         {rows.length === 0 ? (
-          <Empty
-            title={intel.opportunities.length === 0 ? "No opportunities found yet" : "Nothing in this view"}
-            body={
-              intel.opportunities.length === 0
-                ? "Opportunities appear when a comparable quote is below what you pay, a price rises sharply, or a high-spend product depends on one supplier. Add quotes from alternative suppliers to get started."
-                : undefined
-            }
-          />
+          <Empty title={t("Nothing in this view")} />
         ) : (
           <Table>
             <thead>
               <tr>
-                <Th className="border-t-0">Product</Th>
-                <Th className="border-t-0">Current supplier</Th>
-                <Th className="border-t-0" align="right">Current price</Th>
-                <Th className="border-t-0">Alternative</Th>
-                <Th className="border-t-0" align="right">Alternative price</Th>
+                <Th className="border-t-0">{t("Product")}</Th>
+                <Th className="hidden border-t-0 @3xl:table-cell">{t("What we found")}</Th>
                 <Th className="border-t-0" align="right">
-                  Potential saving <Hint text={EXPLAIN.opportunityImpact} />
+                  {t("Worth")} <Hint text={EXPLAIN.opportunityImpact} />
                 </Th>
-                <Th className="border-t-0">
-                  Confidence <Hint text={EXPLAIN.confidence} />
+                <Th className="hidden border-t-0 @2xl:table-cell">
+                  {t("Confidence")} <Hint text={EXPLAIN.confidence} />
                 </Th>
-                <Th className="border-t-0">Reason</Th>
-                <Th className="border-t-0">Status</Th>
+                <Th className="border-t-0">{t("Status")}</Th>
               </tr>
             </thead>
             <tbody>
@@ -145,44 +177,40 @@ export default async function OpportunitiesPage({ searchParams }: PageProps<"/op
                 const product = l.product(o.productId);
                 return (
                   <tr key={o.key} className={rowClass(true)}>
-                    <Td className="font-medium">
-                      <Link href={`/opportunities/${o.key}`} className="stretched">
+                    <Td className="max-w-[260px] py-2.5 whitespace-normal!">
+                      <Link href={`/opportunities/${o.key}`} className="stretched font-medium">
                         {product?.name}
                       </Link>
-                      <div className="text-[12px] font-normal text-ink-3">{OPPORTUNITY_LABEL[o.type]}</div>
+                      <div className="text-[12px] text-ink-3">
+                        {t(OPPORTUNITY_LABEL[o.type])}
+                        {o.alternativeSupplierId && ` · ${l.supplierName(o.alternativeSupplierId)}`}
+                      </div>
                     </Td>
-                    <Td>{l.supplierName(o.currentSupplierId)}</Td>
-                    <Td align="right">{o.currentPrice != null ? `${f.price(o.currentPrice)}/${product?.unit}` : "—"}</Td>
-                    <Td>
-                      {o.type === "lower_quote" ? (
-                        l.supplierName(o.alternativeSupplierId)
-                      ) : o.type === "above_average" ? (
-                        <span className="text-ink-3">Your historical average</span>
-                      ) : o.type === "price_increase" ? (
-                        <span className="text-ink-3">Price 12 months ago</span>
-                      ) : (
-                        <span className="text-ink-4">—</span>
+                    <Td className="hidden max-w-[360px] whitespace-normal! text-ink-2 @3xl:table-cell">
+                      {o.negotiation && <Handshake size={13} className="mr-1.5 inline text-ledger" aria-label={t("Worth raising with your supplier")} />}
+                      {o.reason}
+                      {o.currentPrice != null && o.comparePrice != null && (
+                        <span className="num block text-[12px] text-ink-3">
+                          {product
+                            ? t("{current} today vs {compared} per {unit}", { current: f.priceShort(o.currentPrice), compared: f.priceShort(o.comparePrice), unit: product.unit })
+                            : t("{current} today vs {compared}", { current: f.priceShort(o.currentPrice), compared: f.priceShort(o.comparePrice) })}
+                        </span>
                       )}
                     </Td>
-                    <Td align="right">{o.comparePrice != null ? f.price(o.comparePrice) : <span className="text-ink-4">—</span>}</Td>
                     <Td align="right">
                       {o.potentialSaving != null ? (
-                        <span className="font-semibold">{f.money(o.potentialSaving)}/yr</span>
+                        <span className="font-semibold">{t("{amount}/yr", { amount: f.moneyApprox(o.potentialSaving) })}</span>
                       ) : o.impact != null ? (
                         <span className="text-ink-3">
-                          {f.money(o.impact)}/yr
-                          <span className="block text-[11.5px]">{BASIS_LABEL[o.impactBasis!]}, not a saving</span>
+                          {t("{amount}/yr", { amount: f.moneyApprox(o.impact) })}
+                          <span className="block text-[11.5px]">{t("{~basis}, not a saving", { basis: BASIS_LABEL[o.impactBasis!] })}</span>
                         </span>
                       ) : (
                         <span className="text-ink-4">—</span>
                       )}
                     </Td>
-                    <Td>
+                    <Td className="hidden @2xl:table-cell">
                       <ConfidenceBadge level={o.confidence} />
-                    </Td>
-                    <Td className="max-w-[300px] whitespace-normal! text-ink-2">
-                      {o.negotiation && <Handshake size={13} className="mr-1.5 inline text-ledger" aria-label="Negotiation opportunity" />}
-                      {o.reason}
                     </Td>
                     <Td>
                       <OpportunityStatusSelect opportunityKey={o.key} status={o.status} size="sm" />
@@ -197,19 +225,19 @@ export default async function OpportunitiesPage({ searchParams }: PageProps<"/op
 
       {past.length > 0 && (
         <section className="mt-8">
-          <h2 className="mb-2 text-[14px] font-semibold">Past decisions</h2>
-          <p className="mb-3 text-[12.5px] text-ink-3">Opportunities you acted on that the data no longer shows (the quote changed, the price moved, or the record was removed). Figures are as they were when you set the status.</p>
+          <h2 className="mb-2 text-[14px] font-semibold">{t("Past decisions")}</h2>
+          <p className="mb-3 text-[12.5px] text-ink-3">{t("Opportunities you acted on that the data no longer shows (the quote changed, the price moved, or the record was removed). Figures are as they were when you set the status.")}</p>
           <ul className="rounded-lg border border-rule">
             {past.map((s) => {
               const snap = (s.snapshot ?? {}) as Snapshot;
               return (
                 <li key={s.key} className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-rule px-5 py-3 text-[13px] last:border-b-0">
                   <div className="min-w-[220px] flex-1">
-                    <span className="font-medium">{snap.productName ?? "Product"}</span>
+                    <span className="font-medium">{snap.productName ?? t("Product")}</span>
                     {snap.alternativeName && <span className="text-ink-2"> · {snap.alternativeName}</span>}
                     <div className="text-[12.5px] text-ink-3">{snap.reason}</div>
                   </div>
-                  {snap.potentialSaving != null && <span className="num text-ink-2">{f.money(snap.potentialSaving)}/yr</span>}
+                  {snap.potentialSaving != null && <span className="num text-ink-2">{t("{amount}/yr", { amount: f.money(snap.potentialSaving) })}</span>}
                   <span className="num text-[12px] text-ink-3">{f.date(s.updatedAt.slice(0, 10))}</span>
                   <OpportunityStatusBadge status={s.status} />
                 </li>

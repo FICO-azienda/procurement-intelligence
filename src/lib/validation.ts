@@ -3,6 +3,7 @@
  * channel (invoice AI, email AI) must produce data that passes these.
  */
 import { z } from "zod";
+import { en, type Msg, type T } from "./i18n";
 import { parseDate, parseNumber } from "./parse";
 
 const optionalText = z.preprocess(
@@ -10,38 +11,45 @@ const optionalText = z.preprocess(
   z.string().nullable(),
 );
 
-const requiredText = (label: string) =>
-  z.preprocess((v) => (typeof v === "string" ? v.trim() : ""), z.string().min(1, `${label} is required`));
+/**
+ * A message about a field ("Quantity is required"), kept as template + field
+ * so `fieldErrors` can say it in the reader's language.
+ */
+const SEP = "\u0001";
+const about = (msg: Msg, label: Msg) => `${msg}${SEP}${label}`;
 
-const num = (label: string, opts: { required?: boolean; min?: number; positive?: boolean; int?: boolean } = {}) =>
+const requiredText = (label: Msg) =>
+  z.preprocess((v) => (typeof v === "string" ? v.trim() : ""), z.string().min(1, about("{~label} is required", label)));
+
+const num = (label: Msg, opts: { required?: boolean; min?: number; positive?: boolean; int?: boolean } = {}) =>
   z.preprocess(
     (v) => (v === "" || v == null ? null : (parseNumber(v) ?? Number.NaN)),
     z
-      .number({ error: `${label} must be a number` })
-      .refine((n) => !Number.isNaN(n), `${label} must be a number`)
-      .refine((n) => !opts.positive || n > 0, `${label} must be greater than 0`)
-      .refine((n) => opts.min == null || n >= opts.min, `${label} cannot be negative`)
-      .refine((n) => !opts.int || Number.isInteger(n), `${label} must be a whole number`)
+      .number({ error: about("{~label} must be a number", label) })
+      .refine((n) => !Number.isNaN(n), about("{~label} must be a number", label))
+      .refine((n) => !opts.positive || n > 0, about("{~label} must be greater than 0", label))
+      .refine((n) => opts.min == null || n >= opts.min, about("{~label} cannot be negative", label))
+      .refine((n) => !opts.int || Number.isInteger(n), about("{~label} must be a whole number", label))
       .nullable()
-      .refine((n) => !opts.required || n != null, `${label} is required`),
+      .refine((n) => !opts.required || n != null, about("{~label} is required", label)),
   );
 
-const isoDate = (label: string, required = true) =>
+const isoDate = (label: Msg, required = true) =>
   z.preprocess(
     (v) => (v === "" || v == null ? null : (parseDate(v) ?? "invalid")),
     z
       .string()
       .nullable()
-      .refine((d) => d !== "invalid", `${label} is not a valid date`)
-      .refine((d) => !required || d != null, `${label} is required`),
+      .refine((d) => d !== "invalid", about("{~label} is not a valid date", label))
+      .refine((d) => !required || d != null, about("{~label} is required", label)),
   );
 
 const currency = z.preprocess(
   (v) => (typeof v === "string" && v.trim() !== "" ? v.trim().toUpperCase() : "EUR"),
-  z.string().regex(/^[A-Z]{3}$/, "Use a 3-letter currency code (EUR, USD…)"),
+  z.string().regex(/^[A-Z]{3}$/, "Use a 3-letter currency code (EUR, USD…)" satisfies Msg),
 );
 
-const id = (label: string) => z.string().uuid(`Select a ${label}`);
+const id = (message: Msg) => z.string().uuid(message);
 const optionalId = z.preprocess((v) => (v === "" || v == null ? null : v), z.string().uuid().nullable());
 
 /**
@@ -69,7 +77,7 @@ export const supplierInput = z.object({
   country: optionalText,
   city: optionalText,
   contactName: optionalText,
-  email: optionalText.refine((v) => v == null || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), "Email is not valid"),
+  email: optionalText.refine((v) => v == null || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), "Email is not valid" satisfies Msg),
   phone: optionalText,
   website: optionalText,
   currency,
@@ -80,10 +88,8 @@ export const supplierInput = z.object({
 
 export const productInput = z.object({
   name: requiredText("Name"),
-  sku: z.preprocess(
-    (v) => (typeof v === "string" ? v.trim().toUpperCase() : ""),
-    z.string().min(1, "SKU is required"),
-  ),
+  /** Optional: when empty, a code is generated from the name. */
+  sku: z.preprocess((v) => (typeof v === "string" ? v.trim().toUpperCase() : ""), z.string()),
   category: optionalText,
   unit: requiredText("Unit"),
   description: optionalText,
@@ -93,8 +99,8 @@ export const productInput = z.object({
 });
 
 export const purchaseInput = z.object({
-  productId: id("product"),
-  supplierId: id("supplier"),
+  productId: id("Select a product"),
+  supplierId: id("Select a supplier"),
   date: isoDate("Date"),
   quantity: num("Quantity", { required: true, positive: true }),
   unitPrice: num("Unit price", { required: true, min: 0 }),
@@ -107,8 +113,8 @@ export const purchaseInput = z.object({
 });
 
 export const quoteInput = z.object({
-  productId: id("product"),
-  supplierId: id("supplier"),
+  productId: id("Select a product"),
+  supplierId: id("Select a supplier"),
   date: isoDate("Date"),
   quantity: num("Quantity", { positive: true }),
   unitPrice: num("Unit price", { required: true, min: 0 }),
@@ -125,13 +131,83 @@ export const quoteInput = z.object({
   notes: optionalText,
 });
 
+/** A candidate's answer recorded as a quote: the product and the supplier are the candidate's own. */
+export const candidateQuoteInput = quoteInput.omit({ productId: true, supplierId: true, quantity: true, fxRate: true });
+
+const optionalUrl = z.preprocess(
+  (v) => (typeof v === "string" && v.trim() !== "" ? (/^https?:\/\//i.test(v.trim()) ? v.trim() : `https://${v.trim()}`) : null),
+  z
+    .string()
+    .nullable()
+    .refine((u) => u == null || /^https?:\/\/[^\s.]+\.[^\s]+$/i.test(u), "Write a web address, like https://www.example.com" satisfies Msg),
+);
+const oneOf = <V extends string>(values: readonly V[], fallback: V | null) =>
+  z.preprocess((v) => (typeof v === "string" && (values as readonly string[]).includes(v) ? v : fallback), z.custom<V | null>());
+
+/**
+ * A possible supplier added by hand. It needs a name and where it was found —
+ * a page, or a few words ("met at a trade fair"). A price needs its unit: it
+ * is what the supplier publishes, never an offer (offers are recorded as quotes).
+ */
+export const candidateInput = z
+  .object({
+    name: requiredText("Supplier"),
+    country: optionalText,
+    website: optionalUrl,
+    sourceUrl: optionalUrl,
+    sourceDate: isoDate("Date", false),
+    sourceLevel: oneOf(["supplier_official", "official_data", "licensed_data", "external"] as const, "external"),
+    productMatched: optionalText,
+    matchReason: optionalText,
+    technicalCompatibility: oneOf(["high", "partial", "not"] as const, null),
+    priceLow: num("Price", { positive: true }),
+    priceHigh: num("Price", { positive: true }),
+    priceSourceUrl: optionalUrl,
+    currency,
+    unit: optionalText,
+    incoterm: optionalText,
+    moq: num("Minimum order", { positive: true }),
+    leadTimeDays: num("Lead time", { min: 0, int: true }),
+    paymentTerms: optionalText,
+    certifications: optionalText,
+    shippingOrigin: optionalText,
+    notes: optionalText,
+  })
+  .superRefine((v, ctx) => {
+    if (!v.sourceUrl && !v.notes) ctx.addIssue({ code: "custom", path: ["sourceUrl"], message: "Say where you found this supplier: a web page, or a note" satisfies Msg });
+    if ((v.priceLow != null || v.priceHigh != null) && !v.unit) ctx.addIssue({ code: "custom", path: ["unit"], message: "A price needs its unit" satisfies Msg });
+    if (v.priceLow != null && v.priceHigh != null && v.priceHigh < v.priceLow) ctx.addIssue({ code: "custom", path: ["priceHigh"], message: "The second price must not be lower than the first" satisfies Msg });
+  });
+
+/** An external reference typed from a report or a public source: always with who published it and when. */
+export const benchmarkInput = z
+  .object({
+    type: oneOf(["direct_benchmark", "trade_benchmark", "cost_driver"] as const, "direct_benchmark"),
+    label: requiredText("What it refers to"),
+    low: num("Price", { positive: true }),
+    high: num("Price", { positive: true }),
+    changePct: num("Change"),
+    period: optionalText,
+    sourceName: requiredText("Source"),
+    sourceUrl: optionalUrl,
+    sourceDate: isoDate("Date"),
+    sourceLevel: oneOf(["official_data", "licensed_data", "external"] as const, "external"),
+    comparability: oneOf(["comparable", "partial", "not"] as const, "partial"),
+    notes: optionalText,
+  })
+  .superRefine((v, ctx) => {
+    if (v.type === "cost_driver" ? v.changePct == null : v.low == null) ctx.addIssue({ code: "custom", path: [v.type === "cost_driver" ? "changePct" : "low"], message: v.type === "cost_driver" ? ("Write the change, in %" satisfies Msg) : ("Write the price, or the range" satisfies Msg) });
+    if (v.low != null && v.high != null && v.high < v.low) ctx.addIssue({ code: "custom", path: ["high"], message: "The second price must not be lower than the first" satisfies Msg });
+  });
+
 export type FieldErrors = Record<string, string>;
 
-export function fieldErrors(error: z.ZodError): FieldErrors {
+export function fieldErrors(error: z.ZodError, t: T = en): FieldErrors {
   const out: FieldErrors = {};
   for (const issue of error.issues) {
     const key = String(issue.path[0] ?? "form");
-    out[key] ??= issue.message;
+    const [msg, label] = issue.message.split(SEP);
+    out[key] ??= label ? t.any(msg, { label }) : t.any(msg);
   }
   return out;
 }

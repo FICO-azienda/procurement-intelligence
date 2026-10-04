@@ -125,6 +125,7 @@ const PRODUCTS: Record<ProductKey, typeof products.$inferInsert & { supplier: Su
     sku: "PAR-5860",
     name: "Paraffina 58/60",
     category: "Wax",
+    kind: "direct_material",
     unit: "kg",
     description: "Paraffina fully refined in pastiglie, punto di fusione 58–60 °C.",
     technicalSpecifications: "Melting point 58–60 °C · Oil content < 0,5% · Pastilles",
@@ -134,6 +135,7 @@ const PRODUCTS: Record<ProductKey, typeof products.$inferInsert & { supplier: Su
     sku: "GLS-300",
     name: "Vetro Trasparente 300 ml",
     category: "Glass",
+    kind: "component",
     unit: "pcs",
     description: "Bicchiere in vetro trasparente per candela, 300 ml.",
     technicalSpecifications: "Capacity 300 ml · Ø 85 mm · H 95 mm · Flint glass",
@@ -143,6 +145,7 @@ const PRODUCTS: Record<ProductKey, typeof products.$inferInsert & { supplier: Su
     sku: "WCK-120",
     name: "Stoppino Cotone 120 mm",
     category: "Wick",
+    kind: "component",
     unit: "pcs",
     description: "Stoppino in cotone cerato con piastrina, 120 mm.",
     technicalSpecifications: "Length 120 mm · Waxed cotton · Metal sustainer",
@@ -152,6 +155,7 @@ const PRODUCTS: Record<ProductKey, typeof products.$inferInsert & { supplier: Su
     sku: "FRG-INC",
     name: "Fragranza Incenso",
     category: "Fragrance",
+    kind: "direct_material",
     unit: "kg",
     description: "Olio profumato per candele, nota incenso.",
     technicalSpecifications: "Flash point > 70 °C · IFRA compliant",
@@ -161,6 +165,7 @@ const PRODUCTS: Record<ProductKey, typeof products.$inferInsert & { supplier: Su
     sku: "BOX-HC",
     name: "Scatola Home Collection",
     category: "Packaging",
+    kind: "packaging",
     unit: "pcs",
     description: "Scatola in cartoncino stampato per linea Home Collection.",
     technicalSpecifications: "Board 350 g/m² · 4-colour print · 90×90×105 mm",
@@ -253,7 +258,7 @@ export async function seedDemo(db: DB) {
     for (const [key, { supplier, ...p }] of Object.entries(PRODUCTS) as [ProductKey, (typeof PRODUCTS)[ProductKey]][]) {
       const [row] = await tx
         .insert(products)
-        .values({ ...p, currentSupplierId: supplierIds[supplier] })
+        .values({ ...p, currentSupplierId: supplierIds[supplier], mappedAt: new Date() })
         .returning({ id: products.id });
       productIds[key] = row.id;
     }

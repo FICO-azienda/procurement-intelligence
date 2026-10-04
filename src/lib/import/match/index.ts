@@ -10,6 +10,9 @@
  *
  * Nothing here writes to the database.
  */
+import { classify } from "../../catalog/classify";
+import { isStrategic } from "../../catalog/kinds";
+import type { Msg } from "../../i18n";
 import { codeKey, companyKey, normalizeKey, productKey, productTokens, tidy, vatKey } from "../normalize/text";
 import { ratio, tokenSimilarity } from "./similarity";
 
@@ -18,7 +21,8 @@ export type MatchStatus = "exact" | "probable" | "none";
 export interface Candidate {
   id: string;
   confidence: number;
-  reason: string;
+  /** Why it was suggested — a message, shown in the reader's language. */
+  reason: Msg;
 }
 
 export interface MatchResult {
@@ -26,7 +30,7 @@ export interface MatchResult {
   /** Best candidate (confirmed for exact, suggested for probable). */
   id: string | null;
   confidence: number;
-  reason: string;
+  reason: Msg;
   /** Other plausible candidates, best first. */
   alternatives: Candidate[];
 }
@@ -34,8 +38,10 @@ export interface MatchResult {
 export interface MatchContext {
   suppliers: { id: string; name: string; vatNumber: string | null }[];
   supplierAliases: { supplierId: string; normalized: string }[];
-  products: { id: string; sku: string; name: string; description: string | null }[];
-  productAliases: { productId: string; normalized: string }[];
+  /** `kind`: what the product is for the company's spend; absent = a product of the catalogue. */
+  products: { id: string; sku: string; name: string; description: string | null; kind?: string | null }[];
+  /** `supplierId`: who writes the product this way (absent on aliases saved before suppliers were recorded). */
+  productAliases: { productId: string; normalized: string; supplierId?: string | null }[];
   supplierProducts: { supplierId: string; productId: string; supplierSku: string | null; supplierProductName: string | null }[];
 }
 
@@ -50,7 +56,7 @@ const none = (alternatives: Candidate[] = []): MatchResult => ({
   alternatives,
 });
 
-const exact = (id: string, reason: string): MatchResult => ({ status: "exact", id, confidence: 1, reason, alternatives: [] });
+const exact = (id: string, reason: Msg): MatchResult => ({ status: "exact", id, confidence: 1, reason, alternatives: [] });
 
 function fromCandidates(cands: Candidate[]): MatchResult {
   const sorted = cands.filter((c) => c.confidence >= SUGGEST_THRESHOLD).sort((a, b) => b.confidence - a.confidence);
@@ -59,7 +65,7 @@ function fromCandidates(cands: Candidate[]): MatchResult {
   if (!unique.length) return none();
   const [best, ...rest] = unique;
   let confidence = Math.min(best.confidence, 0.95);
-  let reason = best.reason;
+  let reason: Msg = best.reason;
   if (rest[0] && best.confidence - rest[0].confidence < 0.05) {
     confidence = Math.min(confidence, 0.7);
     reason = "Several similar records — check which one";
@@ -123,6 +129,10 @@ export interface ProductInput {
 }
 
 export function matchProduct(input: ProductInput, supplierId: string | null, ctx: MatchContext): MatchResult {
+  const product = (id: string) => ctx.products.find((p) => p.id === id);
+  /** Spend that is not a product (transport, a utility…) is kept per supplier: its names mean nothing elsewhere. */
+  const inCatalogue = (id: string) => isStrategic(product(id)?.kind);
+
   // 1. Our own SKU
   const sku = codeKey(input.sku);
   if (sku) {
@@ -136,7 +146,8 @@ export function matchProduct(input: ProductInput, supplierId: string | null, ctx
     const links = ctx.supplierProducts.filter((sp) => codeKey(sp.supplierSku) === supplierSku);
     const own = supplierId ? links.find((sp) => sp.supplierId === supplierId) : undefined;
     if (own) return exact(own.productId, "Supplier's product code");
-    const ids = [...new Set(links.map((l) => l.productId))];
+    // The same code at another supplier is a clue only for products: spend items carry codes that mean nothing ("FOB", "3").
+    const ids = [...new Set(links.map((l) => l.productId).filter(inCatalogue))];
     if (ids.length === 1) {
       return { status: "probable", id: ids[0], confidence: 0.85, reason: "Same code used by another supplier", alternatives: [] };
     }
@@ -148,9 +159,13 @@ export function matchProduct(input: ProductInput, supplierId: string | null, ctx
   // 3. Known alias or same normalized name
   for (const text of texts) {
     const key = productKey(text);
-    const alias = ctx.productAliases.find((a) => a.normalized === key);
-    if (alias) return exact(alias.productId, "Recognised from a previous confirmation");
-    const byName = ctx.products.find((p) => productKey(p.name) === key);
+    const aliases = ctx.productAliases.filter((a) => a.normalized === key);
+    const own = aliases.find((a) => a.supplierId != null && a.supplierId === supplierId);
+    if (own) return exact(own.productId, "Recognised from a previous confirmation");
+    // Written the same way by someone else: the same product, when everyone who writes it means one product.
+    const elsewhere = [...new Set(aliases.map((a) => a.productId).filter(inCatalogue))];
+    if (elsewhere.length === 1) return exact(elsewhere[0], "Recognised from a previous confirmation");
+    const byName = ctx.products.find((p) => productKey(p.name) === key && isStrategic(p.kind));
     if (byName) return exact(byName.id, "Same name");
     const byLink = supplierId
       ? ctx.supplierProducts.find((sp) => sp.supplierId === supplierId && productKey(sp.supplierProductName) === key)
@@ -158,13 +173,27 @@ export function matchProduct(input: ProductInput, supplierId: string | null, ctx
     if (byLink) return exact(byLink.productId, "Supplier's product name");
   }
 
-  // 4–5. Product code written in the text, then fuzzy name/description
+  // 4. Spend that is not a product, from a supplier we already keep such an item for:
+  //    this month's transport lines are last month's transport, whatever shipment they name.
+  if (supplierId) {
+    const linked = ctx.supplierProducts.filter((sp) => sp.supplierId === supplierId).map((sp) => product(sp.productId)).filter((p): p is NonNullable<typeof p> => !!p);
+    const kinds = [...new Set(linked.map((p) => p.kind ?? null))];
+    const supplierKind = kinds.length === 1 && kinds[0] && !isStrategic(kinds[0]) ? kinds[0] : null;
+    const c = classify({ text: texts[0], supplierName: ctx.suppliers.find((s) => s.id === supplierId)?.name, supplierKind: supplierKind as never });
+    if (c.by !== "none" && !isStrategic(c.kind)) {
+      const same = linked.filter((p) => p.kind === c.kind);
+      if (same.length === 1) return exact(same[0].id, "Same kind of spend from this supplier");
+    }
+  }
+
+  // 5–6. Product code written in the text, then fuzzy name/description (products only: spend items are not looked up by name)
   const cands: Candidate[] = [];
   for (const [i, text] of texts.entries()) {
     const weight = i === 0 ? 1 : 0.9; // description counts a little less than the name
     const tokens = productTokens(text);
     const compact = codeKey(text);
     for (const p of ctx.products) {
+      if (!isStrategic(p.kind)) continue;
       const pSku = codeKey(p.sku);
       if (pSku.length >= 4 && (compact === pSku || codeTokens(text).includes(pSku))) {
         cands.push({ id: p.id, confidence: 0.9, reason: "Contains the product code" });
@@ -176,6 +205,7 @@ export function matchProduct(input: ProductInput, supplierId: string | null, ctx
       if (score > 0) cands.push({ id: p.id, confidence: score, reason: byName >= byDesc ? "Similar name" : "Similar description" });
     }
     for (const a of ctx.productAliases) {
+      if (!inCatalogue(a.productId)) continue;
       const score = tokenSimilarity(tokens, a.normalized.split(" ")) * weight * 0.95;
       if (score > 0) cands.push({ id: a.productId, confidence: score, reason: "Similar to a known alias" });
     }

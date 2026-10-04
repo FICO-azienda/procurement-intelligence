@@ -5,7 +5,9 @@
  */
 import Papa from "papaparse";
 import * as XLSX from "xlsx";
+import type { Msg } from "../../i18n";
 import { FIELDS } from "../fields";
+import { parseDate } from "../normalize/dates";
 import { normalizeKey } from "../normalize/text";
 
 export type Cell = string | number | boolean | Date | null;
@@ -14,11 +16,18 @@ export interface Table {
   sheetName: string | null;
   headers: string[];
   rows: Cell[][];
-  /** 0-based row index of the header in the original sheet. */
+  /** 0-based row index of the header in the original sheet; -1 when there is none. */
   headerRowIndex: number;
+  /** No header row (typical of rows pasted from a spreadsheet): columns are named "Column 1…". */
+  headerless: boolean;
 }
 
-export class ImportError extends Error {}
+/** A file that can't be read, said in plain words. The text is a message, so it can be shown in the reader's language. */
+export class ImportError extends Error {
+  constructor(message: Msg) {
+    super(message);
+  }
+}
 
 export const SPREADSHEET_TYPES = ["csv", "xlsx", "xls", "ods"] as const;
 
@@ -60,10 +69,18 @@ function readWorkbook(bytes: Uint8Array): { sheetName: string; rows: Cell[][] } 
 
 const ALL_SYNONYMS = new Set(FIELDS.flatMap((f) => f.synonyms));
 
-/** The header is the row (within the first 15) that looks most like column names. */
+const looksLikeData = (c: Cell) =>
+  typeof c === "number" || c instanceof Date || (typeof c === "string" && (/^[\s€$£-]*\d[\d.,'\s]*[\s€$£%]*$/.test(c) || parseDate(c) != null));
+
+/**
+ * The header is the row (within the first 15) that looks most like column
+ * names. Returns -1 when even the best candidate holds values (a number or a
+ * date) and no known column name: the table has no header.
+ */
 function findHeaderRow(rows: Cell[][]): number {
   let bestIdx = 0;
   let bestScore = -1;
+  let bestKnown = 0;
   rows.slice(0, 15).forEach((row, i) => {
     const texts = row.filter((c): c is string => typeof c === "string" && c.trim() !== "");
     const known = texts.filter((t) => ALL_SYNONYMS.has(normalizeKey(t))).length;
@@ -71,9 +88,10 @@ function findHeaderRow(rows: Cell[][]): number {
     if (score > bestScore) {
       bestScore = score;
       bestIdx = i;
+      bestKnown = known;
     }
   });
-  return bestIdx;
+  return bestKnown === 0 && rows[bestIdx].some(looksLikeData) ? -1 : bestIdx;
 }
 
 export function readTable(bytes: Uint8Array, fileType: string): Table {
@@ -87,13 +105,15 @@ export function readTable(bytes: Uint8Array, fileType: string): Table {
     sheetName = wb.sheetName;
     rows = wb.rows;
   }
-  if (rows.length < 2) throw new ImportError("The file has no data rows under the header.");
+  if (rows.length === 0) throw new ImportError("The file is empty.");
 
   const headerRowIndex = findHeaderRow(rows);
+  const headerless = headerRowIndex < 0;
+  if (!headerless && rows.length < 2) throw new ImportError("The file has no data rows under the header.");
   const width = Math.max(...rows.map((r) => r.length));
   const seen = new Map<string, number>();
   const headers = Array.from({ length: width }, (_, i) => {
-    const raw = rows[headerRowIndex][i];
+    const raw = headerless ? null : rows[headerRowIndex][i];
     let h = raw == null || String(raw).trim() === "" ? `Column ${i + 1}` : String(raw).trim();
     const n = (seen.get(h) ?? 0) + 1;
     seen.set(h, n);
@@ -105,7 +125,7 @@ export function readTable(bytes: Uint8Array, fileType: string): Table {
     .map((r) => Array.from({ length: width }, (_, i) => (r[i] === undefined ? null : r[i])))
     .filter((r) => r.some((c) => c !== null && String(c).trim() !== ""));
   if (dataRows.length === 0) throw new ImportError("The file has no data rows under the header.");
-  return { sheetName, headers, rows: dataRows, headerRowIndex };
+  return { sheetName, headers, rows: dataRows, headerRowIndex, headerless };
 }
 
 /** Cell as the user would read it in the file. */

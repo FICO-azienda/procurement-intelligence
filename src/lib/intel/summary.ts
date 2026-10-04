@@ -4,6 +4,7 @@
  * be traced back.
  */
 import * as f from "../format";
+import { en, lowerFirst, type Msg, type T } from "../i18n";
 import type { ComparisonRow } from "./comparison";
 import type { Opportunity } from "./opportunities";
 import type { Concentration, SupplierPriceChange } from "./portfolio";
@@ -12,6 +13,24 @@ import type { DataQuality } from "./quality";
 
 const abs1 = (n: number) => Math.abs(n).toLocaleString("it-IT", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const k = (n: number) => f.money(Math.round(n));
+
+/** "A recent comparable quote": whole phrases, because adjectives agree with the noun in other languages. */
+const OFFER: Record<"expired" | "old" | "recent", Record<"partial" | "comparable", Record<"price" | "quote", Msg>>> = {
+  expired: {
+    partial: { price: "An expired partially comparable price", quote: "An expired partially comparable quote" },
+    comparable: { price: "An expired comparable price", quote: "An expired comparable quote" },
+  },
+  old: {
+    partial: { price: "An old partially comparable price", quote: "An old partially comparable quote" },
+    comparable: { price: "An old comparable price", quote: "An old comparable quote" },
+  },
+  recent: {
+    partial: { price: "A recent partially comparable price", quote: "A recent partially comparable quote" },
+    comparable: { price: "A recent comparable price", quote: "A recent comparable quote" },
+  },
+};
+
+export const CONFIDENCE_WORD: Record<"high" | "medium" | "low", Msg> = { high: "high|confidence", medium: "medium|confidence", low: "low|confidence" };
 
 export interface ProductSummaryInput {
   price: PriceMetrics;
@@ -25,47 +44,60 @@ export interface ProductSummaryInput {
   supplierName: (id: string | null) => string;
 }
 
-export function productSummary(i: ProductSummaryInput): string[] {
+export function productSummary(i: ProductSummaryInput, t: T = en): string[] {
   const out: string[] = [];
   const m12 = i.price.changes.m12;
   if (i.currentPriceFlagged && i.price.current) {
-    out.push(`The current price (${f.price(i.price.current.price)}) is far from the usual level and may be a data error — check it before relying on the figures below.`);
+    out.push(t("The current price ({price}) is far from the usual level and may be a data error — check it before relying on the figures below.", { price: f.price(i.price.current.price) }));
   }
   if (!i.price.current) {
-    out.push("No purchases recorded yet, so there is no price to analyse.");
+    out.push(t("No purchases recorded yet, so there is no price to analyse."));
   } else if (m12.pct == null) {
-    out.push("Only one purchase on record — no price history yet.");
+    out.push(t("Only one purchase on record — no price history yet."));
   } else if (Math.abs(m12.pct) < 0.05) {
-    out.push(`The price has not changed since ${f.month(m12.referenceDate)}.`);
+    out.push(t("The price has not changed since {month}.", { month: f.month(m12.referenceDate, t) }));
   } else {
-    out.push(`Current price is ${abs1(m12.pct)}% ${m12.pct > 0 ? "above" : "below"} ${f.month(m12.referenceDate)}.`);
+    out.push(t(m12.pct > 0 ? "Current price is {pct}% above {month}." : "Current price is {pct}% below {month}.", { pct: abs1(m12.pct), month: f.month(m12.referenceDate, t) }));
   }
 
   if (i.annualSpend > 0) {
-    out.push(`The product represents ${k(i.annualSpend)} annual spend${i.spendShare > 0 ? ` (${abs1(i.spendShare * 100)}% of the total)` : ""}.`);
+    out.push(
+      i.spendShare > 0
+        ? t("The product represents {amount} annual spend ({share}% of the total).", { amount: k(i.annualSpend), share: abs1(i.spendShare * 100) })
+        : t("The product represents {amount} annual spend.", { amount: k(i.annualSpend) }),
+    );
   }
 
   const alternatives = i.comparison.filter((r) => !r.isCurrent);
   if (i.bestSaving && i.bestSaving.priceDifferencePct != null && i.bestSaving.potentialSaving != null) {
     const row = alternatives.find((r) => r.supplier.id === i.bestSaving!.alternativeSupplierId);
-    const age = row?.expired ? "An expired" : row?.age === "old" ? "An old" : "A recent";
-    const cmp = i.bestSaving.comparability === "partial" ? "partially comparable" : "comparable";
+    const age = row?.expired ? "expired" : row?.age === "old" ? "old" : "recent";
+    const cmp = i.bestSaving.comparability === "partial" ? "partial" : "comparable";
     out.push(
-      `${age} ${cmp} ${row?.kind === "purchase" ? "price" : "quote"} from ${i.supplierName(i.bestSaving.alternativeSupplierId)} is ${abs1(i.bestSaving.priceDifferencePct)}% below the current supplier price.`,
+      t("{~offer} from {supplier} is {pct}% below the current supplier price.", {
+        offer: OFFER[age][cmp][row?.kind === "purchase" ? "price" : "quote"],
+        supplier: i.supplierName(i.bestSaving.alternativeSupplierId),
+        pct: abs1(i.bestSaving.priceDifferencePct),
+      }),
     );
-    out.push(`Potential nominal saving: ${k(i.bestSaving.potentialSaving)}/year before landed-cost adjustments (${i.bestSaving.confidence} confidence).`);
+    out.push(
+      t("Potential nominal saving: {amount}/year before landed-cost adjustments ({~confidence} confidence).", {
+        amount: k(i.bestSaving.potentialSaving),
+        confidence: i.bestSaving.confidence ? CONFIDENCE_WORD[i.bestSaving.confidence] : "",
+      }),
+    );
   } else if (i.price.current) {
-    if (!alternatives.length) out.push("No alternative quotes on file to compare with.");
-    else if (alternatives.every((r) => r.comparability === "not")) out.push("The alternatives on file can't be compared yet.");
-    else out.push("No alternative on file is priced below the current supplier.");
+    if (!alternatives.length) out.push(t("No alternative quotes on file to compare with."));
+    else if (alternatives.every((r) => r.comparability === "not")) out.push(t("The alternatives on file can't be compared yet."));
+    else out.push(t("No alternative on file is priced below the current supplier."));
   }
 
   if (i.concentration.sourcing === "single" && i.price.current) {
-    out.push(`All purchases come from ${i.supplierName(i.concentration.shares[0].supplierId)}.`);
+    out.push(t("All purchases come from {supplier}.", { supplier: i.supplierName(i.concentration.shares[0].supplierId) }));
   }
   if (i.quality.level === "low" && i.price.current) {
     const why = i.quality.factors.find((x) => x.state === "poor");
-    out.push(`Data quality is low${why ? ` (${why.detail.toLowerCase()})` : ""}: read these figures with caution.`);
+    out.push(why ? t("Data quality is low ({why}): read these figures with caution.", { why: lowerFirst(why.detail) }) : t("Data quality is low: read these figures with caution."));
   }
   return out;
 }
@@ -79,22 +111,26 @@ export interface SupplierSummaryInput {
   singleSourcedHighSpend: number;
 }
 
-export function supplierSummary(i: SupplierSummaryInput): string[] {
+export function supplierSummary(i: SupplierSummaryInput, t: T = en): string[] {
   const out: string[] = [];
   if (i.annualSpend > 0) {
-    out.push(`${i.name} represents ${abs1(i.spendShare * 100)}% of annual purchasing spend (${k(i.annualSpend)}).`);
+    out.push(t("{name} represents {share}% of annual purchasing spend ({amount}).", { name: i.name, share: abs1(i.spendShare * 100), amount: k(i.annualSpend) }));
   } else {
-    out.push(`No purchases from ${i.name} in the last 12 months.`);
+    out.push(t("No purchases from {name} in the last 12 months.", { name: i.name }));
   }
   const w = i.priceChange.weightedPct;
   if (w != null) {
-    out.push(Math.abs(w) < 0.05 ? "Prices are unchanged year to date." : `Prices ${w > 0 ? "increased" : "decreased"} by a weighted ${abs1(w)}% year to date.`);
+    out.push(
+      Math.abs(w) < 0.05
+        ? t("Prices are unchanged year to date.")
+        : t(w > 0 ? "Prices increased by a weighted {pct}% year to date." : "Prices decreased by a weighted {pct}% year to date.", { pct: abs1(w) }),
+    );
   }
   if (i.productsWithAlternatives > 0) {
-    out.push(`${i.productsWithAlternatives} product${i.productsWithAlternatives > 1 ? "s have" : " has"} recent alternative quotes.`);
+    out.push(t.n(i.productsWithAlternatives, "{n} product has recent alternative quotes.", "{n} products have recent alternative quotes."));
   }
   if (i.singleSourcedHighSpend > 0) {
-    out.push(`${i.singleSourcedHighSpend} high-spend product${i.singleSourcedHighSpend > 1 ? "s are" : " is"} single-sourced from this supplier.`);
+    out.push(t.n(i.singleSourcedHighSpend, "{n} high-spend product is single-sourced from this supplier.", "{n} high-spend products are single-sourced from this supplier."));
   }
   return out;
 }

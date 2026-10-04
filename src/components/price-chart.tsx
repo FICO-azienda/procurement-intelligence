@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { minusMonths } from "@/lib/analytics";
 import * as f from "@/lib/format";
+import { useT } from "@/lib/i18n/client";
 import { cx } from "./ui";
 
 export interface PricePoint {
@@ -29,7 +30,7 @@ const RANGES = [
 type RangeKey = (typeof RANGES)[number]["key"];
 
 /** One supplier: the product accent. Several: a validated categorical palette, fixed per supplier. */
-const SINGLE = "#2443a6";
+const SINGLE = "#2456d6";
 const SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100"];
 const OTHER = "#8a8a90";
 const GRID = "rgba(17,17,19,0.07)";
@@ -54,6 +55,7 @@ type Row = { t: number } & Record<string, number | PricePoint | undefined>;
 
 /** Price paid over time, one line per supplier. Works with any number of observations. */
 export function PriceChart({ points, asOf, height = 260 }: { points: PricePoint[]; asOf: string; height?: number }) {
+  const t = useT();
   // Colour follows the supplier (order of first appearance in the full history), not the selected range.
   const suppliers = useMemo(() => {
     const seen = new Map<string, string>();
@@ -77,7 +79,7 @@ export function PriceChart({ points, asOf, height = 260 }: { points: PricePoint[
             </span>
           ))}
       </div>
-      <div className="inline-flex shrink-0 rounded-md border border-rule-strong p-0.5" role="radiogroup" aria-label="Period">
+      <div className="inline-flex shrink-0 rounded-md border border-rule-strong p-0.5" role="radiogroup" aria-label={t("Period")}>
         {RANGES.map((r) => (
           <button
             key={r.key}
@@ -90,7 +92,7 @@ export function PriceChart({ points, asOf, height = 260 }: { points: PricePoint[
               range === r.key ? "bg-ink text-white" : "text-ink-2 hover:bg-wash",
             )}
           >
-            {r.key}
+            {r.key === "ALL" ? t("ALL") : r.key}
           </button>
         ))}
       </div>
@@ -100,7 +102,7 @@ export function PriceChart({ points, asOf, height = 260 }: { points: PricePoint[
   if (points.length === 0) {
     return (
       <div style={{ height }} className="grid place-items-center rounded-md bg-well text-[13px] text-ink-3">
-        No comparable purchases yet — the price history appears after the first purchase.
+        {t("No comparable purchases yet — the price history appears after the first purchase.")}
       </div>
     );
   }
@@ -109,7 +111,7 @@ export function PriceChart({ points, asOf, height = 260 }: { points: PricePoint[
       <div>
         {rangeTabs}
         <div style={{ height }} className="grid place-items-center rounded-md bg-well text-[13px] text-ink-3">
-          No purchases in this period.
+          {t("No purchases in this period.")}
         </div>
       </div>
     );
@@ -127,7 +129,7 @@ export function PriceChart({ points, asOf, height = 260 }: { points: PricePoint[
   return (
     <div>
       {rangeTabs}
-      <div style={{ height }} role="img" aria-label={`Price history, ${visible.length} purchases from ${suppliers.length} supplier${suppliers.length > 1 ? "s" : ""}`}>
+      <div style={{ height }} role="img" aria-label={t.n(suppliers.length, "Price history, {purchases} purchases from {n} supplier", "Price history, {purchases} purchases from {n} suppliers", { purchases: visible.length })}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={rows} margin={{ top: 16, right: suppliers.length === 1 ? 56 : 16, bottom: 0, left: 0 }}>
             <CartesianGrid vertical={false} stroke={GRID} />
@@ -136,12 +138,14 @@ export function PriceChart({ points, asOf, height = 260 }: { points: PricePoint[
               type="number"
               scale="time"
               domain={[first - padX, last + padX]}
-              tickFormatter={(t: number) => f.month(new Date(t).toISOString())}
+              tickFormatter={(ms: number) => f.month(new Date(ms).toISOString(), t)}
               tick={{ fill: AXIS_TEXT, fontSize: 12 }}
               tickLine={false}
               axisLine={{ stroke: GRID }}
               minTickGap={36}
               tickMargin={8}
+              // Several purchases on one day are one point on the axis.
+              ticks={[...new Set(rows.map((r) => r.t))]}
             />
             <YAxis
               domain={[ticks[0], ticks[ticks.length - 1]]}

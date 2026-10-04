@@ -2,6 +2,7 @@
 
 import { usePathname, useRouter } from "next/navigation";
 import { useTransition } from "react";
+import { useT } from "@/lib/i18n/client";
 import { Select } from "./form-kit";
 
 export function ProductPicker({
@@ -12,11 +13,12 @@ export function ProductPicker({
   value: string;
 }) {
   const router = useRouter();
+  const t = useT();
   const pathname = usePathname();
   const [pending, startTransition] = useTransition();
   return (
     <label className={`block w-full max-w-[360px] transition-opacity ${pending ? "opacity-70" : ""}`}>
-      <span className="mb-1.5 block text-[12.5px] font-medium text-ink-2">Product</span>
+      <span className="mb-1.5 block text-[12.5px] font-medium text-ink-2">{t("Product")}</span>
       <Select
         value={value}
         onChange={(e) =>

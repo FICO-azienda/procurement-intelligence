@@ -3,12 +3,14 @@
 import { useCallback, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Info } from "lucide-react";
+import { useT } from "@/lib/i18n/client";
 
 /**
  * Explains how a figure is calculated. Opens on hover, focus or tap; rendered
  * in a portal so it is never clipped by a card.
  */
-export function Hint({ text, label = "How this is calculated" }: { text: string; label?: string }) {
+export function Hint({ text, label }: { text: string; label?: string }) {
+  const t = useT();
   const id = useId();
   const ref = useRef<HTMLButtonElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number; above: boolean } | null>(null);
@@ -28,7 +30,7 @@ export function Hint({ text, label = "How this is calculated" }: { text: string;
       <button
         ref={ref}
         type="button"
-        aria-label={label}
+        aria-label={label ?? t("How this is calculated")}
         aria-describedby={pos ? id : undefined}
         onMouseEnter={open}
         onMouseLeave={close}

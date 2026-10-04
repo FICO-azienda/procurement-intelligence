@@ -1,16 +1,18 @@
 import Link from "next/link";
 import { Suspense } from "react";
 import type { Metadata } from "next";
-import { PurchaseDialog } from "@/components/dialogs";
+import { EntryButton, PurchaseDialog } from "@/components/dialogs";
 import { PurchaseFilters } from "@/components/purchase-filters";
-import { Empty, PageHeader, Sku, Table, Td, Th, rowClass } from "@/components/ui";
+import { ButtonLink, Empty, PageHeader, Table, Td, Th, rowClass } from "@/components/ui";
 import { baseTotal, isPriced } from "@/lib/analytics";
 import { SourceTag } from "@/components/import/labels";
-import { getDataset } from "@/lib/data";
+import { getDataset, getT } from "@/lib/data";
 import * as f from "@/lib/format";
-import { lookups, plural } from "@/lib/lookups";
+import { lookups } from "@/lib/lookups";
 
-export const metadata: Metadata = { title: "Purchases" };
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: (await getT())("Purchases") };
+}
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
 
@@ -22,7 +24,7 @@ export default async function PurchasesPage({ searchParams }: PageProps<"/purcha
   const from = one(sp.from);
   const to = one(sp.to);
 
-  const data = await getDataset();
+  const [data, t] = await Promise.all([getDataset(), getT()]);
   const l = lookups(data);
 
   const rows = data.purchases
@@ -44,14 +46,12 @@ export default async function PurchasesPage({ searchParams }: PageProps<"/purcha
 
   const total = rows.filter(isPriced).reduce((s, p) => s + baseTotal(p), 0);
   const unpriced = rows.filter((p) => !isPriced(p)).length;
-  const common = { products: l.productOptions, suppliers: l.supplierOptions };
 
   return (
     <>
       <PageHeader
-        title="Purchases"
-        meta="Every purchase line. This is the raw data all prices and spend are calculated from."
-        actions={<PurchaseDialog {...common} trigger={{ label: "Add purchase", variant: "primary" }} />}
+        title={t("Purchases")}
+        meta={t("Every purchase, one line each. All prices and spend are calculated from these.")}
       />
 
       <Suspense>
@@ -61,26 +61,36 @@ export default async function PurchasesPage({ searchParams }: PageProps<"/purcha
       <div className="rounded-lg border border-rule">
         {rows.length === 0 ? (
           <Empty
-            title={data.purchases.length === 0 ? "No purchases yet" : "No purchases match these filters"}
-            body={data.purchases.length === 0 ? "Add a purchase or import a CSV." : undefined}
+            title={data.purchases.length === 0 ? t("No purchases yet") : t("No purchases match these filters")}
+            body={data.purchases.length === 0 ? t("Upload invoices or add your first purchase to start building a price history.") : undefined}
+            action={
+              data.purchases.length === 0 ? (
+                <div className="flex flex-wrap justify-center gap-2">
+                  <ButtonLink href="/import" variant="primary">
+                    {t("Import invoices")}
+                  </ButtonLink>
+                  <EntryButton kind="paste" label={t("Paste from Excel")} />
+                  <PurchaseDialog trigger={{ label: t("Add manually") }} />
+                </div>
+              ) : (
+                <Link href="/purchases" className="text-[13px] font-medium text-ledger hover:underline">
+                  {t("Clear filters")}
+                </Link>
+              )
+            }
           />
         ) : (
           <>
             <Table>
               <thead>
                 <tr>
-                  <Th className="border-t-0">Date</Th>
-                  <Th className="border-t-0">Supplier</Th>
-                  <Th className="border-t-0">Product</Th>
-                  <Th className="border-t-0">SKU</Th>
-                  <Th className="border-t-0" align="right">Quantity</Th>
-                  <Th className="border-t-0">Unit</Th>
-                  <Th className="border-t-0" align="right">Unit price</Th>
-                  <Th className="border-t-0">Currency</Th>
-                  <Th className="border-t-0" align="right">Freight</Th>
-                  <Th className="border-t-0" align="right">Total</Th>
-                  <Th className="border-t-0">Invoice / Ref.</Th>
-                  <Th className="border-t-0">Source</Th>
+                  <Th className="border-t-0">{t("Date")}</Th>
+                  <Th className="border-t-0">{t("Product")}</Th>
+                  <Th className="hidden border-t-0 @3xl:table-cell">{t("Supplier")}</Th>
+                  <Th className="border-t-0" align="right">{t("Quantity")}</Th>
+                  <Th className="border-t-0" align="right">{t("Unit price")}</Th>
+                  <Th className="hidden border-t-0 @2xl:table-cell" align="right">{t("Total")}</Th>
+                  <Th className="hidden border-t-0 @4xl:table-cell">{t("Source")}</Th>
                   <Th className="w-10 border-t-0" />
                 </tr>
               </thead>
@@ -90,31 +100,33 @@ export default async function PurchasesPage({ searchParams }: PageProps<"/purcha
                   return (
                     <tr key={p.id} className={rowClass()}>
                       <Td className="num">{f.date(p.date)}</Td>
-                      <Td>
+                      <Td className="max-w-[260px] whitespace-normal!">
+                        <Link href={`/products/${p.productId}`} className="font-medium hover:text-ledger">
+                          {prod?.name}
+                        </Link>
+                        <div className="truncate text-[12px] text-ink-3 @3xl:hidden">{l.supplierName(p.supplierId)}</div>
+                      </Td>
+                      <Td className="hidden @3xl:table-cell">
                         <Link href={`/suppliers/${p.supplierId}`} className="hover:text-ledger">
                           {l.supplierName(p.supplierId)}
                         </Link>
                       </Td>
-                      <Td className="font-medium">
-                        <Link href={`/products/${p.productId}`} className="hover:text-ledger">
-                          {prod?.name}
-                        </Link>
+                      <Td align="right">
+                        {f.number(p.quantity)} <span className="text-ink-3">{p.unit}</span>
                       </Td>
-                      <Td>
-                        <Sku>{prod?.sku}</Sku>
+                      <Td align="right" className="font-medium">
+                        {f.price(p.unitPrice, p.currency)}
+                        {!isPriced(p) && <span className="ml-1.5 text-[11.5px] font-normal text-caution">{t("no exchange rate")}</span>}
                       </Td>
-                      <Td align="right">{f.number(p.quantity)}</Td>
-                      <Td muted>{p.unit}</Td>
-                      <Td align="right" className="font-medium">{f.price(p.unitPrice, p.currency)}</Td>
-                      <Td muted>{p.currency}</Td>
-                      <Td align="right" muted>{p.freightCost ? f.money(p.freightCost, p.currency) : "—"}</Td>
-                      <Td align="right">{f.money(p.totalAmount, p.currency)}</Td>
-                      <Td muted>{p.invoiceReference ?? "—"}</Td>
-                      <Td>
+                      <Td align="right" className="hidden @2xl:table-cell">
+                        {f.money(p.totalAmount, p.currency)}
+                      </Td>
+                      <Td className="hidden @4xl:table-cell">
                         <SourceTag source={p.source} doc={p.sourceDoc} />
+                        {p.invoiceReference && <span className="ml-1.5 text-[12px] text-ink-3">{p.invoiceReference}</span>}
                       </Td>
                       <Td>
-                        <PurchaseDialog {...common} purchase={p} trigger={{ label: "Edit purchase", iconOnly: true }} />
+                        <PurchaseDialog purchase={p} trigger={{ label: t("Edit purchase"), iconOnly: true }} />
                       </Td>
                     </tr>
                   );
@@ -122,10 +134,10 @@ export default async function PurchasesPage({ searchParams }: PageProps<"/purcha
               </tbody>
             </Table>
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-rule bg-well px-5 py-3 text-[13px]">
-              <span className="text-ink-3">{plural(rows.length, "purchase")}</span>
+              <span className="text-ink-3">{t.n(rows.length, "{n} purchase", "{n} purchases")}</span>
               <span>
-                {unpriced > 0 && <span className="mr-3 text-caution">{unpriced} in other currencies not included (no exchange rate)</span>}
-                <span className="text-ink-3">Total </span>
+                {unpriced > 0 && <span className="mr-3 text-caution">{t("{n} in other currencies not included (no exchange rate)", { n: unpriced })}</span>}
+                <span className="text-ink-3">{t("Total")} </span>
                 <span className="num font-semibold">{f.money(total)}</span>
               </span>
             </div>
