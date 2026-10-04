@@ -4,6 +4,7 @@ import { useActionState } from "react";
 import { saveSettings, type FormState } from "@/app/actions";
 import type { CompanySettings } from "@/lib/data";
 import { useT } from "@/lib/i18n/client";
+import { SOURCING_CONFIG } from "@/lib/sourcing/types";
 import { Field, FormError, Grid, Input, SubmitButton } from "./form-kit";
 
 const initial: FormState = { ok: false };
@@ -27,6 +28,12 @@ export function SettingsForm({ settings }: { settings: CompanySettings }) {
         </Field>
         <Field label={t("Your name")} hint={t("Only used to say good morning")}>
           <Input name="userName" defaultValue={settings.userName ?? ""} />
+        </Field>
+        <Field label={t("Cost of money, % a year")} hint={t("What financing costs you: it values a supplier's payment terms. Empty: {rate}% is assumed.", { rate: SOURCING_CONFIG.financingRatePct })}>
+          <Input name="financingRatePct" defaultValue={settings.financingRatePct ?? ""} placeholder={String(SOURCING_CONFIG.financingRatePct)} inputMode="decimal" />
+        </Field>
+        <Field label={t("Cost of holding stock, % a year")} hint={t("Capital, space and risk of goods in stock: it values a large minimum order. Empty: {rate}% is assumed.", { rate: SOURCING_CONFIG.holdingRatePct })}>
+          <Input name="holdingRatePct" defaultValue={settings.holdingRatePct ?? ""} placeholder={String(SOURCING_CONFIG.holdingRatePct)} inputMode="decimal" />
         </Field>
       </Grid>
       <div className="mt-5 flex items-center gap-3">

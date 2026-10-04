@@ -32,7 +32,8 @@ import { matchProduct, matchSupplier, type MatchContext } from "@/lib/import/mat
 import { analyze } from "@/lib/intel/engine";
 import { parseQuickPurchase } from "@/lib/quick-add";
 import { uniqueSku } from "@/lib/sku";
-import { addBenchmark, addCandidate, deleteBenchmark, deleteCandidate, getMarketViews, markRequestsSent, recordCandidateQuote, setCandidatesStatus, updateCandidate } from "@/server/sourcing";
+import { addBenchmark, addCandidate, addProductDocument, deleteBenchmark, deleteCandidate, getMarketViews, markRequestsSent, recordCandidateQuote, removeProductDocument, saveRfqSpec, saveTrueCostInputs, setBenchmarkMonth, setCandidatesStatus, setPilot, updateCandidate } from "@/server/sourcing";
+import { parseNumber } from "@/lib/import/normalize/numbers";
 import { connectedProviders } from "@/server/providers";
 import { convertCandidate, importResearch, planResearch, runResearch, setCustomsCode, setResearchClass, type ImportOutcome, type PlanView, type ResearchOutcome } from "@/server/research";
 import { parseResearchFile } from "@/lib/research/file";
@@ -401,7 +402,11 @@ export async function saveSettings(_: FormState, formData: FormData): Promise<Fo
   const companyName = text("companyName");
   const t = await getT();
   if (!companyName) return invalid(t, { companyName: t("Your company's name is needed") });
-  const values = { companyName, country: text("country"), vatNumber: text("vatNumber"), userName: text("userName"), updatedAt: new Date() };
+  const rate = (k: string) => {
+    const n = text(k) ? parseNumber(text(k)) : null;
+    return n && n.value != null && !n.ambiguous && n.value >= 0 && n.value <= 100 ? n.value : null;
+  };
+  const values = { companyName, country: text("country"), vatNumber: text("vatNumber"), userName: text("userName"), financingRatePct: rate("financingRatePct"), holdingRatePct: rate("holdingRatePct"), updatedAt: new Date() };
   try {
     const db = await getDb();
     await db.insert(settings).values({ id: 1, ...values }).onConflictDoUpdate({ target: settings.id, set: values });
@@ -567,6 +572,7 @@ export async function markRequestsSentAction(items: { supplierName: string; cand
  * source is connected; without it the quote is kept and left out of EUR comparisons.
  */
 export async function recordCandidateQuoteAction(candidateId: string, input: Record<string, string>, original: string): Promise<SourcingResult> {
+  const freight = (input.freightPerUnit ?? "").trim() ? parseNumber(input.freightPerUnit) : null;
   const t = await getT();
   const parsed = candidateQuoteInput.safeParse(input);
   if (!parsed.success) return { ok: false, errors: fieldErrors(parsed.error, t) };
@@ -581,7 +587,95 @@ export async function recordCandidateQuoteAction(candidateId: string, input: Rec
         fxRate = null;
       }
     }
-    await recordCandidateQuote(await getDb(), candidateId, { date: v.date!, unitPrice: v.unitPrice!, currency: v.currency, fxRate, moq: v.moq, leadTimeDays: v.leadTimeDays, paymentTermsDays: v.paymentTermsDays, incoterm: v.incoterm, validUntil: v.validUntil, notes: v.notes, original: original.trim() || null });
+    await recordCandidateQuote(await getDb(), candidateId, { date: v.date!, unitPrice: v.unitPrice!, currency: v.currency, fxRate, moq: v.moq, leadTimeDays: v.leadTimeDays, paymentTermsDays: v.paymentTermsDays, incoterm: v.incoterm, validUntil: v.validUntil, notes: v.notes, original: original.trim() || null, freightPerUnit: freight && freight.value != null && !freight.ambiguous ? freight.value : null });
+    refresh();
+    return { ok: true };
+  } catch (err) {
+    return sourcingFailed(t, err);
+  }
+}
+
+// ---------------- Request specification, pilot, true cost ----------------
+
+/** What the product is called and described as to someone who is not its current supplier: the company's own words. */
+export async function saveRfqSpecAction(productId: string, input: { rfqName: string; technical: string; application: string }): Promise<SourcingResult> {
+  const t = await getT();
+  try {
+    await saveRfqSpec(await getDb(), productId, { rfqName: input.rfqName, technical: input.technical, application: input.application });
+    refresh();
+    return { ok: true };
+  } catch (err) {
+    return sourcingFailed(t, err);
+  }
+}
+
+/** A technical data sheet kept with the product, to attach to requests. Stored as it is. */
+export async function uploadProductDocumentAction(productId: string, formData: FormData): Promise<SourcingResult> {
+  const t = await getT();
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) return { ok: false, error: t("Choose a file.") };
+  if (file.size > 20 * 1024 * 1024) return { ok: false, error: t("The file is larger than 20 MB.") };
+  if (!/\.(pdf|png|jpe?g|webp|docx?|xlsx?|txt)$/i.test(file.name)) return { ok: false, error: t("Attach a PDF, an image or an office document.") };
+  try {
+    await addProductDocument(await getDb(), productId, { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()), mimeType: file.type || null });
+    refresh();
+    return { ok: true };
+  } catch (err) {
+    return sourcingFailed(t, err);
+  }
+}
+
+export async function removeProductDocumentAction(id: string): Promise<SourcingResult> {
+  const t = await getT();
+  try {
+    await removeProductDocument(await getDb(), id);
+    refresh();
+    return { ok: true };
+  } catch (err) {
+    return sourcingFailed(t, err);
+  }
+}
+
+/** Puts products in the live pilot, or takes them out: the first real round of requests is for these. */
+export async function setPilotAction(productIds: string[], on: boolean): Promise<SourcingResult> {
+  const t = await getT();
+  try {
+    await setPilot(await getDb(), productIds, on);
+    refresh();
+    return { ok: true };
+  } catch (err) {
+    return sourcingFailed(t, err);
+  }
+}
+
+/** Transport, duty and other costs of a quote, as the user knows or estimates them. Empty means not known — never zero. */
+export async function saveTrueCostInputsAction(quoteId: string, input: Record<string, string>): Promise<SourcingResult> {
+  const t = await getT();
+  const errors: FieldErrors = {};
+  const number = (key: string) => {
+    const raw = (input[key] ?? "").trim();
+    if (!raw) return null;
+    const n = parseNumber(raw);
+    if (n.value == null || n.ambiguous || n.value < 0) errors[key] = t("Write a number, zero or more.");
+    return n.value;
+  };
+  const values = { freightPerUnit: number("freightPerUnit"), freightBasis: input.freightBasis === "estimate" ? "estimate" : input.freightBasis === "quote" ? "quote" : "manual", dutyRatePct: number("dutyRatePct"), customsPerUnit: number("customsPerUnit"), otherPerUnit: number("otherPerUnit"), notes: (input.notes ?? "").trim() || null };
+  if (Object.keys(errors).length) return { ok: false, errors };
+  try {
+    await saveTrueCostInputs(await getDb(), quoteId, values);
+    refresh();
+    return { ok: true };
+  } catch (err) {
+    return sourcingFailed(t, err);
+  }
+}
+
+/** The month a reference is about ("2026-09"): its exchange rate becomes that month's average at the next research. */
+export async function setBenchmarkMonthAction(id: string, month: string): Promise<SourcingResult> {
+  const t = await getT();
+  if (month && !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return { ok: false, error: t("Write the month as year-month, like 2026-09.") };
+  try {
+    await setBenchmarkMonth(await getDb(), id, month || null);
     refresh();
     return { ok: true };
   } catch (err) {

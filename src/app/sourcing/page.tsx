@@ -2,12 +2,15 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { ResearchImport, ResearchPriority } from "@/components/sourcing/research";
 import { SupplierRfqBoard, type SupplierVM } from "@/components/sourcing/rfq";
+import { PilotToggle, ReadinessPill } from "@/components/sourcing/spec";
 import { PriceTypeTag, ResearchStatusPill } from "@/components/sourcing/tags";
 import { ButtonLink, Disclosure, Empty, PageHeader, Table, Td, Th, cx, rowClass } from "@/components/ui";
 import { getDb } from "@/db";
 import { todayISO } from "@/lib/analytics";
 import { countryName, flagOf } from "@/lib/countries";
-import { getSettings, getT } from "@/lib/data";
+import { getIntel, getSettings, getT } from "@/lib/data";
+import { perUnit } from "@/lib/sourcing/market";
+import { OPPORTUNITY_LEVEL } from "@/lib/sourcing/true-cost";
 import { companyKey } from "@/lib/import/normalize/text";
 import { contactHistory } from "@/lib/sourcing/screening";
 import * as f from "@/lib/format";
@@ -19,7 +22,7 @@ import { PROVIDER_KINDS } from "@/lib/sourcing/providers";
 import { COMPANY_TYPE_LABEL, POSITION_LABEL, PRICE_TYPE_LABEL } from "@/lib/sourcing/types";
 import { sourceStates, type SourceState } from "@/server/providers";
 import { getResearch, readUsage } from "@/server/research";
-import { getMarketViews, readRfqLines } from "@/server/sourcing";
+import { getMarketViews, readProductCosts, readRfqLines } from "@/server/sourcing";
 import type { Msg } from "@/lib/i18n";
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -35,7 +38,7 @@ const STATE_LABEL: Record<SourceState, Msg> = { connected: "Connected", needs_ke
  * can be acted on first.
  */
 export default async function SourcingPage() {
-  const [{ review, opportunities, requests }, research, settings, t] = await Promise.all([getMarketViews(), getResearch(), getSettings(), getT()]);
+  const [{ review, opportunities, requests, views, pilot }, research, settings, intel, t] = await Promise.all([getMarketViews(), getResearch(), getSettings(), getIntel(), getT()]);
   if (review.products.length === 0) {
     return (
       <>
@@ -58,7 +61,10 @@ export default async function SourcingPage() {
   for (const r of rows) byStatus.set(r.status, (byStatus.get(r.status) ?? 0) + 1);
   // The first round: the few products that weigh most, and the suppliers recommended for them — one request each.
   const db = await getDb();
-  const lineOf = await readRfqLines(db, review.products.map((v) => v.productId));
+  // The live pilot: the products the user chose — or, until they choose, the few that weigh most.
+  const pilotViews = [...views.values()].filter((v) => v.materiality === "focus").sort((a, b) => b.history.annualSpend - a.history.annualSpend);
+  const lineOf = await readRfqLines(db, [...new Set([...review.products, ...pilotViews].map((v) => v.productId))], t);
+  const costs = await readProductCosts(db, intel, views, t);
   const asked = ["contacted", "quote_requested", "quote_received"];
   const firstRound = review.products.filter((v) => v.materiality === "focus");
   const suppliers: SupplierVM[] = opportunities
@@ -75,7 +81,7 @@ export default async function SourcingPage() {
         recommended: o.recommended,
         combinedSpend: f.moneyApprox(o.combinedSpend),
         missing: o.missing,
-        lines: o.lines.filter((l) => lineOf.has(l.productId)).map((l) => ({ candidateId: l.candidateId, productId: l.productId, productName: l.productName, spend: f.moneyApprox(l.annualSpend), shortlisted: l.shortlisted, firstRound: l.materiality === "focus", asked: asked.includes(l.status), line: lineOf.get(l.productId)! })),
+        lines: o.lines.filter((l) => lineOf.has(l.productId)).map((l) => ({ candidateId: l.candidateId, productId: l.productId, productName: l.productName, spend: f.moneyApprox(l.annualSpend), shortlisted: l.shortlisted, firstRound: l.materiality === "focus", asked: asked.includes(l.status), ready: lineOf.get(l.productId)!.spec.readiness !== "not_ready", line: lineOf.get(l.productId)! })),
         history: { times: h.times, last: h.last ? f.date(h.last) : null, lastISO: h.last, days: h.daysSinceLast, recent: h.recent, followUpDue: h.followUpDue, products: h.productIds.length },
         answered,
       };
@@ -125,6 +131,67 @@ export default async function SourcingPage() {
       <div className="mb-4">
         <ResearchPriority count={review.products.length} />
       </div>
+
+      <section className="mb-5 rounded-xl border border-ledger/25">
+        <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 bg-ledger-wash/40 px-5 py-4 sm:px-6">
+          <div className="min-w-[240px] flex-1">
+            <h2 className="text-[15.5px] font-semibold">{t("Live pilot")}</h2>
+            <p className="mt-0.5 max-w-[78ch] text-[13px] text-ink-2">
+              {pilot.length
+                ? t("The products of your first real test, from the request to a validated opportunity. Keep it to a few: one to five products, three suppliers each.")
+                : t("You have not chosen the products of the pilot yet: the {n} that weigh most stand in. Start with a few — one to five products, three suppliers each — not with all {total}.", { n: pilotViews.length, total: review.products.length })}
+            </p>
+          </div>
+          {!pilot.length && pilotViews.length > 0 && <PilotToggle productIds={pilotViews.map((v) => v.productId)} on={false} label={t("Start the pilot with these {n}", { n: pilotViews.length })} />}
+        </div>
+        <Table>
+          <thead>
+            <tr>
+              <Th>{t("Product")}</Th>
+              <Th className="hidden @2xl:table-cell" align="right">{t("Current spend")}</Th>
+              <Th>{t("RFQ readiness")}</Th>
+              <Th className="hidden @3xl:table-cell" align="right">{t("Recommended suppliers")}</Th>
+              <Th className="hidden @2xl:table-cell" align="right">{t("RFQs sent")}</Th>
+              <Th className="hidden @2xl:table-cell" align="right">{t("Responses")}</Th>
+              <Th className="hidden @4xl:table-cell" align="right">{t("Comparable quotes")}</Th>
+              <Th className="hidden @3xl:table-cell" align="right">{t("Best true cost")}</Th>
+              <Th className="hidden @3xl:table-cell">{t("Opportunity")}</Th>
+              <Th />
+            </tr>
+          </thead>
+          <tbody>
+            {pilotViews.map((v) => {
+              const c = costs.get(v.productId);
+              const live = c?.quotes.filter((q) => !q.expired && q.comparability !== "not") ?? [];
+              const bestCost = live.filter((q) => q.cost.perUnit != null).sort((a, b) => a.cost.perUnit! - b.cost.perUnit!)[0];
+              const o = c?.best?.opportunity;
+              return (
+                <tr key={v.productId} className={rowClass(true)}>
+                  <Td className="max-w-[280px] whitespace-normal!">
+                    <Link href={`/sourcing/${v.productId}`} className="stretched font-medium">
+                      {v.name}
+                    </Link>
+                  </Td>
+                  <Td align="right" className="hidden @2xl:table-cell">{f.moneyApprox(v.history.annualSpend)}</Td>
+                  <Td>
+                    <ReadinessPill readiness={lineOf.get(v.productId)!.spec.readiness} />
+                  </Td>
+                  <Td align="right" className="hidden @3xl:table-cell">{v.screening.counts.recommended}</Td>
+                  <Td align="right" className="hidden @2xl:table-cell">{requests.filter((r) => r.kind !== "follow_up" && r.productIds.includes(v.productId)).length}</Td>
+                  <Td align="right" className="hidden @2xl:table-cell">{c?.quotes.length ?? 0}</Td>
+                  <Td align="right" className="hidden @4xl:table-cell">{live.length}</Td>
+                  <Td align="right" className="hidden @3xl:table-cell">{bestCost ? perUnit(bestCost.cost.perUnit!, v.unit) : <span className="text-ink-4">—</span>}</Td>
+                  <Td className="hidden whitespace-normal! text-[12.5px] @3xl:table-cell">
+                    {o ? `${t(OPPORTUNITY_LEVEL[o.level].label)}${o.annual != null ? `: ${f.moneyApprox(o.annual)}` : ""}` : <span className="text-ink-4">—</span>}
+                  </Td>
+                  <Td className="relative z-10">{pilot.includes(v.productId) && <PilotToggle productIds={[v.productId]} on />}</Td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </Table>
+        <p className="border-t border-rule px-5 py-2.5 text-[12.5px] text-ink-3 sm:px-6">{t("Add a product from its market page. A product enters the comparison when a supplier's answer is recorded as a quote.")}</p>
+      </section>
 
       <section className="mb-5 rounded-xl border border-rule px-5 py-5 sm:px-6">
         <h2 className="text-[15.5px] font-semibold">{t("Requests by supplier")}</h2>

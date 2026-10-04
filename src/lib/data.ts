@@ -254,6 +254,9 @@ export interface CompanySettings {
   country: string | null;
   vatNumber: string | null;
   userName: string | null;
+  /** What money costs the company and what holding stock costs, % a year. Null: the app's starting assumptions are used. */
+  financingRatePct: number | null;
+  holdingRatePct: number | null;
   /** Language of the interface. */
   language: Locale;
   /** False until the company has been named in Settings (the name then comes from the app defaults). */
@@ -267,6 +270,8 @@ export async function readSettings(db: DB): Promise<CompanySettings> {
     country: row?.country ?? null,
     vatNumber: row?.vatNumber ?? null,
     userName: row?.userName ?? null,
+    financingRatePct: row?.financingRatePct ?? null,
+    holdingRatePct: row?.holdingRatePct ?? null,
     language: isLocale(row?.language) ? row.language : DEFAULT_LOCALE,
     configured: !!row?.companyName?.trim(),
   };

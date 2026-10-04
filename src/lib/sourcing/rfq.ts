@@ -20,6 +20,10 @@ export interface RfqLine {
   unit: string;
   annualQuantity: number | null;
   typicalOrderQuantity: number | null;
+  /** What the product is used for. */
+  application?: string | null;
+  /** Documents the user will attach: named in the text so that the supplier looks for them. */
+  attachments?: string[];
 }
 
 export interface RfqRequestInput {
@@ -46,7 +50,9 @@ function lineText(line: RfqLine, index: number | null, t: T): string[] {
   return [
     `${index != null ? `${index}. ` : `${t("Product")}: `}${line.productName}`,
     ...(specs.length ? [`   ${t("Specifications")}: ${specs.join("; ")}`] : []),
-    ...(line.description ? [`   ${t("Notes|rfq")}: ${line.description}`] : []),
+    ...(line.description ? [`   ${t("Technical specification")}: ${line.description}`] : []),
+    ...(line.application ? [`   ${t("Application")}: ${line.application}`] : []),
+    ...(line.attachments?.length ? [`   ${t("Attached")}: ${line.attachments.join(", ")}`] : []),
     ...(line.annualQuantity ? [`   ${t("Annual requirement")}: ${t("about {quantity}", { quantity: qty(line.annualQuantity) })}`] : []),
     ...(line.typicalOrderQuantity ? [`   ${t("Typical order")}: ${t("about {quantity}", { quantity: qty(line.typicalOrderQuantity) })}`] : []),
   ];

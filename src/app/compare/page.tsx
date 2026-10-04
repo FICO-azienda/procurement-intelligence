@@ -4,7 +4,10 @@ import { QuoteDialog } from "@/components/dialogs";
 import { Hint } from "@/components/hint";
 import { SupplierComparison } from "@/components/intel/supplier-comparison";
 import { ProductPicker } from "@/components/product-picker";
-import { ButtonLink, Crumbs, Empty, ExportLink, PageHeader } from "@/components/ui";
+import { TrueCostTable } from "@/components/sourcing/true-cost-table";
+import { ButtonLink, Crumbs, Empty, ExportLink, PageHeader, Section } from "@/components/ui";
+import { getDb } from "@/db";
+import { getMarketViews, readProductCosts } from "@/server/sourcing";
 import { getDataset, getIntel, getT } from "@/lib/data";
 import { compareColumns, decisionFor } from "@/lib/intel/decision";
 import { explain } from "@/lib/intel/explain";
@@ -44,6 +47,8 @@ export default async function ComparePage({ searchParams }: PageProps<"/compare"
   const columns = compareColumns(pi, intel.config, t);
   const d = decisionFor(intel, product.id, t)!;
   const alternatives = columns.filter((c) => !c.isCurrent).length;
+  // The quotes on file, on true cost: the same table as on the product's market page.
+  const costs = (await readProductCosts(await getDb(), intel, (await getMarketViews()).views, t)).get(product.id) ?? null;
 
   return (
     <>
@@ -96,6 +101,11 @@ export default async function ComparePage({ searchParams }: PageProps<"/compare"
         <p className="mt-4 text-[12.5px] text-ink-3">
           {t("Suppliers are shown in order of how reliably they can be compared, not by price. Labels state facts — which one to buy from is your call.")}
         </p>
+      )}
+      {costs && (
+        <Section className="mt-5" title={t("Quotes and true cost")} description={t("What you pay today next to each quote, once transport, duty, stock and payment terms are counted. Every figure says where it comes from.")} flush>
+          <TrueCostTable productId={product.id} unit={product.unit} currentSupplier={d.currentSupplier?.name ?? null} costs={costs} t={t} />
+        </Section>
       )}
     </>
   );

@@ -55,6 +55,8 @@ export interface PriceObservation {
   recent: boolean;
   /** Counted in the range. */
   used: boolean;
+  /** How far the current price is from this very observation, in % (positive: the current price is higher). Each piece of evidence is read on its own. */
+  gapPct?: number | null;
 }
 
 export interface InternalHistory {
@@ -79,8 +81,10 @@ export interface MarketRange {
   comparable: number;
   sources: { type: PriceType; count: number }[];
   latestDate: string | null;
-  /** Enough comparable evidence to call it a market range and place the current price against it. Otherwise it is one benchmark, or an indication. */
+  /** A range of quotes: at least two comparable offers. Only then is the current price placed against it. */
   reliable: boolean;
+  /** What it is made of: several quotes (a range), one quote, a published benchmark, or indirect evidence — never a mix. */
+  kind: "quotes" | "single_quote" | "benchmark" | "indirect";
   /** Built only from indirect evidence (published indications, trade data): never enough for an amount. */
   indirect: boolean;
 }
@@ -217,7 +221,11 @@ export function marketView(input: MarketInput, t: T = en, cfg: SourcingConfig = 
       label: b.label,
       detail:
         [
-          foreign && level && b.fxDate ? t("{written} at the source, converted at the reference rate of {date} ({rate} {currency} for one euro).", { written: written!, date: f.date(b.fxDate), rate: f.number(b.fxRate!, 4), currency: b.currency }) : null,
+          foreign && level && b.fxMethod === "month_average" && b.periodMonth
+            ? t("{written} at the source, converted at the average reference rate of {month} ({rate} {currency} for one euro).", { written: written!, month: b.periodMonth, rate: f.number(b.fxRate!, 4), currency: b.currency })
+            : foreign && level && b.fxDate
+              ? t("{written} at the source, converted at the reference rate of {date} ({rate} {currency} for one euro).", { written: written!, date: f.date(b.fxDate), rate: f.number(b.fxRate!, 4), currency: b.currency })
+              : null,
           foreign && !level && b.type !== "cost_driver" ? t("In {currency}: no exchange rate on file yet, so it is not compared.", { currency: b.currency }) : null,
           b.type === "trade_benchmark" ? t("The average value of everything imported under this customs code, at the border{period}: not the price of one product, and transport to you is not in it.", { period: b.period ? `, ${b.period}` : "" }) : null,
           b.notes,
@@ -257,13 +265,18 @@ export function marketView(input: MarketInput, t: T = en, cfg: SourcingConfig = 
     });
   }
 
-  // ---- 3. The range the evidence supports. Offers and direct benchmarks first; indirect evidence only when there is nothing else.
-  const direct = observations.filter((o) => o.used && (o.type === "quote" || o.type === "actual" || o.type === "direct_benchmark"));
-  const indirect = observations.filter((o) => o.used && !direct.includes(o));
-  // Real offers, and references known to be for the same product, make the range. A reference that is only partly comparable stands in while there is nothing better — and steps aside as soon as there is.
-  const solid = direct.filter((o) => o.type === "quote" || o.type === "actual" || o.comparability === "comparable");
-  const basis = solid.length ? solid : direct.length ? direct : indirect;
-  for (const o of observations) if (o.used && !basis.includes(o)) o.used = false;
+  // ---- 3. What the evidence supports. Quotes make a range — two at least; one quote is one quote; benchmarks and
+  // trade data are read on their own and never averaged with quotes.
+  const usable = observations.filter((o) => o.used);
+  const quotes = usable.filter((o) => o.type === "quote" || o.type === "actual");
+  const published = usable.filter((o) => o.type === "direct_benchmark");
+  const indirect = usable.filter((o) => !quotes.includes(o) && !published.includes(o));
+  const basis = quotes.length ? quotes : published.length ? published : indirect;
+  const kind: MarketRange["kind"] = quotes.length >= cfg.rangeObservations ? "quotes" : quotes.length ? "single_quote" : published.length ? "benchmark" : "indirect";
+  for (const o of observations) {
+    o.used = kind === "quotes" && quotes.includes(o);
+    if (o.key !== "current" && o.low != null && o.high != null && current != null) o.gapPct = ((current - (o.low + o.high) / 2) / ((o.low + o.high) / 2)) * 100;
+  }
   let range: MarketRange | null = null;
   if (basis.length) {
     const comparable = basis.filter((o) => o.comparability === "comparable").length;
@@ -272,15 +285,15 @@ export function marketView(input: MarketInput, t: T = en, cfg: SourcingConfig = 
     range = {
       low: Math.min(...basis.map((o) => o.low!)),
       high: Math.max(...basis.map((o) => o.high!)),
-      // Several recent, comparable observations: high. Two that hold together: medium. One, or indirect evidence only: low.
-      confidence: !direct.length ? "low" : comparable >= cfg.highConfidenceObservations ? "high" : basis.length >= 2 ? "medium" : "low",
+      // Several comparable quotes: high. Two quotes: medium. Anything less is not a range.
+      confidence: kind !== "quotes" ? "low" : comparable >= cfg.highConfidenceObservations ? "high" : "medium",
       observations: basis.length,
       comparable,
-      // A range needs several observations — or one real, comparable offer. One published reference is a benchmark, not a market.
-      reliable: solid.length >= cfg.rangeObservations || solid.some((o) => (o.type === "quote" || o.type === "actual") && o.comparability === "comparable"),
+      reliable: kind === "quotes",
+      kind,
       sources: [...types.entries()].map(([type, count]) => ({ type, count })),
       latestDate: basis.reduce<string | null>((latest, o) => (o.date && (!latest || o.date > latest) ? o.date : latest), null),
-      indirect: !direct.length,
+      indirect: kind === "indirect",
     };
   }
 
@@ -300,7 +313,13 @@ export function marketView(input: MarketInput, t: T = en, cfg: SourcingConfig = 
   let opportunity: MarketView["opportunity"] = null;
   let opportunityNote: string | null = null;
   if (!range || current == null) opportunityNote = t("No comparable evidence to measure a gap against.");
-  else if (!range.reliable) opportunityNote = range.indirect ? t("The evidence is indirect: too thin to put an amount on the gap.") : t("One external reference, not confirmed for your specification and delivery terms, is not enough to put an amount on the gap: ask for comparable quotes.");
+  else if (!range.reliable)
+    opportunityNote =
+      range.kind === "single_quote"
+        ? t("One quote is not a market: a second comparable quote is needed before a range, and an amount, can be given.")
+        : range.indirect
+          ? t("The evidence is indirect: too thin to put an amount on the gap.")
+          : t("One external reference, not confirmed for your specification and delivery terms, is not enough to put an amount on the gap: ask for comparable quotes.");
   else if (!above && !(position === "in_line" && current > range.low)) opportunityNote = t("Your price is not above the comparable evidence.");
   else if (range.confidence === "low") opportunityNote = range.indirect ? t("The evidence is indirect: too thin to put an amount on the gap.") : t("One observation is too thin to put an amount on the gap: get a second comparable quote.");
   else if (d.annualQuantity <= 0) opportunityNote = t("No purchases in the last 12 months to size the gap with.");
@@ -372,9 +391,8 @@ export function marketView(input: MarketInput, t: T = en, cfg: SourcingConfig = 
   const missing = [
     ...(current == null ? [t("A purchase price")] : []),
     ...(!active.length ? [t("Alternative suppliers")] : []),
-    ...(!direct.length ? [t("A comparable quote from another supplier")] : range && range.confidence !== "high" ? [t("More comparable quotes, to make the range reliable")] : []),
+    ...(!quotes.length ? [t("A comparable quote from another supplier")] : range && range.confidence !== "high" ? [t("More comparable quotes, to make the range reliable")] : []),
     ...(!input.benchmarks.some((b) => b.type === "direct_benchmark" || b.type === "trade_benchmark") ? [t("An external benchmark")] : []),
-    t("Transport, duties and payment terms of the alternatives (true cost)"),
   ];
 
   // ---- 7. In plain words. Every sentence states what is on file; none adds to it.
@@ -386,7 +404,7 @@ export function marketView(input: MarketInput, t: T = en, cfg: SourcingConfig = 
   }
   if (range && current != null && !range.reliable) {
     const pct = roughPct(Math.abs(gapPct!.high));
-    const first = observations.find((o) => o.used)!;
+    const first = basis[0];
     summary.push(
       `${
         range.indirect
@@ -409,7 +427,7 @@ export function marketView(input: MarketInput, t: T = en, cfg: SourcingConfig = 
   if (active.length) {
     summary.push(
       `${t.n(active.length, "{n} possible alternative supplier has been identified", "{n} possible alternative suppliers have been identified")}${counts.strong ? `, ${t.n(counts.strong, "{n} a strong match", "{n} of them a strong match")}` : ""}${
-        direct.length ? "." : `; ${t("none has given a quote yet")}.`
+        quotes.length ? "." : `; ${t("none has given a quote yet")}.`
       }`,
     );
   } else summary.push(t("No alternative supplier has been identified yet."));

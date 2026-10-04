@@ -52,24 +52,26 @@ export function researchSummary(view: MarketView): Said[] {
     else if (specs.length) out.push(say("None of the recommended ones publicly confirms the exact specification ({spec}): it has to be asked.", { spec: specs.join(", ") }));
   }
 
-  // 3. What outside evidence says.
+  // 3. What outside evidence says: quotes first, then each published reference on its own.
   const range = view.range;
+  const quoted = view.observations.filter((o) => (o.type === "quote" || o.type === "actual") && o.key !== "current" && o.low != null);
+  const bench = view.observations.find((o) => o.type === "direct_benchmark" && o.low != null && o.recent && o.comparability !== "not");
   const trade = view.observations.find((o) => o.type === "trade_benchmark" && o.low != null && o.recent);
-  if (range && current != null && range.reliable) {
+  if (range?.reliable && current != null) {
     const text = rangeText(range.low, range.high, unit);
-    if (view.position === "below") out.push(say("Comparable evidence on file is at {range}: your price is below it.", { range: text }));
-    else if (view.position === "in_line") out.push(say("Comparable evidence on file is at {range}: your price is in line with it.", { range: text }));
-    else out.push(say("Comparable evidence on file is at {range}: your price is {low}% to {high}% above it.", { range: text, low: Math.round(view.gapPct!.low), high: Math.round(view.gapPct!.high) }));
-  } else if (range && current != null && !range.indirect) {
-    const first = view.observations.find((o) => o.used)!;
-    const params = { source: first.sourceName ?? first.label, range: rangeText(range.low, range.high, unit), pct: Math.round(Math.abs(view.gapPct!.high)) };
+    if (view.position === "below") out.push(say("Comparable quotes are at {range}: your price is below them.", { range: text }));
+    else if (view.position === "in_line") out.push(say("Comparable quotes are at {range}: your price is in line with them.", { range: text }));
+    else out.push(say("Comparable quotes are at {range}: your price is {low}% to {high}% above them.", { range: text, low: Math.round(view.gapPct!.low), high: Math.round(view.gapPct!.high) }));
+  } else if (range?.kind === "single_quote") out.push(say("One comparable quote received ({supplier}): {price}. One quote is not a market: a range needs at least two.", { supplier: quoted[0]?.label ?? "", price: rangeText(range.low, range.high, unit) }));
+  if (bench && current != null && !range?.reliable) {
+    const params = { source: bench.sourceName ?? bench.label, range: rangeText(bench.low!, bench.high!, unit), pct: Math.round(Math.abs(bench.gapPct ?? 0)) };
     out.push(
-      view.gapPct!.high > 0.5
+      (bench.gapPct ?? 0) > 0.5
         ? say("One external reference ({source}) indicates {range}: your price is about {pct}% above it, but it does not confirm the same specification and delivery terms.", params)
         : say("One external reference ({source}) indicates {range}: your price is not above it.", params),
     );
-  } else if (!trade) out.push(say("No reliable benchmark was found: there is no public price for this product on file."));
-  if (trade && !(range?.reliable ?? false)) out.push(say("Trade statistics ({source}) put imports at {range} on average: everything under the customs code, valued at the border — an indication, not a price for this product.", { source: trade.sourceName ?? trade.label, range: rangeText(trade.low!, trade.high!, unit) }));
+  } else if (!range && !trade) out.push(say("No reliable benchmark was found: there is no public price for this product on file."));
+  if (trade && !range?.reliable) out.push(say("Trade statistics ({source}) put imports at {range} on average: everything under the customs code, valued at the border — an indication, not a price for this product.", { source: trade.sourceName ?? trade.label, range: rangeText(trade.low!, trade.high!, unit) }));
 
   // 4. Whether it amounts to anything.
   if (view.opportunity && view.opportunity.high > 0) {

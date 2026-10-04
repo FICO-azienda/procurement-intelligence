@@ -7,6 +7,8 @@ import { QuoteDialog } from "@/components/dialogs";
 import { CandidateBoard, type CandidateVM } from "@/components/sourcing/candidates";
 import { BenchmarkForm, DeleteBenchmarkButton } from "@/components/sourcing/market-forms";
 import { CustomsCodeForm, DeepResearchButton, ResearchClassSelect } from "@/components/sourcing/research";
+import { BenchmarkMonth, PilotToggle, RfqSpecForm } from "@/components/sourcing/spec";
+import { QuoteOpportunityBlock, TrueCostTable } from "@/components/sourcing/true-cost-table";
 import { ComparabilityText, PriceTypeTag, ResearchStatusPill } from "@/components/sourcing/tags";
 import { Crumbs, Delta, Disclosure, Label, PageHeader, Section, Table, Td, Th, cx } from "@/components/ui";
 import { getDb } from "@/db";
@@ -27,10 +29,10 @@ import { hostOf, searchQueries } from "@/lib/sourcing/discovery";
 import { perUnit, rangeText } from "@/lib/sourcing/market";
 import { REGION_LABEL, crossesCustoms } from "@/lib/sourcing/regions";
 import { ROLE_LABEL, contactHistory } from "@/lib/sourcing/screening";
-import { COMPARABILITY_LABEL, POSITION_LABEL, PRICE_TYPE_LABEL, SOURCE_LEVEL_LABEL } from "@/lib/sourcing/types";
+import { POSITION_LABEL, SOURCE_LEVEL_LABEL } from "@/lib/sourcing/types";
 import { connectedProviders } from "@/server/providers";
 import { WEB_RESEARCH, getResearch } from "@/server/research";
-import { discoveryRequest, getMarketViews, readRfqLines } from "@/server/sourcing";
+import { discoveryRequest, getMarketViews, readProductCosts, readRfqLines, readSourcing } from "@/server/sourcing";
 
 export async function generateMetadata({ params }: PageProps<"/sourcing/[id]">): Promise<Metadata> {
   const { id } = await params;
@@ -69,7 +71,11 @@ export default async function ProductSourcingPage({ params }: PageProps<"/sourci
   const unit = v.unit;
   const home = settings.country;
 
-  const line = (await readRfqLines(db, [id])).get(id)!;
+  const asked = [...new Set(requests.flatMap((r) => r.productIds))];
+  const lines = await readRfqLines(db, [...new Set([id, ...asked])], t);
+  const line = lines.get(id)!;
+  const spec = line.spec;
+  const costs = (await readProductCosts(db, intel, views, t)).get(id) ?? null;
   const ranked = new Map(v.candidates.map((r) => [r.candidate.id, r]));
   const candidates: CandidateVM[] = v.screening.all.map((x) => {
     const c = x.candidate;
@@ -120,15 +126,10 @@ export default async function ProductSourcingPage({ params }: PageProps<"/sourci
       inProgress: x.inProgress,
       email: c.specCheck?.email ?? null,
       history: { times: history.times, last: history.last ? f.date(history.last) : null, lastISO: history.last, days: history.daysSinceLast, recent: history.recent, followUpDue: history.followUpDue },
+      // The other products this company was asked about in the same request: an answer may quote them all.
+      replyOthers: [...new Set(requests.filter((r) => r.supplierKey === companyKey(c.name)).flatMap((r) => r.productIds))].filter((pid) => pid !== id && lines.get(pid)?.productName).map((pid) => ({ id: pid, name: lines.get(pid)!.productName })),
     };
   });
-  // The offers on file, next to what is paid today: nominal prices, each with its terms.
-  const pi = intel.products.find((x) => x.product.id === id);
-  const offers = (pi?.comparison ?? []).filter((r) => r.isCurrent || (r.kind === "quote" && r.price != null));
-  const quoted = offers.filter((r) => !r.isCurrent);
-  const comparableOffers = quoted.filter((r) => r.priceEUR != null && !r.expired && r.comparability !== "not");
-  const lowest = comparableOffers.length >= 2 ? comparableOffers.reduce((a, b) => (b.priceEUR! < a.priceEUR! ? b : a)) : null;
-
   const figure = (label: string, value: React.ReactNode, note?: React.ReactNode) => (
     <div>
       <Label>{label}</Label>
@@ -136,6 +137,7 @@ export default async function ProductSourcingPage({ params }: PageProps<"/sourci
       {note && <div className="mt-0.5 text-[12.5px] text-ink-3">{note}</div>}
     </div>
   );
+  const months = new Map((await readSourcing(db)).benchmarks.map((b) => [b.id, b.periodMonth]));
   const benchmarkIds = new Map(v.observations.filter((o) => o.key.startsWith("benchmark:")).map((o) => [o.key, o.key.slice("benchmark:".length)]));
 
   return (
@@ -151,7 +153,12 @@ export default async function ProductSourcingPage({ params }: PageProps<"/sourci
             </Link>
           </span>
         }
-        actions={<QuoteDialog defaultProductId={id} trigger={{ label: t("Add quote") }} />}
+        actions={
+          <>
+            <PilotToggle productIds={[id]} on={row?.inPilot ?? false} />
+            <QuoteDialog defaultProductId={id} trigger={{ label: t("Add quote") }} />
+          </>
+        }
       />
 
       {/* The answer first, in plain words. */}
@@ -209,58 +216,30 @@ export default async function ProductSourcingPage({ params }: PageProps<"/sourci
 
       <Section className="mt-5" title={t("Market signal")} description={t("Only evidence on file, each with its kind and source. There is no single “market price”.")} flush>
         <div className="grid gap-x-8 gap-y-4 px-5 pb-4 @3xl:grid-cols-3">
-          {v.range?.reliable
-            ? figure(
-                t("Available market range"),
-                <span className="num">{rangeText(v.range.low, v.range.high, unit)}</span>,
-                `${v.range.sources.map((s) => `${s.count} × ${t(PRICE_TYPE_LABEL[s.type]).toLowerCase()}`).join(", ")}${v.range.latestDate ? ` · ${t("updated {date}", { date: f.month(v.range.latestDate, t) })}` : ""}`,
-              )
-            : v.range
-              ? figure(
-                  v.range.indirect ? t("Available indication") : t("Available benchmark"),
-                  <span className="inline-flex flex-wrap items-center gap-2">
-                    <span className="num">{rangeText(v.range.low, v.range.high, unit)}</span>
-                    {v.range.sources.map((s) => (
-                      <PriceTypeTag key={s.type} type={s.type} />
-                    ))}
-                  </span>,
-                  <>
-                    <span className="font-medium text-ink-2">{t("No reliable market range available.")}</span>{" "}
-                    {v.range.indirect ? t("Only trade statistics: an average of everything under a customs code, at the border.") : t("One external reference, which does not confirm your specification or delivery terms.")}
-                  </>,
-                )
-              : figure(t("Available market range"), <span className="text-[15px] font-medium text-ink-3">{t("No reliable market range available.")}</span>, t("No comparable quote or benchmark on file. Nothing is estimated in its place."))}
+          {figure(
+            t("Market quote range"),
+            v.range?.kind === "quotes" ? <span className="num">{rangeText(v.range.low, v.range.high, unit)}</span> : <span className="text-[15px] font-medium text-ink-3">{v.range?.kind === "single_quote" ? t("Insufficient data") : t("Not available")}</span>,
+            v.range?.kind === "quotes"
+              ? t.n(v.range.observations, "from {n} comparable quote", "from {n} comparable quotes")
+              : v.range?.kind === "single_quote"
+                ? t("1 comparable quote received: {price}. One quote is not a market.", { price: rangeText(v.range.low, v.range.high, unit) })
+                : t("No comparable quote on file yet. Benchmarks are shown below, on their own."),
+          )}
           {figure(
             t("Your price against it"),
-            <span className="text-[15px]">
-              {v.range?.reliable
-                ? t(POSITION_LABEL[v.position])
-                : v.range && v.gapPct
-                  ? v.gapPct.high > 0.5
-                    ? t("about {pct}% above this reference", { pct: Math.round(v.gapPct.high) })
-                    : v.gapPct.high < -0.5
-                      ? t("about {pct}% below this reference", { pct: Math.round(-v.gapPct.high) })
-                      : t("in line with this reference")
-                  : t(POSITION_LABEL.insufficient)}
-            </span>,
+            <span className="text-[15px]">{v.range?.reliable ? t(POSITION_LABEL[v.position]) : t(POSITION_LABEL.insufficient)}</span>,
             v.range?.reliable
               ? v.gapPct && (v.position === "slightly_above" || v.position === "materially_above")
                 ? Math.round(v.gapPct.low) === Math.round(v.gapPct.high)
                   ? t("about {pct}% above the range", { pct: Math.round(v.gapPct.low) })
                   : t("{low}% to {high}% above the range", { low: Math.round(v.gapPct.low), high: Math.round(v.gapPct.high) })
                 : null
-              : v.range
-                ? t("An indicative gap, not a market position: the reference is not comparable enough.")
-                : null,
+              : t("A position needs a range of quotes. Each piece of evidence below says how far your price is from it."),
           )}
           {figure(
             t("Confidence"),
-            <span className="text-[15px]">{v.range ? t(CONFIDENCE_WORD[v.range.confidence]) : "—"}</span>,
-            v.range
-              ? v.range.indirect
-                ? t("Indirect evidence only: an indication, not a comparison.")
-                : t.n(v.range.comparable, "{n} highly comparable observation of {total}", "{n} highly comparable observations of {total}", { total: v.range.observations })
-              : null,
+            <span className="text-[15px]">{v.range?.reliable ? t(CONFIDENCE_WORD[v.range.confidence]) : "—"}</span>,
+            v.range?.reliable ? t.n(v.range.comparable, "{n} highly comparable observation of {total}", "{n} highly comparable observations of {total}", { total: v.range.observations }) : v.range ? t("No range of quotes yet: what is on file is an indication.") : null,
           )}
         </div>
         <Table>
@@ -292,7 +271,12 @@ export default async function ProductSourcingPage({ params }: PageProps<"/sourci
                 </Td>
                 <Td align="right" className="font-medium">
                   {o.low != null ? rangeText(o.low, o.high!, unit) : (o.asWritten ?? "—")}
-                  {o.key !== "current" && <div className="text-[11.5px] font-normal text-ink-3">{o.used ? t("in the range") : t("not in the range")}</div>}
+                  {o.key !== "current" && o.gapPct != null && (
+                    <div className="text-[11.5px] font-normal text-ink-3">
+                      {Math.abs(o.gapPct) < 0.5 ? t("same as your price") : o.gapPct > 0 ? t("you pay {pct}% more", { pct: Math.round(o.gapPct) }) : t("you pay {pct}% less", { pct: Math.round(-o.gapPct) })}
+                      {o.used && ` · ${t("in the range")}`}
+                    </div>
+                  )}
                 </Td>
                 <Td muted className="num hidden @2xl:table-cell">
                   {o.date ? f.date(o.date) : "—"}
@@ -311,7 +295,14 @@ export default async function ProductSourcingPage({ params }: PageProps<"/sourci
                     </>
                   )}
                 </Td>
-                <Td>{benchmarkIds.has(o.key) && <DeleteBenchmarkButton id={benchmarkIds.get(o.key)!} />}</Td>
+                <Td className="whitespace-normal!">
+                  {benchmarkIds.has(o.key) && (
+                    <span className="flex flex-col items-end gap-1">
+                      <DeleteBenchmarkButton id={benchmarkIds.get(o.key)!} />
+                      {o.type === "direct_benchmark" && <BenchmarkMonth id={benchmarkIds.get(o.key)!} month={months.get(benchmarkIds.get(o.key)!) ?? null} />}
+                    </span>
+                  )}
+                </Td>
               </tr>
             ))}
           </tbody>
@@ -328,6 +319,31 @@ export default async function ProductSourcingPage({ params }: PageProps<"/sourci
       <Disclosure className="mt-3" title={t("Add a market reference")} description={t("A benchmark, trade data or a cost driver you can point to")}>
         <BenchmarkForm productId={id} unit={unit} />
       </Disclosure>
+
+      <section id="specification" className="mt-5 scroll-mt-20 rounded-xl border border-rule px-5 py-5 sm:px-6">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-[15.5px] font-semibold">{t("The product, for a request for quotation")}</h2>
+            <p className="mt-0.5 text-[13px] text-ink-3">{t("How it is described to a supplier who has never sold it to you. Your supplier's name and codes are never sent.")}</p>
+          </div>
+        </div>
+        <RfqSpecForm
+          productId={id}
+          spec={{
+            originalName: spec.originalName,
+            supplierCodes: spec.supplierCodes,
+            rfqName: row?.rfqName ?? null,
+            suggestedName: spec.suggestedName,
+            technical: row?.technicalSpecifications ?? null,
+            application: spec.application,
+            attributes: [...spec.attributes.map((a) => `${t.any(a.label)}: ${a.value}`), ...spec.figures.filter((x) => !spec.attributes.some((a) => a.value.replace(/\s/g, "").includes(x)))],
+            quantities: [unit, spec.annualQuantity ? t("about {quantity} a year", { quantity: `${f.number(spec.annualQuantity, 0)} ${unit}` }) : null, spec.typicalOrderQuantity ? t("usual order about {quantity}", { quantity: `${f.number(spec.typicalOrderQuantity, 0)} ${unit}` }) : null].filter(Boolean).join(" · "),
+            readiness: spec.readiness,
+            missing: spec.missing,
+            documents: line.documents,
+          }}
+        />
+      </section>
 
       <Section
         className="mt-5"
@@ -352,100 +368,36 @@ export default async function ProductSourcingPage({ params }: PageProps<"/sourci
             context={{ deliveryCountry: home, companyName: settings.companyName, userName: settings.userName }}
             language={t.locale}
             firstRound={v.materiality === "focus"}
+            readiness={spec.readiness}
+            anchor={v.currentPrice}
           />
         </div>
       </Section>
 
-      {quoted.length > 0 && (
-        <Section className="mt-5" title={t("Offers compared")} description={t("What you pay today next to the quotes on file. Nominal prices of the goods: the lowest price is not the lowest cost.")} flush>
-          <Table>
-            <thead>
-              <tr>
-                <Th>{t("Supplier")}</Th>
-                <Th align="right">{t("Nominal price")}</Th>
-                <Th className="hidden @3xl:table-cell">{t("True cost")}</Th>
-                <Th className="hidden @2xl:table-cell" align="right">{t("Minimum order")}</Th>
-                <Th className="hidden @2xl:table-cell" align="right">{t("Lead time")}</Th>
-                <Th className="hidden @3xl:table-cell" align="right">{t("Payment")}</Th>
-                <Th className="hidden @4xl:table-cell">{t("Technical match")}</Th>
-                <Th className="hidden @4xl:table-cell">{t("Confidence")}</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {offers.map((r) => (
-                <tr key={r.supplier.id}>
-                  <Td className="whitespace-normal!">
-                    <span className="font-medium">{r.supplier.name}</span>
-                    <div className="text-[12px] text-ink-3">{r.isCurrent ? t("Current supplier") : r.date ? t("offer of {date}", { date: f.date(r.date) }) : null}</div>
-                  </Td>
-                  <Td align="right" className="font-medium">
-                    {r.priceEUR != null ? perUnit(r.priceEUR, unit) : r.price != null ? `${r.currency} ${f.number(r.price)}/${unit}` : "—"}
-                    <div className="mt-0.5 flex justify-end">
-                      <PriceTypeTag type={r.isCurrent ? "actual" : "quote"} />
-                    </div>
-                  </Td>
-                  <Td muted className="hidden text-[12.5px] @3xl:table-cell">
-                    {t("Not calculated")}
-                  </Td>
-                  <Td muted align="right" className="hidden @2xl:table-cell">
-                    {r.moq != null ? `${f.number(r.moq, 0)} ${unit}` : "—"}
-                  </Td>
-                  <Td muted align="right" className="hidden @2xl:table-cell">
-                    {r.leadTimeDays != null ? t("{n} days", { n: r.leadTimeDays }) : "—"}
-                  </Td>
-                  <Td muted align="right" className="hidden @3xl:table-cell">
-                    {r.paymentTermsDays != null ? t("{n} days", { n: r.paymentTermsDays }) : "—"}
-                    {r.incoterm && <div className="text-[11.5px]">{r.incoterm}</div>}
-                  </Td>
-                  <Td className="hidden text-[12.5px] @4xl:table-cell">{r.isCurrent ? <span className="text-ink-4">—</span> : t(COMPARABILITY_LABEL[r.comparability])}</Td>
-                  <Td muted className="hidden text-[12.5px] @4xl:table-cell">
-                    {r.isCurrent ? t("From your invoices") : r.expired ? t("Offer expired") : r.age === "old" ? t("Old offer") : t("Recent offer")}
-                  </Td>
-                </tr>
-              ))}
-            </tbody>
-          </Table>
-          <div className="space-y-1 px-5 py-3 text-[13px]">
-            <p>
-              <span className="font-medium">{t("Lowest nominal quote:")}</span>{" "}
-              {lowest ? `${lowest.supplier.name}, ${perUnit(lowest.priceEUR!, unit)}` : <span className="text-ink-3">{t("shown when at least two comparable offers are on file")}</span>}
-            </p>
-            <p>
-              <span className="font-medium">{t("Lowest estimated true cost:")}</span>{" "}
-              <span className="text-ink-3">{t("not available — transport, duties, exchange rates and payment terms are not calculated yet, so the lowest price can't be called the lowest cost.")}</span>
-            </p>
-            <Link href={`/compare?product=${id}`} className="inline-block text-[12.5px] font-medium text-ledger hover:underline">
-              {t("Open the full comparison")}
-            </Link>
-          </div>
+      {costs && (
+        <Section className="mt-5" title={t("Quotes and true cost")} description={t("What you pay today next to each quote, once transport, duty, stock and payment terms are counted. Every figure says where it comes from.")} flush>
+          <TrueCostTable productId={id} unit={unit} currentSupplier={v.currentSupplier?.name ?? null} costs={costs} t={t} />
         </Section>
       )}
 
-      <div className="mt-5 grid gap-5 @4xl:grid-cols-2">
-        <Section title={t("Theoretical opportunity")} description={t("Price only, at your annual volume. Not a saving until a comparable quote confirms it.")}>
-          {v.opportunity && v.opportunity.high > 0 ? (
-            <>
-              <div className="num text-[22px] font-semibold tracking-[-0.02em]">
-                {v.opportunity.low > 0 && f.moneyApprox(v.opportunity.low) !== f.moneyApprox(v.opportunity.high) ? `${f.moneyApprox(v.opportunity.low)}–${f.moneyApprox(v.opportunity.high)}` : t("up to {amount}", { amount: f.moneyApprox(v.opportunity.high) })}
-                <span className="text-[14px] font-normal text-ink-3"> {t("a year")}</span>
-              </div>
-              <p className="mt-1.5 text-[13px] text-ink-2">
-                {t("Your price against the range above, times {quantity} bought in 12 months. Confidence: {confidence}.", { quantity: `${f.number(h.annualQuantity, 0)} ${unit}`, confidence: t(CONFIDENCE_WORD[v.range!.confidence]) })}
-              </p>
-            </>
-          ) : (
-            <p className="text-[13.5px] text-ink-2">
-              <span className="font-medium">{t("Not estimated.")}</span> {v.opportunityNote}
-            </p>
-          )}
-        </Section>
-        <Section title={t("True cost")} description={t("What an alternative would really cost, delivered and paid.")}>
+      <Section className="mt-5" title={t("Opportunity")} description={t("Theoretical while it rests on a benchmark; validated only with a real comparable quote, its true cost and the specification confirmed. A saving is what an invoice proves.")}>
+        {costs?.best?.opportunity ? (
+          <QuoteOpportunityBlock unit={unit} costs={costs} annualQuantity={h.annualQuantity} t={t} />
+        ) : v.opportunity && v.opportunity.high > 0 ? (
+          <>
+            <div className="mb-1 text-[12px] font-semibold tracking-[0.04em] text-ink-3 uppercase">{t("Theoretical opportunity")}</div>
+            <div className="num text-[22px] font-semibold tracking-[-0.02em]">
+              {v.opportunity.low > 0 && f.moneyApprox(v.opportunity.low) !== f.moneyApprox(v.opportunity.high) ? `${f.moneyApprox(v.opportunity.low)}–${f.moneyApprox(v.opportunity.high)}` : t("up to {amount}", { amount: f.moneyApprox(v.opportunity.high) })}
+              <span className="text-[14px] font-normal text-ink-3"> {t("a year")}</span>
+            </div>
+            <p className="mt-1.5 text-[13px] text-ink-2">{t("Nominal prices of the quotes against yours, times {quantity} bought in 12 months. It becomes a validated opportunity when the true cost of a quote is complete.", { quantity: `${f.number(h.annualQuantity, 0)} ${unit}` })}</p>
+          </>
+        ) : (
           <p className="text-[13.5px] text-ink-2">
-            <span className="font-medium">{t("Not available yet.")}</span>{" "}
-            {t("Transport, duties, exchange rates and payment terms are not calculated: every price on this page is the price of the goods only. A lower price from far away is not a lower cost until these are added.")}
+            <span className="font-medium">{t("Not estimated.")}</span> {costs ? (costs.quotes.some((q) => !q.cost.complete) ? t("The true cost of a quote on file is incomplete: add what is missing above to see what the difference is worth.") : t("No quote on file has a true cost below what you pay today.")) : v.opportunityNote}
           </p>
-        </Section>
-      </div>
+        )}
+      </Section>
 
       <Section className="mt-5" title={t("Next step")}>
         <p className="text-[14px] font-medium">{v.next.label}</p>

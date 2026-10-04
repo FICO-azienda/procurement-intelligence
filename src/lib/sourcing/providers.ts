@@ -169,6 +169,8 @@ export interface FXProvider {
   name: string;
   /** Units of `currency` for one EUR, on the date or the last day before it with a rate. */
   rate(currency: string, date: string): Promise<{ rate: number; date: string; sourceName: string; sourceUrl: string } | null>;
+  /** The average of a month ("2026-09"): the rate for a reference that is itself the average of that month. */
+  average?(currency: string, month: string): Promise<{ rate: number; date: string; days: number; sourceName: string; sourceUrl: string } | null>;
 }
 
 export interface TariffProvider {

@@ -27,6 +27,13 @@ export function rateOn(days: Map<string, Map<string, number>>, currency: string,
   return on && rate ? { rate, date: on } : null;
 }
 
+/** The average of the daily rates of a month, with the last day counted. */
+export function monthAverage(days: Map<string, Map<string, number>>, currency: string, month: string): { rate: number; date: string; days: number } | null {
+  const rates = [...days.entries()].filter(([d]) => d.startsWith(`${month}-`)).map(([d, r]) => [d, r.get(currency.toUpperCase())] as const).filter((x): x is readonly [string, number] => x[1] != null);
+  if (!rates.length) return null;
+  return { rate: rates.reduce((sum, [, r]) => sum + r, 0) / rates.length, date: rates.map(([d]) => d).sort().pop()!, days: rates.length };
+}
+
 export const ecbRates: FXProvider = {
   key: "ecb",
   name: "European Central Bank",
@@ -36,5 +43,11 @@ export const ecbRates: FXProvider = {
     // Older than the 90-day file: the full history.
     if (!found) found = rateOn(parseEcb((await httpGet("ECB", ALL, { timeoutMs: 30_000 })).text), currency, date);
     return found ? { ...found, sourceName: "European Central Bank, euro reference rates", sourceUrl: PAGE } : null;
+  },
+  async average(currency, month) {
+    let found = monthAverage(parseEcb((await httpGet("ECB", RECENT)).text), currency, month);
+    // A month only partly in the 90-day file, or older: the full history.
+    if (!found || found.days < 15) found = monthAverage(parseEcb((await httpGet("ECB", ALL, { timeoutMs: 30_000 })).text), currency, month) ?? found;
+    return found ? { ...found, sourceName: "European Central Bank, euro reference rates (monthly average)", sourceUrl: PAGE } : null;
   },
 };

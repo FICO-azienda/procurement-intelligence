@@ -12,7 +12,9 @@ import { acceptDiscovered, candidateComparability, rankCandidates, refineQueries
 import { marketView, sourcingReview } from "./market";
 import { KNOWN_SOURCES, NO_PROVIDERS, connected } from "./providers";
 import { crossesCustoms, regionOf } from "./regions";
-import { readReply } from "./reply";
+import { readReply, readReplyFor } from "./reply";
+import { rfqSpec } from "./rfq-spec";
+import { quoteOpportunity, trueCost, type TrueCost, type TrueCostInput } from "./true-cost";
 import { rfqDraft, rfqText } from "./rfq";
 import { contactHistory, screenCandidates, supplierOpportunities, type ScreeningContext } from "./screening";
 import type { MarketBenchmark, SupplierCandidate } from "./types";
@@ -60,7 +62,7 @@ function candidate(over: Partial<SupplierCandidate> = {}): SupplierCandidate {
 }
 
 function benchmark(over: Partial<MarketBenchmark> = {}): MarketBenchmark {
-  return { id: `b${++n}`, productId: "p", type: "direct_benchmark", label: "Mock paraffin index", low: 1.3, high: 1.4, unit: "kg", currency: "EUR", fxRate: null, fxDate: null, changePct: null, period: null, sourceName: "Mock Price Report", sourceUrl: "https://report.example.test", sourceDate: "2026-09-15", sourceLevel: "licensed_data", comparability: "comparable", notes: null, provider: "mock", ...over };
+  return { id: `b${++n}`, productId: "p", type: "direct_benchmark", label: "Mock paraffin index", low: 1.3, high: 1.4, unit: "kg", currency: "EUR", fxRate: null, fxDate: null, periodMonth: null, fxMethod: null, changePct: null, period: null, sourceName: "Mock Price Report", sourceUrl: "https://report.example.test", sourceDate: "2026-09-15", sourceLevel: "licensed_data", comparability: "comparable", notes: null, provider: "mock", ...over };
 }
 
 /** A product bought four times from one supplier at 1.48 today, 20 t each time. */
@@ -128,12 +130,14 @@ describe("the range the evidence supports", () => {
     expect(below).toMatchObject({ position: "below", opportunity: null, status: "benchmark_available", next: { kind: "keep_updated" } });
   });
 
-  it("one quote alone is low confidence: the gap is shown as a position, never as an amount", () => {
+  it("one quote is one quote, not a market: no range, no position, no amount", () => {
     const v = view(paraffin([{ price: 1.36 }]));
-    expect(v.range).toMatchObject({ confidence: "low", observations: 1 });
-    expect(v.position).toBe("materially_above");
+    expect(v.range).toMatchObject({ kind: "single_quote", reliable: false, confidence: "low", observations: 1, low: 1.36, high: 1.36 });
+    expect(v.position).toBe("insufficient");
     expect(v.opportunity).toBeNull();
-    expect(v.opportunityNote).toContain("get a second comparable quote");
+    expect(v.opportunityNote).toBe("One quote is not a market: a second comparable quote is needed before a range, and an amount, can be given.");
+    // …but the quote itself says how far the current price is from it.
+    expect(Math.round(v.observations.find((o) => o.type === "quote")!.gapPct!)).toBe(9);
   });
 
   it("an old quote is listed, not used", () => {
@@ -142,13 +146,16 @@ describe("the range the evidence supports", () => {
     expect(v.observations.find((o) => o.type === "quote")).toMatchObject({ recent: false, used: false });
   });
 
-  it("a published benchmark for the product counts like a quote; trade data and indications only when there is nothing better", () => {
+  it("benchmarks are never mixed with quotes: each is read on its own, and trade data only says something when there is nothing better", () => {
     const direct = view(paraffin([{ price: 1.4 }]), [], [benchmark({ low: 1.32, high: 1.38 })]);
-    expect(direct.range).toMatchObject({ low: 1.32, high: 1.4, confidence: "medium", sources: [{ type: "quote", count: 1 }, { type: "direct_benchmark", count: 1 }] });
+    // One quote and one benchmark are not a range of two: the quote stands alone, the benchmark stays visible with its own gap.
+    expect(direct.range).toMatchObject({ low: 1.4, high: 1.4, kind: "single_quote", reliable: false, sources: [{ type: "quote", count: 1 }] });
+    expect(direct.observations.find((o) => o.type === "direct_benchmark")).toMatchObject({ low: 1.32, high: 1.38, used: false });
+    expect(Math.round(direct.observations.find((o) => o.type === "direct_benchmark")!.gapPct!)).toBe(10);
 
     const trade = benchmark({ type: "trade_benchmark", low: 1.1, high: 1.2, comparability: "partial", sourceLevel: "official_data" });
     const mixed = view(paraffin([{ price: 1.4 }, { price: 1.42 }]), [], [trade]);
-    expect(mixed.range).toMatchObject({ low: 1.4, high: 1.42 });
+    expect(mixed.range).toMatchObject({ low: 1.4, high: 1.42, kind: "quotes", reliable: true, confidence: "medium" });
     expect(mixed.observations.find((o) => o.type === "trade_benchmark")!.used).toBe(false);
 
     const only = view(paraffin(), [], [trade]);
@@ -218,7 +225,7 @@ describe("alternative suppliers", () => {
     const x = paraffin();
     const perTonne = candidate({ priceLow: 1350, priceHigh: 1420, currency: "EUR", unit: "t", incoterm: "DAP", priceType: "indicative", priceSourceUrl: "https://mock.example.test/prices", country: "Italy" });
     const v = view(x, [perTonne]);
-    expect(v.observations.find((o) => o.type === "indicative")).toMatchObject({ low: 1.35, high: 1.42, comparability: "comparable", used: true });
+    expect(v.observations.find((o) => o.type === "indicative")).toMatchObject({ low: 1.35, high: 1.42, comparability: "comparable", used: false });
     expect(v.range).toMatchObject({ low: 1.35, high: 1.42, confidence: "low", indirect: true });
     expect(v.opportunity).toBeNull();
     const dollars = view(x, [candidate({ priceLow: 1450, priceHigh: 1520, currency: "USD", unit: "t" })]);
@@ -421,5 +428,134 @@ describe("requests and answers", () => {
     // 1.420 a tonne: one thousand four hundred and twenty, or one point four two?
     expect(readReply("We offer at EUR 1.420/t.", { unit: "kg", today: "2026-10-05" })).toMatchObject({ price: null, doubts: [{ message: "A price that can be read two ways (thousands or decimals): write it per {unit}.", detail: "EUR 1.420/t" }] });
     expect(readReply("Thank you, we will come back to you.", { unit: "kg", today: "2026-10-05" })).toMatchObject({ price: null, moq: null, doubts: [] });
+  });
+});
+
+describe("the product, as described to a supplier who does not know it", () => {
+  const base = { rfqName: null, technical: null, application: null, specs: null, supplierCodes: [] as string[], knownSuppliers: ["Mocksup S.p.A."], companyName: "Mock Candle Co.", unit: "kg", annualQuantity: 270_000, typicalOrderQuantity: 20_000, deliveryCountry: "Italy", documents: 0 };
+
+  it("a name that says what the thing is and carries its grade is ready, without the supplier's name", () => {
+    const spec = rfqSpec({ ...base, name: "Paraffina MOCKSUP 52/54 (XXF)" });
+    expect(spec).toMatchObject({ neutralName: "Paraffina 52/54", neutralSource: "suggested", readiness: "ready", missing: [] });
+  });
+
+  it("a supplier's own code is never sent: the product is not ready until someone describes it", () => {
+    const spec = rfqSpec({ ...base, name: "WAX MOCKSUP 14581 (FXF)", supplierCodes: ["14581"] });
+    expect(spec).toMatchObject({ neutralName: null, neutralSource: "missing", readiness: "not_ready", suggestedName: "WAX", supplierCodes: ["14581"] });
+    expect(spec.missing).toHaveLength(2);
+    expect(spec.missing[0]).toContain("“WAX MOCKSUP 14581 (FXF)” is how the current supplier writes it");
+    // Nothing technical is made up: what is known is what the user wrote.
+    expect(spec.technical).toBeNull();
+    const described = rfqSpec({ ...base, name: "WAX MOCKSUP 14581 (FXF)", supplierCodes: ["14581"], rfqName: "Paraffin wax blend for container candles", technical: "Congealing point 50-52 °C, oil content max 0,5%", application: "Candle manufacturing" });
+    expect(described).toMatchObject({ neutralName: "Paraffin wax blend for container candles", neutralSource: "yours", readiness: "ready", application: "Candle manufacturing" });
+    expect(JSON.stringify([described.neutralName, described.technical])).not.toMatch(/14581|MOCKSUP/);
+  });
+
+  it("a described product with something missing is partially ready, and says exactly what", () => {
+    const spec = rfqSpec({ ...base, name: "Paraffina 52/54", annualQuantity: null, deliveryCountry: null });
+    expect(spec.readiness).toBe("partial");
+    expect(spec.missing).toEqual(["The annual volume: there are no purchases in the last 12 months.", "Where it has to be delivered: set your country in Settings."]);
+    expect(rfqSpec({ ...base, name: "ART. LC TR. Contenitori per ceri" }).readiness).toBe("not_ready");
+    // A data sheet attached counts as the specification.
+    expect(rfqSpec({ ...base, name: "ART. LC TR. Contenitori per ceri", rfqName: "Plastic container for votive candles", documents: 1 }).readiness).toBe("ready");
+  });
+});
+
+describe("true cost", () => {
+  const quote: TrueCostInput = { price: 1.34, currency: "EUR", fxRate: 1, fxNote: null, incoterm: "FCA", sameCustomsArea: true, freightPerUnit: 0.05, freightBasis: "manual", dutyRatePct: null, customsPerUnit: null, otherPerUnit: null, moq: 20_000, typicalOrder: 20_000, annualVolume: 270_000, paymentDays: 30, baselinePaymentDays: 60, financingRatePct: 6, holdingRatePct: 12, technicalConfirmed: false };
+  const part = (c: TrueCost, key: string) => c.components.find((x) => x.key === key)!;
+
+  it("adds what stands between a quoted price and the goods at the door, each part with its origin", () => {
+    const c = trueCost(quote);
+    expect(part(c, "price")).toMatchObject({ perUnit: 1.34, basis: "quote" });
+    expect(part(c, "freight")).toMatchObject({ perUnit: 0.05, basis: "manual" });
+    expect(part(c, "duty")).toMatchObject({ perUnit: 0, basis: "none", note: "Same customs area: no duty." });
+    // Paying 30 days sooner than today costs money: 1.39 × 6% × 30/365.
+    expect(part(c, "payment").perUnit).toBeCloseTo((1.39 * 0.06 * 30) / 365, 6);
+    expect(part(c, "payment").basis).toBe("estimate");
+    expect(part(c, "moq")).toMatchObject({ perUnit: 0, basis: "none" });
+    expect(c.complete).toBe(true);
+    expect(c.perUnit).toBeCloseTo(1.39 + (1.39 * 0.06 * 30) / 365, 6);
+    expect(c.annual).toBeCloseTo(c.perUnit! * 270_000, 4);
+    expect(c.confidence).toBe("medium");
+  });
+
+  it("an ex-works price with no freight is incomplete: no total, and it says what to add", () => {
+    const c = trueCost({ ...quote, freightPerUnit: null, freightBasis: null });
+    expect(c).toMatchObject({ complete: false, perUnit: null, annual: null, confidence: null, missing: ["A freight estimate"] });
+    expect(part(c, "freight")).toMatchObject({ perUnit: null, basis: "missing", note: "FCA: transport to you is not in the price." });
+    // Delivered: transport is in the price.
+    expect(trueCost({ ...quote, incoterm: "DAP", freightPerUnit: null }).perUnit).not.toBeNull();
+    expect(part(trueCost({ ...quote, incoterm: "DAP", freightPerUnit: null }), "freight")).toMatchObject({ perUnit: 0, basis: "included" });
+  });
+
+  it("unknown delivery terms lower the confidence and are said out loud", () => {
+    const c = trueCost({ ...quote, incoterm: null });
+    expect(c.warnings).toEqual(["Delivery terms unknown: it is not known whether transport is in the price."]);
+    expect(c.confidence).toBe("low");
+    expect(trueCost({ ...quote, incoterm: null, freightPerUnit: null }).complete).toBe(false);
+  });
+
+  it("from outside the customs area duty and import costs have to be given; a foreign currency needs a rate", () => {
+    const far = trueCost({ ...quote, sameCustomsArea: false });
+    expect(far).toMatchObject({ complete: false, missing: ["The duty rate", "Customs and import costs"] });
+    const given = trueCost({ ...quote, sameCustomsArea: false, dutyRatePct: 2, customsPerUnit: 0.01 });
+    expect(part(given, "duty").perUnit).toBeCloseTo(1.39 * 0.02, 6);
+    expect(given.complete).toBe(true);
+    expect(trueCost({ ...quote, currency: "USD", fxRate: null })).toMatchObject({ complete: false, missing: ["The exchange rate for USD"] });
+    expect(part(trueCost({ ...quote, price: 1.5, currency: "USD", fxRate: 0.9 }), "price").perUnit).toBeCloseTo(1.35, 6);
+  });
+
+  it("a minimum order above the usual one costs stock; longer payment terms are worth money", () => {
+    const big = trueCost({ ...quote, moq: 60_000 });
+    // 20.000 more held on average × 1.39 × 12% ÷ 270.000 a year.
+    expect(part(big, "moq").perUnit).toBeCloseTo((20_000 * 1.39 * 0.12) / 270_000, 6);
+    expect(part(big, "moq").basis).toBe("estimate");
+    expect(part(trueCost({ ...quote, paymentDays: 90 }), "payment").perUnit).toBeLessThan(0);
+    // Terms not stated: left out, and said — not guessed.
+    expect(part(trueCost({ ...quote, paymentDays: null }), "payment")).toMatchObject({ perUnit: null, basis: "missing", note: "Payment terms of the offer not stated." });
+  });
+
+  it("an opportunity is validated only with the specification confirmed; before that it is an opportunity to validate", () => {
+    const c = trueCost(quote);
+    const open = quoteOpportunity(1.48, c, { annualVolume: 270_000, technicalConfirmed: false, moq: 20_000, comparable: true })!;
+    expect(open).toMatchObject({ level: "to_validate", confidence: "medium", pending: ["Technical specification confirmation still required."] });
+    expect(open.perUnit).toBeCloseTo(1.48 - c.perUnit!, 6);
+    expect(open.annual).toBeCloseTo((1.48 - c.perUnit!) * 270_000, 2);
+    const confirmed = trueCost({ ...quote, technicalConfirmed: true });
+    expect(quoteOpportunity(1.48, confirmed, { annualVolume: 270_000, technicalConfirmed: true, moq: 20_000, comparable: true })).toMatchObject({ level: "validated", pending: [] });
+    // No opportunity on a true cost that is incomplete, or not below what is paid.
+    expect(quoteOpportunity(1.48, trueCost({ ...quote, freightPerUnit: null, freightBasis: null }), { annualVolume: 270_000, technicalConfirmed: true, moq: null, comparable: true })).toBeNull();
+    expect(quoteOpportunity(1.3, c, { annualVolume: 270_000, technicalConfirmed: true, moq: null, comparable: true })).toBeNull();
+  });
+});
+
+describe("reading an answer, without guessing", () => {
+  const ctx = { unit: "kg", today: "2026-10-05", anchor: 1.48 };
+  it("thousands and decimals are told apart only when today's price makes one reading absurd", () => {
+    for (const text of ["We offer at 1.420 €/t.", "We offer at 1,420 €/t.", "Price: €1.420 per ton", "Our price is 1.42 €/kg", "EUR 1420/MT"]) expect(readReply(text, ctx).price, text).toBeCloseTo(1.42, 6);
+    expect(readReply("USD 1,500/MT FOB", ctx)).toMatchObject({ price: 1.5, currency: "USD", incoterm: "FOB" });
+    // Without anything to compare with, the same text is left for the user.
+    expect(readReply("We offer at 1.420 €/t.", { unit: "kg", today: "2026-10-05" })).toMatchObject({ price: null, doubts: [{ message: "A price that can be read two ways (thousands or decimals): write it per {unit}." }] });
+  });
+
+  it("transport is read apart from the price, not mistaken for a second price", () => {
+    const r = readReply("Price: 1,34 €/kg FCA Hamburg.\nFreight to Milan: 0,05 €/kg.\nPayment 30 days.", ctx);
+    expect(r).toMatchObject({ price: 1.34, freightPerUnit: 0.05, incoterm: "FCA", paymentTermsDays: 30, doubts: [] });
+    expect(r.from.freight).toContain("Freight to Milan");
+    // A lump sum is not a cost per unit: said, not converted.
+    expect(readReply("Price 1,34 €/kg. Transport cost: € 850 per delivery.", ctx)).toMatchObject({ price: 1.34, freightPerUnit: null, doubts: [{ message: "A transport cost is mentioned, but not per {unit}: add it to the true cost yourself." }] });
+  });
+
+  it("an answer about several products gives each its own line, and guesses none", () => {
+    const text = "Dear buyer,\n1. Paraffin 52/54: 1,39 €/kg\n2. Wax blend for containers: 1,52 €/kg\nFreight to Milano: 0,05 €/kg.\nMOQ 24 t. Payment 30 days. FCA Hamburg.";
+    const paraffin = { id: "a", name: "Paraffin 52/54", line: 1 };
+    const blend = { id: "b", name: "Wax blend for containers", line: 2 };
+    expect(readReplyFor(text, paraffin, [blend], ctx)).toMatchObject({ price: 1.39, moq: 24_000, incoterm: "FCA", paymentTermsDays: 30, freightPerUnit: 0.05 });
+    expect(readReplyFor(text, blend, [paraffin], ctx)).toMatchObject({ price: 1.52, moq: 24_000 });
+    // Prices on lines that name no product: not assigned to anyone.
+    const unclear = readReplyFor("We can offer 1,39 €/kg and 1,52 €/kg.", paraffin, [blend], ctx);
+    expect(unclear.price).toBeNull();
+    expect(unclear.doubts[0].message).toBe("The answer covers several products and it is not clear which price is this one's: write it per {unit}.");
   });
 });

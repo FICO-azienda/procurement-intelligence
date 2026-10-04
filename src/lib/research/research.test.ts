@@ -28,7 +28,7 @@ function candidate(over: Partial<SupplierCandidate> = {}): SupplierCandidate {
 }
 
 function benchmark(over: Partial<MarketBenchmark> = {}): MarketBenchmark {
-  return { id: `b${++n}`, productId: "p", type: "direct_benchmark", label: "Mock paraffin, Europe", low: 1.39, high: 1.39, unit: "kg", currency: "EUR", fxRate: null, fxDate: null, changePct: null, period: null, sourceName: "Mock Price Report", sourceUrl: "https://report.example.test", sourceDate: "2026-09-21", sourceLevel: "external", comparability: "partial", notes: null, provider: "mock", ...over };
+  return { id: `b${++n}`, productId: "p", type: "direct_benchmark", label: "Mock paraffin, Europe", low: 1.39, high: 1.39, unit: "kg", currency: "EUR", fxRate: null, fxDate: null, periodMonth: null, fxMethod: null, changePct: null, period: null, sourceName: "Mock Price Report", sourceUrl: "https://report.example.test", sourceDate: "2026-09-21", sourceLevel: "external", comparability: "partial", notes: null, provider: "mock", ...over };
 }
 
 function paraffin(quotes: number[] = []) {
@@ -188,13 +188,16 @@ describe("one benchmark is not a market", () => {
     expect(withRate.range!.low).toBeCloseTo(1.3898, 4);
     expect(withRate.observations.find((o) => o.type === "direct_benchmark")!.detail).toContain("USD 1,56/kg at the source, converted at the reference rate of 02/10/2026 (1,1225 USD for one euro).");
   });
-  it("one real quote next to a partly comparable reference: the quote is the range, the reference steps aside, and there is still no amount", () => {
+  it("one real quote next to a published reference: neither is a market range, both stay visible, and there is no amount", () => {
     const v = view(paraffin([1.39]), [], [benchmark({ low: 1.36, high: 1.36 })]);
-    expect(v.range).toMatchObject({ low: 1.39, high: 1.39, observations: 1, reliable: true, confidence: "low" });
-    expect(v.observations.find((o) => o.type === "direct_benchmark")).toMatchObject({ used: false });
-    expect(v.position).toBe("materially_above");
+    expect(v.range).toMatchObject({ low: 1.39, high: 1.39, observations: 1, kind: "single_quote", reliable: false, confidence: "low" });
+    expect(v.observations.find((o) => o.type === "direct_benchmark")).toMatchObject({ used: false, low: 1.36 });
+    expect(v.position).toBe("insufficient");
     expect(v.opportunity).toBeNull();
-    expect(v.opportunityNote).toBe("One observation is too thin to put an amount on the gap: get a second comparable quote.");
+    expect(v.opportunityNote).toBe("One quote is not a market: a second comparable quote is needed before a range, and an amount, can be given.");
+    // Both stay in the conclusions, each on its own line.
+    expect(lines(v).join(" ")).toContain("One comparable quote received (Mock Quote 1): €1,39/kg. One quote is not a market: a range needs at least two.");
+    expect(lines(v).join(" ")).toContain("One external reference (Mock Price Report) indicates €1,36/kg");
   });
 
   it("trade statistics alone are an indication: shown, never a position", () => {

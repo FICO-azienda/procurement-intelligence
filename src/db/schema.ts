@@ -113,6 +113,12 @@ export const products = pgTable("products", {
   customsCodeConfirmed: boolean("customs_code_confirmed").notNull().default(false),
   /** How to research it (lib/research/strategy.ts), when the user says otherwise than the rules. */
   researchClass: text("research_class"),
+  /** What the product is called to someone who is not the current supplier: no supplier name, no supplier code. Written or confirmed by the user. */
+  rfqName: text("rfq_name"),
+  /** What it is used for, as told to a supplier asked to quote it. */
+  application: text("application"),
+  /** One of the products of the live pilot: the first real round of requests. */
+  inPilot: boolean("in_pilot").notNull().default(false),
   ...timestamps,
 });
 
@@ -483,6 +489,10 @@ export const marketBenchmarks = pgTable(
     /** Units of `currency` for one EUR on `fxDate`, from an exchange-rate provider. Null with a foreign currency: not converted, shown as written. */
     fxRate: numeric("fx_rate", { precision: 16, scale: 6 }),
     fxDate: date("fx_date"),
+    /** The month the reference is about ("2026-09"), when it is an average of a period: its exchange rate is then the average of that month. */
+    periodMonth: text("period_month"),
+    /** How the rate was taken: "day" (the reference rate of fxDate) or "month_average". */
+    fxMethod: text("fx_method"),
     /** Cost drivers: the movement, in %, over `period`. */
     changePct: real("change_pct"),
     period: text("period"),
@@ -520,6 +530,49 @@ export const rfqRequests = pgTable(
   },
   (t) => [index("rfq_requests_supplier_idx").on(t.supplierKey)],
 );
+
+/** A document kept with a product — its technical data sheet above all — to attach to a request for quotation. */
+export const productDocuments = pgTable(
+  "product_documents",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    productId: uuid("product_id")
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    documentId: uuid("document_id")
+      .notNull()
+      .references(() => documents.id, { onDelete: "cascade" }),
+    /** technical_datasheet | specification | image | other */
+    type: text("type").notNull().default("technical_datasheet"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("product_documents_product_idx").on(t.productId)],
+);
+
+/**
+ * What a quote does not say but its true cost needs: transport, duty, other
+ * import costs — as the user knows or estimates them, each with where the
+ * figure comes from. Inputs only: the true cost itself is computed
+ * (lib/sourcing/true-cost.ts), never stored.
+ */
+export const trueCostScenarios = pgTable("true_cost_scenarios", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  quoteId: uuid("quote_id")
+    .notNull()
+    .unique()
+    .references(() => quotes.id, { onDelete: "cascade" }),
+  /** EUR per product unit. Null: not known. */
+  freightPerUnit: money("freight_per_unit"),
+  /** quote | manual | estimate */
+  freightBasis: text("freight_basis"),
+  dutyRatePct: real("duty_rate_pct"),
+  dutyBasis: text("duty_basis"),
+  /** Other import and customs costs, EUR per product unit. */
+  customsPerUnit: money("customs_per_unit"),
+  otherPerUnit: money("other_per_unit"),
+  notes: text("notes"),
+  ...timestamps,
+});
 
 // ---------------- Deep research ----------------
 
@@ -631,6 +684,10 @@ export const settings = pgTable("settings", {
   vatNumber: text("vat_number"),
   /** Who is at the keyboard — only used to say good morning. */
   userName: text("user_name"),
+  /** What money costs the company, % a year: values a difference in payment terms. Null: the default in SOURCING_CONFIG. */
+  financingRatePct: real("financing_rate_pct"),
+  /** What holding stock costs, % of its value a year: values a minimum order larger than the usual one. */
+  holdingRatePct: real("holding_rate_pct"),
   /** Language of the interface: "en" or "it". */
   language: text("language").notNull().default("en"),
   ...timestamps,

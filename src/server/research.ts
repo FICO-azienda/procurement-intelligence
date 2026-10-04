@@ -18,6 +18,7 @@ import { getDb, type DB } from "@/db";
 import { marketBenchmarks, products, researchCache, researchEvidence, researchRuns, researchUsage, supplierCandidates, suppliers } from "@/db/schema";
 import { categorize } from "@/lib/catalog/taxonomy";
 import { countryFromIso, countryIso } from "@/lib/countries";
+import { TIME_ZONE } from "@/lib/config";
 import { readSettings } from "@/lib/data";
 import * as f from "@/lib/format";
 import { en, say, type Said, type T } from "@/lib/i18n";
@@ -55,7 +56,8 @@ export interface Step {
   note?: Said;
 }
 
-const iso = (d: Date) => d.toISOString().slice(0, 10);
+/** The calendar day where the company works — the same day todayISO() gives, not the UTC one. */
+const iso = (d: Date) => d.toLocaleDateString("sv-SE", { timeZone: TIME_ZONE });
 
 // ---------------- Calls outside: cached, counted, limited ----------------
 
@@ -295,15 +297,28 @@ export async function runResearch(db: DB, productId: string, deps: ResearchDeps 
     // 5. Price evidence on file: references in another currency get the official rate of their date.
     const references = await db.select().from(marketBenchmarks).where(eq(marketBenchmarks.productId, productId));
     const rates = providers.fx[0];
-    for (const b of references.filter((x) => x.currency.toUpperCase() !== "EUR" && x.fxRate == null && x.low != null)) {
+    // A reference about a month takes that month's average rate, not the rate of one day — and never today's.
+    const monthly = (x: (typeof references)[number]) => !!x.periodMonth && !!rates?.average;
+    for (const b of references.filter((x) => x.currency.toUpperCase() !== "EUR" && x.low != null && (x.fxRate == null || (monthly(x) && x.fxMethod !== "month_average")))) {
       if (!rates) break;
       try {
         const date = b.sourceDate ?? today;
-        const got = await sources.get(rates.key, "fx", `${b.currency}|${date}`, () => rates.rate(b.currency, date));
+        const got = monthly(b) ? await sources.get(rates.key, "fx", `${b.currency}|avg|${b.periodMonth}`, () => rates.average!(b.currency, b.periodMonth!)) : await sources.get(rates.key, "fx", `${b.currency}|${date}`, () => rates.rate(b.currency, date));
         sourcesChecked++;
         if (!got?.value) continue;
-        await db.update(marketBenchmarks).set({ fxRate: String(got.value.rate), fxDate: got.value.date, updatedAt: deps.now() }).where(eq(marketBenchmarks.id, b.id));
-        await evidence({ type: "fx", sourceName: got.value.sourceName, sourceUrl: got.value.sourceUrl, retrievedAt: deps.now(), publishedAt: got.value.date, finding: say("{currency} converted at {rate} for one euro, the reference rate of {date}.", { currency: b.currency, rate: f.number(got.value.rate, 4), date: f.date(got.value.date) }), reliability: "official_data", confidence: "high" });
+        await db.update(marketBenchmarks).set({ fxRate: String(got.value.rate), fxDate: got.value.date, fxMethod: monthly(b) ? "month_average" : "day", updatedAt: deps.now() }).where(eq(marketBenchmarks.id, b.id));
+        await evidence({
+          type: "fx",
+          sourceName: got.value.sourceName,
+          sourceUrl: got.value.sourceUrl,
+          retrievedAt: deps.now(),
+          publishedAt: got.value.date,
+          finding: monthly(b)
+            ? say("{currency} converted at {rate} for one euro, the average of the reference rates of {month}.", { currency: b.currency, rate: f.number(got.value.rate, 4), month: b.periodMonth! })
+            : say("{currency} converted at {rate} for one euro, the reference rate of {date}.", { currency: b.currency, rate: f.number(got.value.rate, 4), date: f.date(got.value.date) }),
+          reliability: "official_data",
+          confidence: "high",
+        });
       } catch (err) {
         errors.push({ step: "pricing", message: describe(err) });
       }

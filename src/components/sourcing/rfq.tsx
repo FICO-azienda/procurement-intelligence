@@ -8,7 +8,7 @@ import { markRequestsSentAction, recordCandidateQuoteAction } from "@/app/action
 import { todayISO } from "@/lib/analytics";
 import { translator } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/client";
-import { readReply } from "@/lib/sourcing/reply";
+import { readReplyFor, type ReplyReading } from "@/lib/sourcing/reply";
 import { rfqText } from "@/lib/sourcing/rfq";
 import type { RfqLineData } from "@/server/sourcing";
 import { Field, Grid, Input, Textarea } from "../form-kit";
@@ -55,7 +55,7 @@ export function RfqPanel({ items, context, language, onClose, onSent }: { items:
         item.key,
         rfqText(
           {
-            lines: item.lines.map((l) => ({ productName: l.productName, specifications: Object.fromEntries(l.specifications.map((s) => [tt.any(s.label), s.value])), description: l.description, unit: l.unit, annualQuantity: l.annualQuantity, typicalOrderQuantity: l.typicalOrderQuantity })),
+            lines: item.lines.map((l) => ({ productName: l.productName, specifications: Object.fromEntries(l.specifications.map((s) => [tt.any(s.label), s.value])), description: l.description, application: l.application, attachments: l.documents.map((d) => d.filename), unit: l.unit, annualQuantity: l.annualQuantity, typicalOrderQuantity: l.typicalOrderQuantity })),
             deliveryCountry: context.deliveryCountry,
             companyName: context.companyName,
             userName: context.userName,
@@ -126,6 +126,19 @@ export function RfqPanel({ items, context, language, onClose, onSent }: { items:
                 <Download size={13} /> {t("Download")}
               </button>
             </div>
+            {item.lines.some((l) => l.documents.length > 0) && (
+              <p className="mt-1.5 text-[12.5px] text-ink-2">
+                {t("To attach to your email:")}{" "}
+                {item.lines.flatMap((l) => l.documents).map((d, i) => (
+                  <span key={d.id}>
+                    {i > 0 && ", "}
+                    <a href={`/documents/${d.documentId}`} target="_blank" rel="noreferrer" className="text-ledger hover:underline">
+                      {d.filename}
+                    </a>
+                  </span>
+                ))}
+              </p>
+            )}
             <Textarea readOnly rows={Math.min(22, 9 + item.lines.length * 4)} value={`${drafts.get(item.key)!.subject}\n\n${drafts.get(item.key)!.body}`} className="mt-2 w-full font-mono text-[12px]" aria-label={t("Request text for {name}", { name: item.supplierName })} />
           </li>
         ))}
@@ -155,25 +168,26 @@ export function RfqPanel({ items, context, language, onClose, onSent }: { items:
   );
 }
 
-const EMPTY = { date: "", unitPrice: "", currency: "EUR", moq: "", leadTimeDays: "", paymentTermsDays: "", incoterm: "", validUntil: "", notes: "" };
+const EMPTY = { date: "", unitPrice: "", currency: "EUR", moq: "", leadTimeDays: "", paymentTermsDays: "", incoterm: "", validUntil: "", freightPerUnit: "", notes: "" };
 
 /**
  * A supplier answered: paste the email, the app reads the price and the
  * terms into a form, the user checks them and saves a quote. What could be
  * read two ways is left empty, with the words it was about.
  */
-export function ReplyPanel({ candidateId, supplierName, unit, onClose }: { candidateId: string; supplierName: string; unit: string; onClose: () => void }) {
+export function ReplyPanel({ candidateId, supplierName, unit, anchor, product, others, onClose }: { candidateId: string; supplierName: string; unit: string; anchor: number | null; product: { id: string; name: string }; others: { id: string; name: string }[]; onClose: () => void }) {
   const t = useT();
   const router = useRouter();
   const [raw, setRaw] = useState("");
   const [v, setV] = useState({ ...EMPTY, date: todayISO() });
-  const [read, setRead] = useState<ReturnType<typeof readReply> | null>(null);
+  const [read, setRead] = useState<ReplyReading | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const set = (key: keyof typeof EMPTY) => (e: { target: { value: string } }) => setV((x) => ({ ...x, [key]: e.target.value }));
   const understand = () => {
-    const r = readReply(raw, { unit, today: todayISO() });
+    // An answer to a request with several products: only the lines about this one are read.
+    const r = readReplyFor(raw, product, others, { unit, today: todayISO(), anchor });
     setRead(r);
     setV((x) => ({
       ...x,
@@ -184,6 +198,7 @@ export function ReplyPanel({ candidateId, supplierName, unit, onClose }: { candi
       paymentTermsDays: r.paymentTermsDays != null ? String(r.paymentTermsDays) : "",
       incoterm: r.incoterm ?? "",
       validUntil: r.validUntil ?? "",
+      freightPerUnit: r.freightPerUnit != null ? String(r.freightPerUnit).replace(".", ",") : "",
       notes: r.notes.join(" "),
     }));
   };
@@ -209,6 +224,7 @@ export function ReplyPanel({ candidateId, supplierName, unit, onClose }: { candi
       </button>
       {read && read.doubts.length > 0 && (
         <ul className="space-y-1 text-[12.5px] text-caution">
+          <li className="font-medium">{t("Needs review: what could be read two ways was left empty.")}</li>
           {read.doubts.map((d) => (
             <li key={d.message + d.detail}>
               {t(d.message, { unit })} <span className="text-ink-3">“{d.detail}”</span>
@@ -225,6 +241,7 @@ export function ReplyPanel({ candidateId, supplierName, unit, onClose }: { candi
         {field("incoterm", t("Delivery terms"), { from: read?.from.incoterm })}
         {field("paymentTermsDays", t("Payment (days)"), { from: read?.from.payment })}
         {field("validUntil", t("Valid until"), { type: "date", from: read?.from.validity })}
+        {field("freightPerUnit", t("Freight per {unit}, if stated", { unit }), { from: read?.from.freight })}
       </Grid>
       <Field label={t("Note")}>
         <Textarea value={v.notes} onChange={set("notes")} rows={2} />
@@ -264,7 +281,7 @@ export interface SupplierVM {
   recommended: boolean;
   combinedSpend: string;
   missing: string[];
-  lines: { candidateId: string; productId: string; productName: string; spend: string; shortlisted: boolean; firstRound: boolean; asked: boolean; line: RfqLineData }[];
+  lines: { candidateId: string; productId: string; productName: string; spend: string; shortlisted: boolean; firstRound: boolean; asked: boolean; ready: boolean; line: RfqLineData }[];
   history: { times: number; last: string | null; lastISO: string | null; days: number | null; recent: boolean; followUpDue: boolean; products: number };
   /** A quote from this company is on file. */
   answered: boolean;
@@ -279,7 +296,7 @@ export function SupplierRfqBoard({ suppliers, context, language }: { suppliers: 
   const t = useT();
   const [open, setOpen] = useState<{ key: string; kind: RfqItem["kind"] } | null>(null);
   const [ticked, setTicked] = useState<Record<string, string[]>>({});
-  const picked = (s: SupplierVM) => ticked[s.key] ?? s.lines.filter((l) => l.shortlisted && l.firstRound && !l.asked).map((l) => l.candidateId);
+  const picked = (s: SupplierVM) => ticked[s.key] ?? s.lines.filter((l) => l.shortlisted && l.firstRound && !l.asked && l.ready).map((l) => l.candidateId);
   const toggle = (s: SupplierVM, id: string) => setTicked((x) => ({ ...x, [s.key]: picked(s).includes(id) ? picked(s).filter((y) => y !== id) : [...picked(s), id] }));
   if (!suppliers.length) return <p className="text-[13px] text-ink-3">{t("No supplier is recommended for a request yet: research the products first.")}</p>;
   return (
@@ -307,12 +324,17 @@ export function SupplierRfqBoard({ suppliers, context, language }: { suppliers: 
             <ul className="mt-2.5 space-y-1 text-[13px]">
               {s.lines.map((l) => (
                 <li key={l.candidateId} className="flex flex-wrap items-center gap-x-2">
-                  <input type="checkbox" className="size-3.5 accent-ledger" checked={picked(s).includes(l.candidateId)} disabled={l.asked} onChange={() => toggle(s, l.candidateId)} aria-label={t("Include {name}", { name: l.productName })} />
+                  <input type="checkbox" className="size-3.5 accent-ledger" checked={picked(s).includes(l.candidateId)} disabled={l.asked || !l.ready} onChange={() => toggle(s, l.candidateId)} aria-label={t("Include {name}", { name: l.productName })} />
                   <Link href={`/sourcing/${l.productId}`} className="font-medium hover:underline">
                     {l.productName}
                   </Link>
                   <span className="num text-ink-3">{l.spend}</span>
-                  {l.asked ? <span className="text-[12px] text-caution">{t("already asked")}</span> : !l.firstRound ? <span className="text-[12px] text-ink-3">{t("not in the first round: add it if you write anyway")}</span> : !l.shortlisted ? <span className="text-[12px] text-ink-3">{t("could also cover it")}</span> : null}
+                  {!l.ready && !l.asked ? (
+                    <Link href={`/sourcing/${l.productId}#specification`} className="text-[12px] font-medium text-up hover:underline">
+                      {t("specification incomplete: describe the product first")}
+                    </Link>
+                  ) : null}
+                  {l.asked ? <span className="text-[12px] text-caution">{t("already asked")}</span> : !l.ready ? null : !l.firstRound ? <span className="text-[12px] text-ink-3">{t("not in the first round: add it if you write anyway")}</span> : !l.shortlisted ? <span className="text-[12px] text-ink-3">{t("could also cover it")}</span> : null}
                 </li>
               ))}
             </ul>

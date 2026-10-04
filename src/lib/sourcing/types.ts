@@ -156,6 +156,9 @@ export interface MarketBenchmark {
   /** Units of `currency` for one EUR on `fxDate`. Null with a foreign currency: the price is shown as written, not compared. */
   fxRate: number | null;
   fxDate: string | null;
+  /** The month the reference is about, and how its rate was taken ("day" or "month_average"). */
+  periodMonth: string | null;
+  fxMethod: string | null;
   /** For cost drivers: change in % and the period it refers to. */
   changePct: number | null;
   period: string | null;
@@ -215,5 +218,9 @@ export const SOURCING_CONFIG = {
   followUpAfterDays: 10,
   /** A supplier asked within this many days is not written to again from scratch: the earlier request is extended. */
   recentContactDays: 30,
+  /** What money costs a company, % a year: the starting assumption until the company sets its own (Settings). Values payment terms. */
+  financingRatePct: 6,
+  /** What holding stock costs, % of its value a year (capital, space, risk): the starting assumption. Values a large minimum order. */
+  holdingRatePct: 12,
 };
 export type SourcingConfig = typeof SOURCING_CONFIG;

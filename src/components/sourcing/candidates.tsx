@@ -8,6 +8,7 @@ import { addCandidateAction, convertCandidateAction, deleteCandidateAction, upda
 import { useT } from "@/lib/i18n/client";
 import { CANDIDATE_STATUSES, CANDIDATE_STATUS_LABEL, COMPANY_TYPE_LABEL, SOURCE_LEVEL_LABEL, TECHNICAL_LABEL, type CandidateStatus, type Comparability, type CompanyType, type MatchStrength, type PriceType, type SourceLevel, type TechnicalFit } from "@/lib/sourcing/types";
 import { CONTACT_VALUE_LABEL, EVIDENCE_LABEL, LOGISTICS_LABEL, ROLE_LABEL, STAGE_LABEL, type ContactValue, type EvidenceQuality, type EvidenceRole, type FunnelStage, type Logistics } from "@/lib/sourcing/screening";
+import type { Readiness } from "@/lib/sourcing/rfq-spec";
 import type { RfqLineData } from "@/server/sourcing";
 import { Field, Grid, Input, Select, Textarea } from "../form-kit";
 import { buttonClass, cx } from "../ui";
@@ -63,6 +64,8 @@ export interface CandidateVM {
   email: string | null;
   /** When this company was written to, on whatever product. */
   history: { times: number; last: string | null; lastISO: string | null; days: number | null; recent: boolean; followUpDue: boolean };
+  /** The other products asked of this company in the same request: its answer may quote them too. */
+  replyOthers: { id: string; name: string }[];
   notes: string | null;
   status: CandidateStatus;
   top: boolean;
@@ -103,6 +106,8 @@ export function CandidateBoard({
   context,
   language,
   firstRound,
+  readiness,
+  anchor,
 }: {
   productId: string;
   unit: string;
@@ -113,6 +118,10 @@ export function CandidateBoard({
   language: "en" | "it";
   /** One of the few products the first round of requests is for. */
   firstRound: boolean;
+  /** Whether the product is described well enough for a supplier who does not know it. */
+  readiness: Readiness;
+  /** What is paid today per unit: it settles a number that could be read two ways. */
+  anchor: number | null;
 }) {
   const t = useT();
   const shortlist = candidates.filter((c) => c.shortlisted);
@@ -158,12 +167,22 @@ export function CandidateBoard({
                   : t("No candidate on file yet: research the product, or add the suppliers you know.")}
             </div>
           </div>
-          {shortlist.length > 0 && (
-            <button type="button" className={buttonClass("primary")} disabled={!chosen.length} onClick={() => setAsking({ kind: "request", ids: chosen })}>
-              {chosen.length ? t.n(chosen.length, "Prepare RFQ to {n} supplier", "Prepare RFQ to {n} suppliers") : t("Select who to ask")}
-            </button>
-          )}
+          {shortlist.length > 0 &&
+            (readiness === "not_ready" ? (
+              <a href="#specification" className={buttonClass("secondary")}>
+                {t("Complete the product description first")}
+              </a>
+            ) : (
+              <button type="button" className={buttonClass("primary")} disabled={!chosen.length} onClick={() => setAsking({ kind: "request", ids: chosen })}>
+                {chosen.length ? t.n(chosen.length, "Prepare RFQ to {n} supplier", "Prepare RFQ to {n} suppliers") : t("Select who to ask")}
+              </button>
+            ))}
         </div>
+        {readiness !== "ready" && shortlist.length > 0 && (
+          <p className={cx("border-t border-rule px-5 py-2 text-[12.5px]", readiness === "not_ready" ? "text-up" : "text-caution")}>
+            {readiness === "not_ready" ? t("Specification incomplete: the product is known only by your supplier's name or code, which another supplier can't understand. Describe it above before preparing a request.") : t("The request can be prepared, but the product description is missing something: see above.")}
+          </p>
+        )}
         {!firstRound && shortlist.length > 0 && <p className="border-t border-rule px-5 py-2 text-[12.5px] text-ink-3">{t("This product is outside the first round — the few that weigh most on your spend. The shortlist is ready when you get to it.")}</p>}
         {shortlist.length > 0 && (
           <ul>
@@ -177,7 +196,10 @@ export function CandidateBoard({
                       <StagePill stage={c.stage} />
                       <span className={cx("text-[12px] font-medium", c.contactValue === "high" ? "text-down" : "text-ink-3")}>{t(CONTACT_VALUE_LABEL[c.contactValue])}</span>
                     </div>
-                    <div className="mt-0.5 text-[12.5px] text-ink-3">{[c.flag ? `${c.flag} ${c.country}` : (c.country ?? t("Country not known")), t(COMPANY_TYPE_LABEL[c.companyType ?? "unknown"])].join(" · ")}</div>
+                    <div className="mt-0.5 text-[12.5px] text-ink-3">
+                      {[c.flag ? `${c.flag} ${c.country}` : (c.country ?? t("Country not known")), t(COMPANY_TYPE_LABEL[c.companyType ?? "unknown"])].join(" · ")}
+                      {c.email && ` · ${c.email} (${t("read on their site on {date}", { date: c.specCheck?.checkedAt ?? "" })})`}
+                    </div>
                   </div>
                 </div>
                 <dl className="mt-2.5 grid gap-x-6 gap-y-1.5 pl-7 text-[13px] @2xl:grid-cols-2">
@@ -230,7 +252,7 @@ export function CandidateBoard({
                 </div>
                 {answering === c.id && (
                   <div className="pl-7">
-                    <ReplyPanel candidateId={c.id} supplierName={c.name} unit={unit} onClose={() => setAnswering(null)} />
+                    <ReplyPanel candidateId={c.id} supplierName={c.name} unit={unit} anchor={anchor} product={{ id: line.productId, name: line.productName }} others={c.replyOthers} onClose={() => setAnswering(null)} />
                   </div>
                 )}
               </li>
@@ -265,7 +287,7 @@ export function CandidateBoard({
               {candidates
                 .filter((c) => c.stage === stage)
                 .map((c) => (
-                  <CandidateCard key={c.id} c={c} onAsk={() => setAsking({ kind: "request", ids: [c.id] })} />
+                  <CandidateCard key={c.id} c={c} canAsk={readiness !== "not_ready"} onAsk={() => setAsking({ kind: "request", ids: [c.id] })} />
                 ))}
             </ul>
           </div>
@@ -274,7 +296,7 @@ export function CandidateBoard({
   );
 }
 
-function CandidateCard({ c, onAsk }: { c: CandidateVM; onAsk: () => void }) {
+function CandidateCard({ c, onAsk, canAsk }: { c: CandidateVM; onAsk: () => void; canAsk: boolean }) {
   const { pending, error, run, t } = useRun();
   const rejected = c.status === "rejected";
   const unvalidated = c.status === "discovered" || c.status === "to_review";
@@ -406,7 +428,7 @@ function CandidateCard({ c, onAsk }: { c: CandidateVM; onAsk: () => void }) {
           </button>
         )}
         {/* A request is offered only where it could be worth one. */}
-        {!rejected && c.status !== "converted" && !c.inProgress && (c.stage === "strong" || c.stage === "plausible") && (
+        {!rejected && c.status !== "converted" && !c.inProgress && canAsk && (c.stage === "strong" || c.stage === "plausible") && (
           <button type="button" disabled={pending} className={buttonClass("secondary", "sm")} onClick={onAsk}>
             {t("Request quote")}
           </button>

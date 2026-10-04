@@ -9,15 +9,20 @@ import { connection } from "next/server";
 import { cache } from "react";
 import type { z } from "zod";
 import { getDb, type DB } from "@/db";
-import { marketBenchmarks, productFamilies, products, purchases, quotes, rfqRequests, supplierCandidates, suppliers } from "@/db/schema";
+import { createHash } from "node:crypto";
+import { documents, marketBenchmarks, productAliases, productDocuments, productFamilies, products, purchases, quotes, rfqRequests, settings as settingsTable, supplierCandidates, suppliers, trueCostScenarios } from "@/db/schema";
+import { getStorage, storageKey } from "@/lib/storage";
+import { crossesCustoms } from "@/lib/sourcing/regions";
+import { rfqSpec, type RfqSpec } from "@/lib/sourcing/rfq-spec";
+import { quoteOpportunity, trueCost, type CostBasis, type QuoteOpportunity, type TrueCost } from "@/lib/sourcing/true-cost";
 import { todayISO, windowStart } from "@/lib/analytics";
-import { ATTRIBUTE_LABEL, attributesOf } from "@/lib/catalog/attributes";
+import { attributesOf } from "@/lib/catalog/attributes";
 import { catalogueOf } from "@/lib/catalog/spend";
 import { getIntel, getOverview, getSettings, getT, readDataset, readLearning, readOpportunityStates, readSettings } from "@/lib/data";
 import { purchasingOverview, type PurchasingOverview } from "@/lib/intel/decision";
 import { analyze, type Intel } from "@/lib/intel/engine";
 import { en, type T } from "@/lib/i18n";
-import { acceptDiscovered, neutralName, refineQueries, searchQueries, type QueryInput, type Rejection } from "@/lib/sourcing/discovery";
+import { acceptDiscovered, refineQueries, searchQueries, type QueryInput, type Rejection } from "@/lib/sourcing/discovery";
 import { companyKey } from "@/lib/import/normalize/text";
 import { marketView, sourcingReview, type MarketView, type SourcingReview } from "@/lib/sourcing/market";
 import { supplierOpportunities, type Materiality, type RfqRequest, type SupplierOpportunity } from "@/lib/sourcing/screening";
@@ -84,6 +89,8 @@ export function toBenchmark(r: typeof marketBenchmarks.$inferSelect): MarketBenc
     sourceDate: r.sourceDate,
     fxRate: numOrNull(r.fxRate),
     fxDate: r.fxDate,
+    periodMonth: r.periodMonth,
+    fxMethod: r.fxMethod,
     sourceLevel: isSourceLevel(r.sourceLevel) ? r.sourceLevel : "external",
     comparability: (["comparable", "partial", "not"] as const).find((x) => x === r.comparability) ?? "partial",
     notes: r.notes,
@@ -91,9 +98,15 @@ export function toBenchmark(r: typeof marketBenchmarks.$inferSelect): MarketBenc
   };
 }
 
-export async function readSourcing(db: DB): Promise<{ candidates: SupplierCandidate[]; benchmarks: MarketBenchmark[]; requests: RfqRequest[] }> {
-  const [c, b, r] = await Promise.all([db.select().from(supplierCandidates).orderBy(supplierCandidates.createdAt), db.select().from(marketBenchmarks).orderBy(marketBenchmarks.createdAt), db.select().from(rfqRequests).orderBy(rfqRequests.sentAt)]);
+export async function readSourcing(db: DB): Promise<{ candidates: SupplierCandidate[]; benchmarks: MarketBenchmark[]; requests: RfqRequest[]; pilot: string[] }> {
+  const [c, b, r, pilot] = await Promise.all([
+    db.select().from(supplierCandidates).orderBy(supplierCandidates.createdAt),
+    db.select().from(marketBenchmarks).orderBy(marketBenchmarks.createdAt),
+    db.select().from(rfqRequests).orderBy(rfqRequests.sentAt),
+    db.select({ id: products.id }).from(products).where(eq(products.inPilot, true)),
+  ]);
   return {
+    pilot: pilot.map((x) => x.id),
     candidates: c.map(toCandidate),
     benchmarks: b.map(toBenchmark),
     requests: r.map((x) => ({ id: x.id, supplierKey: x.supplierKey, supplierName: x.supplierName, candidateIds: x.candidateIds, productIds: x.productIds, kind: x.kind === "update" || x.kind === "follow_up" ? x.kind : "request", sentAt: x.sentAt })),
@@ -131,6 +144,8 @@ export interface QuoteFromCandidate {
   notes: string | null;
   /** The answer as it was written, kept with the quote. */
   original: string | null;
+  /** Transport per unit, when the answer states it: kept apart from the price, for the true cost. */
+  freightPerUnit?: number | null;
 }
 
 /**
@@ -163,6 +178,7 @@ export async function recordCandidateQuote(db: DB, candidateId: string, v: Quote
       source: "email",
     })
     .returning({ id: quotes.id });
+  if (v.freightPerUnit != null) await db.insert(trueCostScenarios).values({ quoteId: quote.id, freightPerUnit: String(v.freightPerUnit * (v.currency === "EUR" ? 1 : (v.fxRate ?? 1))), freightBasis: "quote" });
   for (const other of (await db.select().from(supplierCandidates)).filter((x) => companyKey(x.name) === key)) {
     await db.update(supplierCandidates).set({ supplierId, ...(other.id === candidateId ? { status: "quote_received" } : {}), updatedAt: new Date() }).where(eq(supplierCandidates.id, other.id));
   }
@@ -382,20 +398,31 @@ export async function runDiscovery(db: DB, productId: string, providers: Pick<Pr
   return run;
 }
 
-/** What a request for quotation says about a product: its name without the current supplier, its specification, the quantities. Never the price. */
+/** What a request for quotation says about a product: its neutral description, its specification, the quantities. Never the price, never the current supplier's own codes. */
 export interface RfqLineData {
   productId: string;
+  /** The neutral description. Empty when there is none safe to send: the product is then not ready. */
   productName: string;
   /** Labels are English texts of the dictionary, or the company's own words. */
   specifications: { label: string; value: string }[];
   description: string | null;
+  application: string | null;
   unit: string;
   annualQuantity: number | null;
   typicalOrderQuantity: number | null;
+  spec: RfqSpec;
+  documents: { id: string; documentId: string; filename: string }[];
 }
 
-export async function readRfqLines(db: DB, productIds: string[]): Promise<Map<string, RfqLineData>> {
-  const [rows, bought, names] = await Promise.all([db.select().from(products), db.select().from(purchases), db.select({ id: suppliers.id, name: suppliers.name }).from(suppliers)]);
+export async function readRfqLines(db: DB, productIds: string[], t: T = en): Promise<Map<string, RfqLineData>> {
+  const [rows, bought, names, aliases, docs, company] = await Promise.all([
+    db.select().from(products),
+    db.select().from(purchases),
+    db.select({ id: suppliers.id, name: suppliers.name }).from(suppliers),
+    db.select({ productId: productAliases.productId, sku: productAliases.supplierSku }).from(productAliases),
+    db.select({ id: productDocuments.id, productId: productDocuments.productId, documentId: documents.id, filename: documents.filename }).from(productDocuments).innerJoin(documents, eq(productDocuments.documentId, documents.id)),
+    readSettings(db),
+  ]);
   const start = windowStart(todayISO());
   const out = new Map<string, RfqLineData>();
   for (const id of productIds) {
@@ -406,14 +433,202 @@ export async function readRfqLines(db: DB, productIds: string[]): Promise<Map<st
     const sameUnit = mine.filter((x) => x.unit === product.unit);
     const recent = sameUnit.filter((x) => x.date > start);
     const quantities = sameUnit.map((x) => Number(x.quantity)).sort((a, b) => a - b);
+    const attached = docs.filter((d) => d.productId === id);
+    const spec = rfqSpec(
+      {
+        name: product.name,
+        rfqName: product.rfqName,
+        technical: product.technicalSpecifications ?? product.description,
+        application: product.application,
+        specs: product.specs ?? null,
+        supplierCodes: [...new Set(aliases.filter((a) => a.productId === id && a.sku).map((a) => a.sku!))],
+        knownSuppliers: known,
+        companyName: company.companyName,
+        unit: product.unit,
+        annualQuantity: recent.length ? recent.reduce((sum, x) => sum + Number(x.quantity), 0) : null,
+        typicalOrderQuantity: quantities.length ? quantities[Math.floor(quantities.length / 2)] : null,
+        deliveryCountry: company.country,
+        documents: attached.length,
+      },
+      t,
+    );
     out.set(id, {
       productId: id,
-      productName: neutralName({ name: product.name, knownSuppliers: known }),
-      specifications: [...attributesOf(product.name).map((a) => ({ label: ATTRIBUTE_LABEL[a.key] as string, value: a.value })), ...Object.entries(product.specs ?? {}).map(([label, value]) => ({ label, value }))],
-      description: product.technicalSpecifications ?? product.description,
+      productName: spec.neutralName ?? "",
+      specifications: spec.attributes,
+      description: spec.technical,
+      application: spec.application,
       unit: product.unit,
-      annualQuantity: recent.length ? recent.reduce((sum, x) => sum + Number(x.quantity), 0) : null,
-      typicalOrderQuantity: quantities.length ? quantities[Math.floor(quantities.length / 2)] : null,
+      annualQuantity: spec.annualQuantity,
+      typicalOrderQuantity: spec.typicalOrderQuantity,
+      spec,
+      documents: attached.map((d) => ({ id: d.id, documentId: d.documentId, filename: d.filename })),
+    });
+  }
+  return out;
+}
+
+/** The description of a product for people outside: the company's own words, saved as written. */
+export async function saveRfqSpec(db: DB, productId: string, v: { rfqName: string | null; technical: string | null; application: string | null }): Promise<void> {
+  await db.update(products).set({ rfqName: v.rfqName?.trim() || null, technicalSpecifications: v.technical?.trim() || null, application: v.application?.trim() || null, updatedAt: new Date() }).where(eq(products.id, productId));
+}
+
+/** A technical document kept with a product, to attach to a request. The file is stored as it is: nothing is read from it. */
+export async function addProductDocument(db: DB, productId: string, file: { name: string; bytes: Uint8Array; mimeType: string | null }, type = "technical_datasheet"): Promise<void> {
+  const sha256 = createHash("sha256").update(file.bytes).digest("hex");
+  let [doc] = await db.select().from(documents).where(eq(documents.sha256, sha256));
+  if (!doc) {
+    const key = storageKey(file.name, sha256);
+    await getStorage().put(key, file.bytes, file.mimeType ?? "application/octet-stream");
+    [doc] = await db.insert(documents).values({ filename: file.name, mimeType: file.mimeType, sizeBytes: file.bytes.length, sha256, storagePath: key }).returning();
+  }
+  const linked = await db.select().from(productDocuments).where(eq(productDocuments.productId, productId));
+  if (!linked.some((l) => l.documentId === doc.id)) await db.insert(productDocuments).values({ productId, documentId: doc.id, type });
+}
+
+export async function removeProductDocument(db: DB, id: string): Promise<void> {
+  await db.delete(productDocuments).where(eq(productDocuments.id, id));
+}
+
+export async function setPilot(db: DB, productIds: string[], on: boolean): Promise<void> {
+  for (const id of productIds) await db.update(products).set({ inPilot: on, updatedAt: new Date() }).where(eq(products.id, id));
+}
+
+/** The month a reference is about: its exchange rate is taken again, as that month's average, at the next research. */
+export async function setBenchmarkMonth(db: DB, id: string, month: string | null): Promise<void> {
+  const [b] = await db.select().from(marketBenchmarks).where(eq(marketBenchmarks.id, id));
+  if (!b) return;
+  const foreign = b.currency.toUpperCase() !== "EUR";
+  await db.update(marketBenchmarks).set({ periodMonth: month, ...(foreign ? { fxRate: null, fxDate: null, fxMethod: null } : {}), updatedAt: new Date() }).where(eq(marketBenchmarks.id, id));
+}
+
+// ---------------- True cost ----------------
+
+export interface TrueCostInputs {
+  freightPerUnit: number | null;
+  freightBasis: string | null;
+  dutyRatePct: number | null;
+  customsPerUnit: number | null;
+  otherPerUnit: number | null;
+  notes: string | null;
+}
+
+/** What the user knows or estimates about a quote's transport, duty and other costs. The true cost is worked out from it, never stored. */
+export async function saveTrueCostInputs(db: DB, quoteId: string, v: TrueCostInputs): Promise<void> {
+  const values = { freightPerUnit: text(v.freightPerUnit), freightBasis: v.freightPerUnit == null ? null : (v.freightBasis ?? "manual"), dutyRatePct: v.dutyRatePct, dutyBasis: v.dutyRatePct == null ? null : "manual", customsPerUnit: text(v.customsPerUnit), otherPerUnit: text(v.otherPerUnit), notes: v.notes, updatedAt: new Date() };
+  await db.insert(trueCostScenarios).values({ quoteId, ...values }).onConflictDoUpdate({ target: trueCostScenarios.quoteId, set: values });
+}
+
+export interface QuoteCost {
+  quoteId: string;
+  supplierId: string;
+  supplierName: string;
+  country: string | null;
+  date: string | null;
+  price: number;
+  currency: string;
+  priceEUR: number | null;
+  incoterm: string | null;
+  moq: number | null;
+  leadTimeDays: number | null;
+  paymentTermsDays: number | null;
+  expired: boolean;
+  comparability: Comparability;
+  /** The user confirmed the offered product is the same specification. */
+  technicalConfirmed: boolean;
+  inputs: TrueCostInputs;
+  cost: TrueCost;
+  opportunity: QuoteOpportunity | null;
+}
+
+export interface ProductCosts {
+  /** What is paid today: the invoice price, with no breakdown of what it includes. */
+  baseline: number | null;
+  baselinePaymentDays: number | null;
+  rates: { financing: number; holding: number; own: boolean };
+  quotes: QuoteCost[];
+  /** The quote with the lowest nominal price, and the one with the lowest complete true cost: they need not be the same. */
+  lowestQuote: QuoteCost | null;
+  lowestTrueCost: QuoteCost | null;
+  /** The largest opportunity a quote supports, on true cost. */
+  best: QuoteCost | null;
+}
+
+/** For every product with quotes on file: each quote's true cost, component by component, against what is paid today. */
+export async function readProductCosts(db: DB, intel: Intel, views: Map<string, MarketView>, t: T = en): Promise<Map<string, ProductCosts>> {
+  const [scenarios, sups, [company], candidates] = await Promise.all([db.select().from(trueCostScenarios), db.select().from(suppliers), db.select().from(settingsTable).limit(1), db.select().from(supplierCandidates)]);
+  const rates = { financing: company?.financingRatePct ?? SOURCING_CONFIG.financingRatePct, holding: company?.holdingRatePct ?? SOURCING_CONFIG.holdingRatePct, own: company?.financingRatePct != null || company?.holdingRatePct != null };
+  const home = company?.country ?? null;
+  const out = new Map<string, ProductCosts>();
+  for (const p of intel.products) {
+    const rows = p.comparison.filter((r) => !r.isCurrent && r.kind === "quote" && r.price != null && r.recordId);
+    if (!rows.length) continue;
+    const view = views.get(p.product.id);
+    const current = p.comparison.find((r) => r.isCurrent);
+    const baseline = view?.currentPrice ?? null;
+    const baselinePaymentDays = current ? (sups.find((x) => x.id === current.supplier.id)?.paymentTermsDays ?? current.paymentTermsDays) : null;
+    const costs = rows.map((r): QuoteCost => {
+      const sc = scenarios.find((x) => x.quoteId === r.recordId);
+      const supplier = sups.find((x) => x.id === r.supplier.id);
+      const country = supplier?.country ?? r.supplier.country ?? null;
+      const crosses = crossesCustoms(country, home);
+      const technicalConfirmed = candidates.some((c) => c.productId === p.product.id && c.supplierId === r.supplier.id && c.technicalCompatibility === "high");
+      const inputs: TrueCostInputs = { freightPerUnit: numOrNull(sc?.freightPerUnit ?? null), freightBasis: sc?.freightBasis ?? null, dutyRatePct: sc?.dutyRatePct ?? null, customsPerUnit: numOrNull(sc?.customsPerUnit ?? null), otherPerUnit: numOrNull(sc?.otherPerUnit ?? null), notes: sc?.notes ?? null };
+      const cost = trueCost(
+        {
+          price: r.price!,
+          currency: r.currency ?? "EUR",
+          fxRate: r.priceEUR != null && r.price ? r.priceEUR / r.price : null,
+          fxNote: null,
+          incoterm: r.incoterm,
+          sameCustomsArea: crosses == null ? null : !crosses,
+          freightPerUnit: inputs.freightPerUnit,
+          freightBasis: (inputs.freightBasis as CostBasis | null) ?? null,
+          dutyRatePct: inputs.dutyRatePct,
+          customsPerUnit: inputs.customsPerUnit,
+          otherPerUnit: inputs.otherPerUnit,
+          moq: r.moq,
+          typicalOrder: p.typicalOrderQuantity,
+          annualVolume: view?.history.annualQuantity || null,
+          paymentDays: r.termsFromDefaults ? null : r.paymentTermsDays,
+          baselinePaymentDays,
+          financingRatePct: rates.financing,
+          holdingRatePct: rates.holding,
+          technicalConfirmed,
+        },
+        t,
+      );
+      return {
+        quoteId: r.recordId!,
+        supplierId: r.supplier.id,
+        supplierName: r.supplier.name,
+        country,
+        date: r.date,
+        price: r.price!,
+        currency: r.currency ?? "EUR",
+        priceEUR: r.priceEUR,
+        incoterm: r.incoterm,
+        moq: r.moq,
+        leadTimeDays: r.termsFromDefaults ? null : r.leadTimeDays,
+        paymentTermsDays: r.termsFromDefaults ? null : r.paymentTermsDays,
+        expired: r.expired,
+        comparability: r.comparability,
+        technicalConfirmed,
+        inputs,
+        cost,
+        opportunity: r.expired ? null : quoteOpportunity(baseline, cost, { annualVolume: view?.history.annualQuantity || null, technicalConfirmed, moq: r.moq, comparable: r.comparability !== "not" }, t),
+      };
+    });
+    const live = costs.filter((c) => !c.expired && c.comparability !== "not");
+    const min = <K extends QuoteCost>(list: K[], value: (c: K) => number | null) => list.filter((c) => value(c) != null).sort((a, b) => value(a)! - value(b)!)[0] ?? null;
+    out.set(p.product.id, {
+      baseline,
+      baselinePaymentDays,
+      rates,
+      quotes: costs,
+      lowestQuote: live.length >= 2 ? min(live, (c) => c.priceEUR) : null,
+      lowestTrueCost: live.filter((c) => c.cost.perUnit != null).length >= 2 ? min(live, (c) => c.cost.perUnit) : null,
+      best: [...live].filter((c) => c.opportunity).sort((a, b) => b.opportunity!.perUnit - a.opportunity!.perUnit)[0] ?? null,
     });
   }
   return out;
@@ -432,13 +647,18 @@ export interface MarketViews {
   /** The suppliers that could cover the priority products, one entry per company. */
   opportunities: SupplierOpportunity[];
   requests: RfqRequest[];
+  /** The products the user put in the live pilot. Empty: the largest by spend stand in. */
+  pilot: string[];
 }
 
 function buildViews(intel: Intel, overview: PurchasingOverview, sourcing: Awaited<ReturnType<typeof readSourcing>>, homeCountry: string | null, t: T): MarketViews {
   const decisions = new Map(overview.products.map((d) => [d.productId, d]));
   // The first round of requests is for the few products that weigh most.
   const bySpend = intel.products.filter((p) => p.highSpend).sort((a, b) => b.metrics.annualSpend - a.metrics.annualSpend);
-  const materiality = new Map<string, Materiality>(bySpend.map((p, i) => [p.product.id, i < SOURCING_CONFIG.focusProducts ? "focus" : "priority"]));
+  // …and once the user has chosen the products of the pilot, the first round is those.
+  const pilot = new Set(sourcing.pilot);
+  const materiality = new Map<string, Materiality>(bySpend.map((p, i) => [p.product.id, (pilot.size ? pilot.has(p.product.id) : i < SOURCING_CONFIG.focusProducts) ? "focus" : "priority"]));
+  for (const id of pilot) materiality.set(id, "focus");
   const views = new Map<string, MarketView>();
   for (const p of intel.products) {
     const decision = decisions.get(p.product.id);
@@ -461,6 +681,7 @@ function buildViews(intel: Intel, overview: PurchasingOverview, sourcing: Awaite
   }
   const priority = bySpend.map((p) => views.get(p.product.id)!).filter(Boolean);
   return {
+    pilot: sourcing.pilot,
     views,
     review: sourcingReview(priority, intel.products.reduce((s, p) => s + p.metrics.annualSpend, 0)),
     opportunities: supplierOpportunities(priority.map((v) => ({ productId: v.productId, name: v.name, annualSpend: v.history.annualSpend, materiality: v.materiality, screening: v.screening })), t),
