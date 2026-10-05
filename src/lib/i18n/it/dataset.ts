@@ -165,4 +165,10 @@ export const dataset = {
   "No current supplier on file: import or add a purchase first.": "Nessun fornitore attuale in archivio: importa o aggiungi prima un acquisto.",
   "There is no estimate to confirm.": "Non c'è nessuna stima da confermare.",
   "Choose what kind of document it is.": "Scegli che tipo di documento è.",
+
+  // ---- Read-only demo (GitHub Pages)
+  "Read-only demo": "Demo in sola lettura",
+  "This is a saved copy of the app, with example data: saving, importing and researching need the app running on a server. Everything else can be browsed.":
+    "Questa è una copia salvata dell'app, con dati di esempio: salvare, importare e fare ricerche richiede l'app attiva su un server. Tutto il resto si può consultare.",
+  OK: "OK",
 };

@@ -1,5 +1,8 @@
 # Read-only demo of the app on GitHub Pages: the app runs with the demo data,
-# every page is saved as static HTML (scripts/snapshot.mjs) and published.
+# every page is saved as static HTML (scripts/snapshot.mjs) and published —
+# once in English (at the root) and once in Italian (under /it), since there
+# is no server to switch the language. Actions that need the server show a
+# "read-only demo" notice (components/shell/static-demo.tsx).
 name: Deploy demo to GitHub Pages
 
 on:
@@ -17,7 +20,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  NEXT_BASE_PATH: /${{ github.event.repository.name }}
+  ROOT: /${{ github.event.repository.name }}
+  NEXT_PUBLIC_STATIC_DEMO: "1"
+  NEXT_PUBLIC_DEMO_ROOT: /${{ github.event.repository.name }}
 
 jobs:
   build:
@@ -29,11 +34,26 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run build
-      - name: Snapshot pages
+      - name: English pages
+        env:
+          NEXT_BASE_PATH: ${{ env.ROOT }}
         run: |
-          npm start > server.log 2>&1 &
+          npm run build
+          npx next start -p 3100 > server-en.log 2>&1 &
           node scripts/snapshot.mjs
+          pkill -f "next-server|next start" || true
+          sleep 3
+      - name: Italian pages
+        env:
+          NEXT_BASE_PATH: ${{ env.ROOT }}/it
+          SNAPSHOT_OUT: out/it
+        run: |
+          npx tsx scripts/db.ts language it
+          npm run build
+          npx next start -p 3100 > server-it.log 2>&1 &
+          node scripts/snapshot.mjs
+          pkill -f "next-server|next start" || true
+          sleep 3
       - uses: actions/upload-pages-artifact@v3
         with:
           path: out

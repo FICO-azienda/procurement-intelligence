@@ -9,6 +9,7 @@ import { AddMenu } from "@/components/shell/add-menu";
 import { CommandBar } from "@/components/shell/command";
 import { LanguageMenu } from "@/components/shell/language";
 import { Notifications, type Notice } from "@/components/shell/notifications";
+import { StaticDemoGuard } from "@/components/shell/static-demo";
 import { Sidebar } from "@/components/sidebar";
 import { APP_NAME, COMPANY_NAME } from "@/lib/config";
 import { getDataset, getIntel, getSettings, getT } from "@/lib/data";
@@ -96,6 +97,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
     <html lang={t.locale} className={`${geistSans.variable} ${geistMono.variable}`}>
       <body className="min-h-dvh">
         <I18nProvider locale={t.locale}>
+        <StaticDemoGuard />
         <EntryProvider products={s.products} suppliers={s.suppliers} categories={s.categories}>
           <div className="md:grid md:min-h-dvh md:grid-cols-[216px_minmax(0,1fr)] print:block">
             <Sidebar reviewCount={s.review} company={s.company.companyName} />

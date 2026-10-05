@@ -8,6 +8,7 @@ import { useLocale, useT } from "@/lib/i18n/client";
 import { LOCALES, LOCALE_NAME, type Locale } from "@/lib/i18n";
 import { track } from "@/lib/track";
 import { cx } from "../ui";
+import { STATIC_DEMO, demoPathIn } from "./static-demo";
 
 /** Saves the language and reloads the page data in it. */
 function useLanguage() {
@@ -16,6 +17,8 @@ function useLanguage() {
   const [pending, startTransition] = useTransition();
   const choose = (next: Locale, after?: () => void) => {
     if (next === locale) return after?.();
+    // The read-only demo has no server to save the choice: each language is its own set of pages.
+    if (STATIC_DEMO) return window.location.assign(demoPathIn(next));
     startTransition(async () => {
       const res = await setLanguage(next);
       track("language_changed", { to: next });
