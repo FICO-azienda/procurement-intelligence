@@ -78,6 +78,13 @@
       "when": 1791152690231,
       "tag": "0010_true_cost",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1791203308081,
+      "tag": "0011_product_data",
+      "breakpoints": true
     }
   ]
 }

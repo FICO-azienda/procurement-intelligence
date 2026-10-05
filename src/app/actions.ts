@@ -38,6 +38,8 @@ import { connectedProviders } from "@/server/providers";
 import { convertCandidate, importResearch, planResearch, runResearch, setCustomsCode, setResearchClass, type ImportOutcome, type PlanView, type ResearchOutcome } from "@/server/research";
 import { parseResearchFile } from "@/lib/research/file";
 import { isCandidateStatus, isTechnicalFit } from "@/lib/sourcing/types";
+import { DataFieldError, confirmDataField, linkProductDocument, saveDataField, uploadProductFile } from "@/server/product-data";
+import { isFieldKey } from "@/lib/dataset/fields";
 import { MapperError, confirmMappings, keepSeparate, mergeProducts, saveMapping, type MappingEdit } from "@/server/mapper";
 import {
   benchmarkInput,
@@ -679,6 +681,77 @@ export async function setBenchmarkMonthAction(id: string, month: string): Promis
     refresh();
     return { ok: true };
   } catch (err) {
+    return sourcingFailed(t, err);
+  }
+}
+
+// ---------------- Procurement product dataset ----------------
+
+const DATA_ERROR: Record<string, Msg> = {
+  number: "Write a number, zero or more.",
+  days: "Write a whole number of days, zero or more.",
+  yesno: "Answer yes or no.",
+  not_editable: "This value comes from your documents: it can't be typed here.",
+  no_supplier: "No current supplier on file: import or add a purchase first.",
+  nothing_to_confirm: "There is no estimate to confirm.",
+  document_type: "Choose what kind of document it is.",
+};
+
+/** A field of the product's data, typed by a person. Empty clears it. */
+export async function saveDataFieldAction(productId: string, field: string, raw: string): Promise<SourcingResult> {
+  const t = await getT();
+  if (!isFieldKey(field)) return { ok: false, error: t("Something went wrong.") };
+  try {
+    await saveDataField(await getDb(), productId, field, raw);
+    refresh();
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof DataFieldError && DATA_ERROR[err.message]) return { ok: false, error: t(DATA_ERROR[err.message]) };
+    return sourcingFailed(t, err);
+  }
+}
+
+/** The software's estimate, confirmed as it is: it becomes a confirmed value, the estimate is kept with it. */
+export async function confirmDataFieldAction(productId: string, field: string): Promise<SourcingResult> {
+  const t = await getT();
+  if (!isFieldKey(field)) return { ok: false, error: t("Something went wrong.") };
+  try {
+    await confirmDataField(await getDb(), productId, field);
+    refresh();
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof DataFieldError && DATA_ERROR[err.message]) return { ok: false, error: t(DATA_ERROR[err.message]) };
+    return sourcingFailed(t, err);
+  }
+}
+
+/** A document already in the app (an invoice, a quote), linked to the product — not copied. */
+export async function linkProductDocumentAction(productId: string, documentId: string, type: string): Promise<SourcingResult> {
+  const t = await getT();
+  try {
+    await linkProductDocument(await getDb(), productId, documentId, type);
+    refresh();
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof DataFieldError && DATA_ERROR[err.message]) return { ok: false, error: t(DATA_ERROR[err.message]) };
+    return sourcingFailed(t, err);
+  }
+}
+
+/** A new document for the product, with what kind it is. The same file twice is stored once. */
+export async function uploadProductFileAction(productId: string, formData: FormData): Promise<SourcingResult> {
+  const t = await getT();
+  const file = formData.get("file");
+  const type = String(formData.get("type") ?? "");
+  if (!(file instanceof File) || file.size === 0) return { ok: false, error: t("Choose a file.") };
+  if (file.size > 20 * 1024 * 1024) return { ok: false, error: t("The file is larger than 20 MB.") };
+  if (!/\.(pdf|png|jpe?g|webp|docx?|xlsx?|txt)$/i.test(file.name)) return { ok: false, error: t("Attach a PDF, an image or an office document.") };
+  try {
+    await uploadProductFile(await getDb(), productId, { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()), mimeType: file.type || null }, type);
+    refresh();
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof DataFieldError && DATA_ERROR[err.message]) return { ok: false, error: t(DATA_ERROR[err.message]) };
     return sourcingFailed(t, err);
   }
 }

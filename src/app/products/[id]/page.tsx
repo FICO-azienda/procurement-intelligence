@@ -13,6 +13,11 @@ import { PriceChart } from "@/components/price-chart";
 import { ProductSummary } from "@/components/review/product-summary";
 import { Remember } from "@/components/shell/recent";
 import { DeepResearchButton } from "@/components/sourcing/research";
+import { FieldStatusTag, FieldProvenance, ProductDataPanel } from "@/components/dataset/product-data";
+import { FIELDS, FIELD_KEYS, SECTION_LABEL, type Section as DataSection } from "@/lib/dataset/fields";
+import type { ProductProfile } from "@/lib/dataset/profile";
+import { getDb } from "@/db";
+import { documentsOnFile, getPriorityDataset, getProfiles, linkedProductDocuments } from "@/server/product-data";
 import { ButtonLink, Crumbs, Delta, Disclosure, Empty, ExportLink, Label, PageHeader, Section, Sku, Table, Td, Th, cx, rowClass } from "@/components/ui";
 import { basePrice, baseTotal, isPriced, normalizePurchases, type Dataset, type ProductData } from "@/lib/analytics";
 import { ATTRIBUTE_LABEL, attributesOf } from "@/lib/catalog/attributes";
@@ -40,8 +45,9 @@ export async function generateMetadata({ params }: PageProps<"/products/[id]">):
 
 const TIMELINE_MAX = 10;
 
-export default async function ProductPage({ params }: PageProps<"/products/[id]">) {
+export default async function ProductPage({ params, searchParams }: PageProps<"/products/[id]">) {
   const { id } = await params;
+  const query = await searchParams;
   const [data, learning, intel, families, mapped, t] = await Promise.all([getDataset(), getLearning(), getIntel(), getFamilies(), getMapAnalysis(), getT()]);
   const EXPLAIN = explain(t);
   const pi = intel.products.find((p) => p.product.id === id);
@@ -53,6 +59,12 @@ export default async function ProductPage({ params }: PageProps<"/products/[id]"
     return <SpendItem product={item} data={data} learning={learning} t={t} />;
   }
   const { product, price } = pi;
+  const profile = (await getProfiles([product.id])).get(product.id)!;
+  const db = await getDb();
+  const [onFile, linkedDocs, priority] = await Promise.all([documentsOnFile(db, product.id), linkedProductDocuments(db, product.id), query.review ? getPriorityDataset() : Promise.resolve(null)]);
+  // Reviewing the Top 5: the next of them that still has something missing or to confirm.
+  const top = priority?.rows.filter((r) => r.top) ?? [];
+  const after = top.slice(top.findIndex((r) => r.intel.product.id === product.id) + 1).find((r) => r.profile.missing.length || r.profile.toConfirm.length);
 
   const l = lookups(data);
   const history = data.purchases.filter((p) => p.productId === product.id).sort((a, b) => (a.date < b.date ? -1 : 1));
@@ -130,6 +142,14 @@ export default async function ProductPage({ params }: PageProps<"/products/[id]"
 
       {/* The answer first: where this product stands, what is at stake, what to check. */}
       <ProductSummary d={d} columns={compareColumns(pi, intel.config, t)} />
+
+      <ProductDataPanel
+        profile={profile}
+        documents={{ linked: linkedDocs, onFile: onFile.filter((x) => !linkedDocs.some((l) => l.documentId === x.documentId)) }}
+        open={query.complete === "1"}
+        next={after ? { href: `/products/${after.intel.product.id}?complete=1&review=1#product-data`, name: after.intel.product.name } : query.review ? { href: "/products/data", name: t("back to the Top 5") } : null}
+      />
+      <AllProductData profile={profile} t={t} />
 
       <Disclosure
         className="mt-6"
@@ -554,6 +574,37 @@ export default async function ProductPage({ params }: PageProps<"/products/[id]"
       )}
       </div>
     </>
+  );
+}
+
+/** Every field of the product's data, with its status, its source and — for estimates — the method: the dataset as it is stored and computed. */
+function AllProductData({ profile, t }: { profile: ProductProfile; t: T }) {
+  const sections: DataSection[] = ["identity", "technical", "purchasing", "commercial", "quality"];
+  return (
+    <Disclosure className="mt-3" title={t("All product data")} description={t("Every field with its status and source")} flush>
+      {sections.map((s) => (
+        <div key={s} className="border-b border-rule px-5 py-3 last:border-b-0">
+          <div className="mb-1.5 text-[12px] font-semibold tracking-[0.04em] text-ink-3 uppercase">{t(SECTION_LABEL[s])}</div>
+          <dl className="divide-y divide-rule text-[13px]">
+            {FIELD_KEYS.filter((k) => FIELDS[k].section === s).map((k) => {
+              const x = profile.fields[k];
+              return (
+                <div key={k} className="grid gap-x-4 gap-y-0.5 py-2 @2xl:grid-cols-[200px_1fr]">
+                  <dt className="text-ink-3">{t(FIELDS[k].label)}</dt>
+                  <dd className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <FieldStatusTag status={x.status} />
+                      <span className={cx("break-words", x.display ? "" : "text-ink-4")}>{x.display ?? "—"}</span>
+                    </div>
+                    <FieldProvenance field={x} />
+                  </dd>
+                </div>
+              );
+            })}
+          </dl>
+        </div>
+      ))}
+    </Disclosure>
   );
 }
 

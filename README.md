@@ -391,6 +391,10 @@ Simple / Detail view (`?view=detail`), stampa o PDF dal pulsante Print (la pagin
 - Il database locale supporta un solo processo alla volta: ferma `npm run dev` prima di usare `db:reset` / `db:clear` (oppure usa i pulsanti in Import).
 - Un prodotto ha una sola unità di misura; le conversioni (es. kg ↔ t) non sono ancora gestite.
 
+## Dati prodotto (Procurement Product Dataset)
+
+Per i prodotti prioritari (il Pareto esistente) l'app costruisce una scheda standard — identità, tecnica, acquisti, condizioni commerciali, qualità — con tutto ciò che è già nel database: fatture, preventivi, anagrafiche, documenti, descrizione per le richieste d'offerta. Ogni campo è **confermato** (documento, persona, o semplice aritmetica sulle fatture), **stimato** (inferenza del software, con il metodo: mediana per l'ordine tipico, volume annualizzato da uno storico più corto di un anno) o **mancante**: nulla viene inventato. La pagina prodotto mostra la completezza per area, cosa manca e a chi chiederlo (in azienda o al fornitore attuale), e un modulo breve per completare o confermare le stime; `/products/data` mostra i prodotti prioritari e il giro di completamento dei Top 5. I valori scritti finiscono dove il resto dell'app li legge (richieste d'offerta, ricerca, costo reale); `product_data_fields` conserva chi li ha scritti, quando, e la stima che hanno sostituito. L'export CSV è una copia per la revisione offline: la fonte resta il database.
+
 ## Demo su GitHub Pages
 
 Ogni push su `main` lancia `.github/workflows/pages.yml`: l'app parte con i dati demo, `scripts/snapshot.mjs` salva ogni pagina come HTML statico e il risultato viene pubblicato su https://fico-azienda.github.io/procurement-intelligence/. È una demo in sola lettura: import, moduli, salvataggi e download richiedono il server e lì non funzionano.

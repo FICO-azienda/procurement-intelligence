@@ -542,11 +542,45 @@ export const productDocuments = pgTable(
     documentId: uuid("document_id")
       .notNull()
       .references(() => documents.id, { onDelete: "cascade" }),
-    /** technical_datasheet | specification | image | other */
+    /** technical_datasheet | supplier_quote | specification | certificate | image | other */
     type: text("type").notNull().default("technical_datasheet"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("product_documents_product_idx").on(t.productId)],
+);
+
+/**
+ * Procurement product dataset: what a person confirmed or wrote about a
+ * product, field by field, with when and from what. Most values live in their
+ * own place (the neutral name and specification on the product, payment terms
+ * on the supplier, minimum order and lead time on the supplier's link to the
+ * product) and the row here only keeps the provenance; fields with no other
+ * place (delivery basis, freight, quality notes, a confirmed volume) keep
+ * their value here. What the software computes is never stored: an estimate
+ * is copied in `estimate` only when someone confirms or corrects it, so the
+ * original figure and its method stay readable.
+ */
+export const productDataFields = pgTable(
+  "product_data_fields",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    productId: uuid("product_id")
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    /** A key of lib/dataset/fields.ts. */
+    field: text("field").notNull(),
+    /** The value, for fields kept here. Null: the value lives in its own column. */
+    value: text("value"),
+    /** user (typed or confirmed in the app) | document (read from a document the user pointed to). */
+    source: text("source").notNull().default("user"),
+    /** The document it comes from, when there is one. */
+    documentId: uuid("document_id").references(() => documents.id, { onDelete: "set null" }),
+    note: text("note"),
+    /** What the software had estimated when the user confirmed or corrected it: { value, method, source }. */
+    estimate: jsonb("estimate").$type<{ value: string; method: string | null; source: string | null }>(),
+    ...timestamps,
+  },
+  (t) => [uniqueIndex("product_data_fields_product_field_idx").on(t.productId, t.field)],
 );
 
 /**

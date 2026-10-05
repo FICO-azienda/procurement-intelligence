@@ -195,7 +195,13 @@ export default async function ProductsPage({ searchParams }: PageProps<"/product
 
   return (
     <>
-      <PageHeader title={t("Products")} meta={t("What you buy, what you pay for it, and whether it deserves a look.")} actions={<ExportLink href="/export/products" className="px-1" />} />
+      <PageHeader title={t("Products")} meta={t("What you buy, what you pay for it, and whether it deserves a look.")} actions={
+          <>
+            <ButtonLink href="/products/data">{t("Product data")}</ButtonLink>
+            <ExportLink href="/export/products" className="px-1" />
+          </>
+        }
+      />
       {companyTotal}
 
       {toMap > 0 && (

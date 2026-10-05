@@ -99,6 +99,7 @@ export default async function SourcingPage() {
       <PageHeader
         title={t("Market and alternative suppliers")}
         meta={t("Are you buying well? For the products that weigh the most: what you pay, what the evidence says, who else could supply them, and what to do next.")}
+        actions={<ButtonLink href="/products/data">{t("Product data")}</ButtonLink>}
       />
 
       <div className="mb-4 grid gap-x-8 gap-y-4 rounded-xl border border-rule px-5 py-5 sm:px-6 @3xl:grid-cols-4">

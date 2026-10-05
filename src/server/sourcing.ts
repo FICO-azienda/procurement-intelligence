@@ -29,6 +29,7 @@ import { supplierOpportunities, type Materiality, type RfqRequest, type Supplier
 import type { DiscoveryRequest, Providers } from "@/lib/sourcing/providers";
 import { SOURCING_CONFIG, isCandidateStatus, isCompanyType, isPriceType, isSourceLevel, isTechnicalFit, type CandidateStatus, type Comparability, type Confidence, type MarketBenchmark, type SupplierCandidate, type TechnicalFit } from "@/lib/sourcing/types";
 import type { benchmarkInput, candidateInput } from "@/lib/validation";
+import { confirmedQuantities } from "./confirmed";
 import { connectedProviders } from "./providers";
 
 const numOrNull = (v: string | null) => (v == null ? null : Number(v));
@@ -327,12 +328,14 @@ export async function deleteBenchmark(db: DB, id: string): Promise<void> {
 export async function discoveryRequest(db: DB, productId: string, t: T = en): Promise<{ request: DiscoveryRequest; query: QueryInput } | null> {
   const [product] = await db.select().from(products).where(eq(products.id, productId));
   if (!product) return null;
-  const [learning, settings, bought, family] = await Promise.all([
+  const [learning, settings, bought, family, confirmed] = await Promise.all([
     readLearning(db),
     readSettings(db),
     db.select().from(purchases).where(eq(purchases.productId, productId)),
     product.familyId ? db.select().from(productFamilies).where(eq(productFamilies.id, product.familyId)) : Promise.resolve([]),
+    confirmedQuantities(db),
   ]);
+  const mine = confirmed.get(productId);
   const aliases = learning.productAliases.filter((a) => a.productId === productId);
   const specifications = { ...Object.fromEntries(attributesOf([product.name, ...aliases.map((a) => a.alias)].join(" · ")).map((a) => [a.key, a.value])), ...(product.specs ?? {}) };
   const start = windowStart(todayISO());
@@ -352,8 +355,9 @@ export async function discoveryRequest(db: DB, productId: string, t: T = en): Pr
       specifications,
       supplierCodes: [...new Set(aliases.map((a) => a.supplierSku).filter((x): x is string => !!x))],
       unit: product.unit,
-      annualQuantity: recent.length ? recent.reduce((s, x) => s + Number(x.quantity), 0) : null,
-      typicalOrderQuantity: quantities.length ? quantities[Math.floor(quantities.length / 2)] : null,
+      // What the company confirmed in its product data comes first.
+      annualQuantity: mine?.annual ?? (recent.length ? recent.reduce((s, x) => s + Number(x.quantity), 0) : null),
+      typicalOrderQuantity: mine?.typicalOrder ?? (quantities.length ? quantities[Math.floor(quantities.length / 2)] : null),
       deliveryCountry: settings.country,
       knownSuppliers: known,
       queries: searchQueries(query, t),
@@ -415,13 +419,14 @@ export interface RfqLineData {
 }
 
 export async function readRfqLines(db: DB, productIds: string[], t: T = en): Promise<Map<string, RfqLineData>> {
-  const [rows, bought, names, aliases, docs, company] = await Promise.all([
+  const [rows, bought, names, aliases, docs, company, confirmed] = await Promise.all([
     db.select().from(products),
     db.select().from(purchases),
     db.select({ id: suppliers.id, name: suppliers.name }).from(suppliers),
     db.select({ productId: productAliases.productId, sku: productAliases.supplierSku }).from(productAliases),
     db.select({ id: productDocuments.id, productId: productDocuments.productId, documentId: documents.id, filename: documents.filename }).from(productDocuments).innerJoin(documents, eq(productDocuments.documentId, documents.id)),
     readSettings(db),
+    confirmedQuantities(db),
   ]);
   const start = windowStart(todayISO());
   const out = new Map<string, RfqLineData>();
@@ -445,8 +450,9 @@ export async function readRfqLines(db: DB, productIds: string[], t: T = en): Pro
         knownSuppliers: known,
         companyName: company.companyName,
         unit: product.unit,
-        annualQuantity: recent.length ? recent.reduce((sum, x) => sum + Number(x.quantity), 0) : null,
-        typicalOrderQuantity: quantities.length ? quantities[Math.floor(quantities.length / 2)] : null,
+        // What the company confirmed in its product data comes first.
+        annualQuantity: confirmed.get(id)?.annual ?? (recent.length ? recent.reduce((sum, x) => sum + Number(x.quantity), 0) : null),
+        typicalOrderQuantity: confirmed.get(id)?.typicalOrder ?? (quantities.length ? quantities[Math.floor(quantities.length / 2)] : null),
         deliveryCountry: company.country,
         documents: attached.length,
       },
@@ -474,7 +480,7 @@ export async function saveRfqSpec(db: DB, productId: string, v: { rfqName: strin
 }
 
 /** A technical document kept with a product, to attach to a request. The file is stored as it is: nothing is read from it. */
-export async function addProductDocument(db: DB, productId: string, file: { name: string; bytes: Uint8Array; mimeType: string | null }, type = "technical_datasheet"): Promise<void> {
+export async function addProductDocument(db: DB, productId: string, file: { name: string; bytes: Uint8Array; mimeType: string | null }, type = "technical_datasheet"): Promise<string> {
   const sha256 = createHash("sha256").update(file.bytes).digest("hex");
   let [doc] = await db.select().from(documents).where(eq(documents.sha256, sha256));
   if (!doc) {
@@ -484,6 +490,7 @@ export async function addProductDocument(db: DB, productId: string, file: { name
   }
   const linked = await db.select().from(productDocuments).where(eq(productDocuments.productId, productId));
   if (!linked.some((l) => l.documentId === doc.id)) await db.insert(productDocuments).values({ productId, documentId: doc.id, type });
+  return doc.id;
 }
 
 export async function removeProductDocument(db: DB, id: string): Promise<void> {
@@ -556,7 +563,7 @@ export interface ProductCosts {
 
 /** For every product with quotes on file: each quote's true cost, component by component, against what is paid today. */
 export async function readProductCosts(db: DB, intel: Intel, views: Map<string, MarketView>, t: T = en): Promise<Map<string, ProductCosts>> {
-  const [scenarios, sups, [company], candidates] = await Promise.all([db.select().from(trueCostScenarios), db.select().from(suppliers), db.select().from(settingsTable).limit(1), db.select().from(supplierCandidates)]);
+  const [scenarios, sups, [company], candidates, confirmed] = await Promise.all([db.select().from(trueCostScenarios), db.select().from(suppliers), db.select().from(settingsTable).limit(1), db.select().from(supplierCandidates), confirmedQuantities(db)]);
   const rates = { financing: company?.financingRatePct ?? SOURCING_CONFIG.financingRatePct, holding: company?.holdingRatePct ?? SOURCING_CONFIG.holdingRatePct, own: company?.financingRatePct != null || company?.holdingRatePct != null };
   const home = company?.country ?? null;
   const out = new Map<string, ProductCosts>();
@@ -566,6 +573,9 @@ export async function readProductCosts(db: DB, intel: Intel, views: Map<string, 
     const view = views.get(p.product.id);
     const current = p.comparison.find((r) => r.isCurrent);
     const baseline = view?.currentPrice ?? null;
+    // Volumes confirmed in the product data come before the ones read from the history.
+    const annualVolume = confirmed.get(p.product.id)?.annual ?? (view?.history.annualQuantity || null);
+    const typicalOrder = confirmed.get(p.product.id)?.typicalOrder ?? p.typicalOrderQuantity;
     const baselinePaymentDays = current ? (sups.find((x) => x.id === current.supplier.id)?.paymentTermsDays ?? current.paymentTermsDays) : null;
     const costs = rows.map((r): QuoteCost => {
       const sc = scenarios.find((x) => x.quoteId === r.recordId);
@@ -588,8 +598,8 @@ export async function readProductCosts(db: DB, intel: Intel, views: Map<string, 
           customsPerUnit: inputs.customsPerUnit,
           otherPerUnit: inputs.otherPerUnit,
           moq: r.moq,
-          typicalOrder: p.typicalOrderQuantity,
-          annualVolume: view?.history.annualQuantity || null,
+          typicalOrder,
+          annualVolume,
           paymentDays: r.termsFromDefaults ? null : r.paymentTermsDays,
           baselinePaymentDays,
           financingRatePct: rates.financing,
@@ -616,7 +626,7 @@ export async function readProductCosts(db: DB, intel: Intel, views: Map<string, 
         technicalConfirmed,
         inputs,
         cost,
-        opportunity: r.expired ? null : quoteOpportunity(baseline, cost, { annualVolume: view?.history.annualQuantity || null, technicalConfirmed, moq: r.moq, comparable: r.comparability !== "not" }, t),
+        opportunity: r.expired ? null : quoteOpportunity(baseline, cost, { annualVolume, technicalConfirmed, moq: r.moq, comparable: r.comparability !== "not" }, t),
       };
     });
     const live = costs.filter((c) => !c.expired && c.comparability !== "not");

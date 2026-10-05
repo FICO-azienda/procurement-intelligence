@@ -5,6 +5,7 @@
  * disagree, and that every placeholder survives the translation).
  */
 import { catalog } from "./it/catalog";
+import { dataset } from "./it/dataset";
 import { engine } from "./it/engine";
 import { imports } from "./it/imports";
 import { mapper } from "./it/mapper";
@@ -12,6 +13,6 @@ import { research } from "./it/research";
 import { sourcing } from "./it/sourcing";
 import { ui } from "./it/ui";
 
-export const PARTS = { engine, imports, ui, catalog, mapper, sourcing, research };
+export const PARTS = { engine, imports, ui, catalog, mapper, sourcing, research, dataset };
 
-export const it = { ...engine, ...imports, ...ui, ...catalog, ...mapper, ...sourcing, ...research };
+export const it = { ...engine, ...imports, ...ui, ...catalog, ...mapper, ...sourcing, ...research, ...dataset };
