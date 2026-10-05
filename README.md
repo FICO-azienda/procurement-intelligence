@@ -390,3 +390,7 @@ Simple / Detail view (`?view=detail`), stampa o PDF dal pulsante Print (la pagin
 - Nessuna autenticazione: è un prototipo locale, non esporlo su internet così com'è.
 - Il database locale supporta un solo processo alla volta: ferma `npm run dev` prima di usare `db:reset` / `db:clear` (oppure usa i pulsanti in Import).
 - Un prodotto ha una sola unità di misura; le conversioni (es. kg ↔ t) non sono ancora gestite.
+
+## Demo su GitHub Pages
+
+Ogni push su `main` lancia `.github/workflows/pages.yml`: l'app parte con i dati demo, `scripts/snapshot.mjs` salva ogni pagina come HTML statico e il risultato viene pubblicato su https://fico-azienda.github.io/procurement-intelligence/. È una demo in sola lettura: import, moduli, salvataggi e download richiedono il server e lì non funzionano.
