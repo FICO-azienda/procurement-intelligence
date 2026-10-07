@@ -19,6 +19,7 @@
  * setting DATABASE_URL — same schema, same migrations (./drizzle).
  */
 import {
+  type AnyPgColumn,
   boolean,
   date,
   index,
@@ -55,6 +56,15 @@ export const suppliers = pgTable("suppliers", {
   country: text("country"),
   city: text("city"),
   vatNumber: text("vat_number"),
+  /** Tax code or company registration number, when a document gives one besides the VAT number. */
+  taxCode: text("tax_code"),
+  /**
+   * The supplier this record is read as, once the two were recognised as the
+   * same company (lib/suppliers/resolve.ts). The record stays as it is — its
+   * name, its purchases, its quotes — so the merge can be taken back by
+   * clearing this. Null: the record stands for itself.
+   */
+  mergedIntoId: uuid("merged_into_id").references((): AnyPgColumn => suppliers.id, { onDelete: "set null" }),
   contactName: text("contact_name"),
   email: text("email"),
   phone: text("phone"),
@@ -608,6 +618,42 @@ export const trueCostScenarios = pgTable("true_cost_scenarios", {
   notes: text("notes"),
   ...timestamps,
 });
+
+// ---------------- Supplier entity resolution ----------------
+
+/**
+ * What was decided about two supplier records that may be the same company:
+ * merged (by a strong identifier, or by the user) or kept separate. It is the
+ * history of the merges — a merge taken back keeps its row, with the date —
+ * and the memory of the pairs not to propose again. The records themselves
+ * are never deleted or rewritten: a merge is `suppliers.merged_into_id`.
+ */
+export const supplierResolutions = pgTable(
+  "supplier_resolutions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** The record merged (or one of the two kept separate). */
+    supplierId: uuid("supplier_id")
+      .notNull()
+      .references(() => suppliers.id, { onDelete: "cascade" }),
+    /** The record it was merged into (or the other of the two). */
+    otherId: uuid("other_id")
+      .notNull()
+      .references(() => suppliers.id, { onDelete: "cascade" }),
+    /** merged | separate */
+    decision: text("decision").notNull(),
+    /** What the match rested on: vat, tax_code, domain, name, alias, similar_name, phone, city. */
+    basis: jsonb("basis").$type<string[]>().notNull().default([]),
+    /** high | medium | low */
+    confidence: text("confidence"),
+    /** auto (a strong identifier) | user */
+    decidedBy: text("decided_by").notNull().default("user"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    /** When a merge was taken back. */
+    undoneAt: timestamp("undone_at", { withTimezone: true }),
+  },
+  (t) => [index("supplier_resolutions_supplier_idx").on(t.supplierId), index("supplier_resolutions_other_idx").on(t.otherId)],
+);
 
 // ---------------- Negotiation intelligence ----------------
 

@@ -75,6 +75,8 @@ export function formatSpecs(specs: Record<string, string> | null | undefined): s
 export const supplierInput = z.object({
   name: requiredText("Name"),
   country: optionalText,
+  /** The identifier a supplier is recognised by, whatever name a document writes. */
+  vatNumber: optionalText,
   city: optionalText,
   contactName: optionalText,
   email: optionalText.refine((v) => v == null || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), "Email is not valid" satisfies Msg),

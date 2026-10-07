@@ -1,6 +1,7 @@
 /**
  * Text normalization for matching names across documents.
  *   companyKey("ABC S.r.l.") === companyKey("ABC Srl") === "abc"
+ *   companyKey("S.E.R. S.p.A.") === companyKey("SER SPA") === "ser"
  *   productKey("PARAFFINA RAFFINATA 58-60") → "paraffina raffinata 58 60"
  *   codeKey("PAR 5860") === codeKey("par-5860") === "PAR5860"
  */
@@ -27,8 +28,8 @@ const LEGAL_FORMS = new Set([
   "srl", "srls", "spa", "sapa", "sas", "snc", "scarl", "scrl", "sc", "coop", "soc", "societa", "cooperativa",
   "ltd", "limited", "llc", "llp", "inc", "incorporated", "corp", "corporation", "co", "company", "plc",
   "gmbh", "ag", "kg", "ohg", "ug", "sa", "sarl", "sas", "sl", "slu", "bv", "nv", "oy", "ab", "as", "aps",
-  "sp", "zoo", "z", "o", "o o", "sro", "as", "kft", "doo", "pte", "pty", "sti", "as", "ltd sti", "anonim", "sirketi",
-  "and", "e", "c", "the",
+  "sp", "zoo", "z", "o", "oo", "o o", "sro", "as", "kft", "doo", "pte", "pty", "sti", "as", "ltd sti", "anonim", "sirketi",
+  "rl", "arl", "and", "e", "c", "the",
 ]);
 
 /** Joins dotted abbreviations: "s r l" → "srl", "s p a" → "spa". */
@@ -48,8 +49,30 @@ function joinInitials(tokens: string[]): string[] {
   return out;
 }
 
+/**
+ * A dotted abbreviation is one word, whatever stands next to it: "S.p.A." →
+ * "SpA", "S.E.R." → "SER". Without this "S.E.R. S.p.A." would read as one
+ * six-letter word and never meet "SER SPA".
+ */
+const DOTTED = /^(?:\p{L}\.){1,}\p{L}?\.?[,;]?$/u;
+function joinDotted(name: string): string {
+  return name
+    .split(/\s+/)
+    .map((word) => (DOTTED.test(word) && word.replace(/[^\p{L}]/gu, "").length >= 2 ? word.replace(/[.,;]/g, "") : word))
+    .join(" ");
+}
+
+/**
+ * What a company register adds after the name and says nothing of who the
+ * company is: sole shareholder, benefit company, in liquidation, "subject to
+ * the direction and coordination of…". Read on the normalized name.
+ */
+const LEGAL_NOTES = [/\b(?:societa )?(?:a |con |c )?(?:socio unico|unico socio)\b/g, /\b(?:societa )?unipersonale\b/g, /\bsocieta benefit\b/g, /\bin liquidazione\b/g, /\bsoggett[ao] ad? (?:attivita di )?direz.*$/g];
+
 export function companyKey(name: string | null | undefined): string {
-  const tokens = joinInitials(normalizeKey(name).split(" ").filter(Boolean));
+  let normalized = normalizeKey(joinDotted(name ?? ""));
+  for (const note of LEGAL_NOTES) normalized = normalized.replace(note, " ");
+  const tokens = joinInitials(normalized.split(" ").filter(Boolean));
   const kept = tokens.filter((t) => !LEGAL_FORMS.has(t));
   // Never reduce a name to nothing ("Co. Ltd" alone): fall back to all tokens.
   return (kept.length ? kept : tokens).join(" ");

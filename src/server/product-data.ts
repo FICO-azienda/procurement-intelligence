@@ -21,6 +21,7 @@ import { en, type T } from "@/lib/i18n";
 import { parseNumber } from "@/lib/import/normalize/numbers";
 import { analyze, type Intel, type ProductIntel } from "@/lib/intel/engine";
 import { addProductDocument } from "./sourcing";
+import { canonicalSupplierId } from "./suppliers";
 
 export async function readLedger(db: DB, productIds?: string[]): Promise<Map<string, LedgerRow[]>> {
   const rows = productIds ? (productIds.length ? await db.select().from(productDataFields).where(inArray(productDataFields.productId, productIds)) : []) : await db.select().from(productDataFields);
@@ -158,9 +159,10 @@ export function parseFieldValue(key: FieldKey, raw: string): { value: string | n
 
 async function currentSupplierOf(db: DB, productId: string): Promise<string | null> {
   const [p] = await db.select({ current: products.currentSupplierId }).from(products).where(eq(products.id, productId));
-  if (p?.current) return p.current;
-  const [last] = await db.select({ supplierId: purchases.supplierId, date: purchases.date }).from(purchases).where(eq(purchases.productId, productId)).orderBy(purchases.date).then((r) => r.slice(-1));
-  return last?.supplierId ?? null;
+  const [last] = p?.current ? [] : await db.select({ supplierId: purchases.supplierId, date: purchases.date }).from(purchases).where(eq(purchases.productId, productId)).orderBy(purchases.date).then((r) => r.slice(-1));
+  const id = p?.current ?? last?.supplierId ?? null;
+  // A record merged into another is read as the company it stands for: its terms are written there.
+  return id ? canonicalSupplierId(db, id) : null;
 }
 
 /** Puts the value where the app reads it. */

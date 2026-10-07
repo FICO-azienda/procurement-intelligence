@@ -37,6 +37,7 @@ import type { Confidence, SourceLevel, SupplierCandidate, TechnicalFit } from "@
 import { connectedProviders } from "./providers";
 import { SourceError } from "./providers/http";
 import { candidateValues, discoveryRequest, readMarketViews, toCandidate } from "./sourcing";
+import { readSupplierRows } from "./suppliers";
 
 export interface ResearchDeps {
   providers: Providers;
@@ -596,8 +597,9 @@ export async function convertCandidate(db: DB, id: string): Promise<{ supplierId
   const [c] = await db.select().from(supplierCandidates).where(eq(supplierCandidates.id, id));
   if (!c) throw new Error("Candidate not found");
   const key = companyKey(c.name);
-  const same = (await db.select({ id: suppliers.id, name: suppliers.name }).from(suppliers)).find((s) => companyKey(s.name) === key);
-  const supplierId = same?.id ?? (await db.insert(suppliers).values({ name: c.name, country: c.country, website: c.website }).returning({ id: suppliers.id }))[0].id;
+  const known = await readSupplierRows(db);
+  const same = known.rows.find((s) => companyKey(s.name) === key);
+  const supplierId = same ? (known.canon.get(same.id) ?? same.id) : (await db.insert(suppliers).values({ name: c.name, country: c.country, website: c.website }).returning({ id: suppliers.id }))[0].id;
   // Every candidate of the same company, on whatever product, now points to the one supplier.
   for (const other of (await db.select().from(supplierCandidates)).filter((x) => companyKey(x.name) === key)) {
     await db.update(supplierCandidates).set({ supplierId, ...(other.id === id ? { status: "converted" } : {}), updatedAt: new Date() }).where(eq(supplierCandidates.id, other.id));

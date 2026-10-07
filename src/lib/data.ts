@@ -31,6 +31,7 @@ import { purchasingOverview, type PurchasingOverview } from "./intel/decision";
 import { analyze, type Intel, type OpportunityState } from "./intel/engine";
 import { mapCatalogue, toMapInput, type MapAnalysis } from "./catalog/mapper";
 import { catalogueOf, companySpend, type CompanySpend } from "./catalog/spend";
+import { canonicalIds } from "./suppliers/resolve";
 
 const num = (v: string) => Number(v);
 const numOrNull = (v: string | null) => (v == null ? null : Number(v));
@@ -67,13 +68,21 @@ export async function readDataset(db: DB): Promise<Dataset> {
       .orderBy(quotes.date, quotes.createdAt),
   ]);
 
+  // Supplier records recognised as the same company are read as one (lib/suppliers/resolve.ts): the merged record
+  // keeps its rows, and everything that hangs on it is counted under the record it points to.
+  const canon = canonicalIds(s);
+  const one = (id: string) => canon.get(id) ?? id;
+  const members = (id: string) => s.filter((r) => canon.get(r.id) === id);
   return {
-    suppliers: s.map((r) => ({
+    suppliers: s
+      .filter((r) => canon.get(r.id) === r.id)
+      .map((r) => ({
       id: r.id,
       name: r.name,
       country: r.country,
       city: r.city,
-      vatNumber: r.vatNumber,
+      // What a merged record knew of the company, the company knows.
+      vatNumber: r.vatNumber ?? members(r.id).map((m) => m.vatNumber).find(Boolean) ?? null,
       contactName: r.contactName,
       email: r.email,
       phone: r.phone,
@@ -97,12 +106,12 @@ export async function readDataset(db: DB): Promise<Dataset> {
       unit: r.unit,
       technicalSpecifications: r.technicalSpecifications,
       specs: r.specs ?? null,
-      currentSupplierId: r.currentSupplierId,
+      currentSupplierId: r.currentSupplierId ? one(r.currentSupplierId) : null,
     })),
     purchases: pu.map(({ row: r, ...src }) => ({
       id: r.id,
       productId: r.productId,
-      supplierId: r.supplierId,
+      supplierId: one(r.supplierId),
       date: r.date,
       quantity: num(r.quantity),
       unit: r.unit,
@@ -125,7 +134,7 @@ export async function readDataset(db: DB): Promise<Dataset> {
     quotes: q.map(({ row: r, ...src }) => ({
       id: r.id,
       productId: r.productId,
-      supplierId: r.supplierId,
+      supplierId: one(r.supplierId),
       date: r.date,
       quantity: numOrNull(r.quantity),
       unitPrice: num(r.unitPrice),
@@ -147,28 +156,40 @@ export async function readDataset(db: DB): Promise<Dataset> {
 
 /** Aliases and supplier codes: what the system has learned from confirmations. */
 export async function readLearning(db: DB) {
-  const [pa, sa, sp] = await Promise.all([
+  const [pa, sa, sp, rows] = await Promise.all([
     db.select().from(productAliases).orderBy(productAliases.createdAt),
     db.select().from(supplierAliases).orderBy(supplierAliases.createdAt),
     db.select().from(supplierProducts),
+    db.select({ id: suppliers.id, mergedIntoId: suppliers.mergedIntoId }).from(suppliers),
   ]);
+  // What was learned about a merged supplier record belongs to the company it is read as.
+  const canon = canonicalIds(rows);
+  const one = <V extends string | null>(id: V) => (id ? (canon.get(id) ?? id) : id) as V;
+  // One link per company and product: the company's own record first, then what a merged one knew.
+  const links = [...sp].sort((a, b) => Number(canon.get(b.supplierId) === b.supplierId) - Number(canon.get(a.supplierId) === a.supplierId));
+  const linked = new Set<string>();
   return {
     productAliases: pa.map((a) => ({
       id: a.id,
       productId: a.productId,
       alias: a.alias,
       normalized: a.normalized,
-      supplierId: a.supplierId,
+      supplierId: one(a.supplierId),
       supplierSku: a.supplierSku,
       ean: a.ean,
       confidence: a.confidence,
       confirmedByUser: a.confirmedByUser,
       sourceSessionId: a.sourceSessionId,
     })),
-    supplierAliases: sa.map((a) => ({ id: a.id, supplierId: a.supplierId, alias: a.alias, normalized: a.normalized })),
-    supplierProducts: sp.map((l) => ({
+    supplierAliases: sa.map((a) => ({ id: a.id, supplierId: one(a.supplierId), alias: a.alias, normalized: a.normalized })),
+    supplierProducts: links
+      .filter((l) => {
+        const key = `${one(l.supplierId)}|${l.productId}`;
+        return linked.has(key) ? false : (linked.add(key), true);
+      })
+      .map((l) => ({
       id: l.id,
-      supplierId: l.supplierId,
+      supplierId: one(l.supplierId),
       productId: l.productId,
       supplierSku: l.supplierSku,
       supplierProductName: l.supplierProductName,

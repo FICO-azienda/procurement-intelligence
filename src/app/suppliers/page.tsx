@@ -2,12 +2,16 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { SupplierDialog } from "@/components/dialogs";
 import { Hint } from "@/components/hint";
-import { ButtonLink, Delta, Empty, ExportLink, PageHeader, SupplierStatusBadge, Table, Td, Th, rowClass } from "@/components/ui";
+import { DuplicateSuggestion, type DuplicateVM } from "@/components/suppliers/resolution";
+import { ButtonLink, Delta, Disclosure, Empty, ExportLink, PageHeader, Section, SupplierStatusBadge, Table, Td, Th, rowClass } from "@/components/ui";
+import { getDb } from "@/db";
 import { countryName } from "@/lib/countries";
 import { KIND_LABEL } from "@/lib/catalog/kinds";
 import { getDataset, getIntel, getSpend, getT } from "@/lib/data";
 import * as f from "@/lib/format";
 import { explain } from "@/lib/intel/explain";
+import type { SupplierMatch } from "@/lib/suppliers/resolve";
+import { readResolution } from "@/server/suppliers";
 
 export async function generateMetadata(): Promise<Metadata> {
   return { title: (await getT())("Suppliers") };
@@ -17,10 +21,35 @@ export default async function SuppliersPage() {
   const [data, intel, spend, t] = await Promise.all([getDataset(), getIntel(), getSpend(), getT()]);
   const EXPLAIN = explain(t);
   const rows = [...intel.suppliers].sort((a, b) => b.metrics.annualSpend - a.metrics.annualSpend || a.supplier.name.localeCompare(b.supplier.name));
+  // Records that may be the same company under two names: for the user to merge or keep apart.
+  const resolution = await readResolution(await getDb(), t);
+  const record = (id: string) => {
+    const r = resolution.names.get(id)!;
+    return { id, name: r.name, detail: [r.vatNumber ? t("VAT {vat}", { vat: r.vatNumber }) : t("no VAT number"), countryName(r.country, t.locale), t.n(r.records, "{n} line", "{n} lines")].filter(Boolean).join(" · ") };
+  };
+  const pair = (m: SupplierMatch): DuplicateVM => ({ keep: record(m.keep), merge: record(m.merge), why: m.why, confidence: m.confidence, conflicts: m.conflicts });
 
   return (
     <>
       <PageHeader title={t("Suppliers")} meta={t("Who you buy from, and who has given you a quote.")} actions={rows.length > 0 ? <ExportLink href="/export/suppliers" className="px-1" /> : undefined} />
+      {resolution.suggestions.length > 0 && (
+        <Section className="mb-5" title={t("These suppliers may be the same company")} description={t("Merging reads one record as the other: both stay on file with their invoices, and it can be undone.")} flush>
+          <ul className="border-t border-rule">
+            {resolution.suggestions.map((m) => (
+              <DuplicateSuggestion key={`${m.keep}|${m.merge}`} pair={pair(m)} />
+            ))}
+          </ul>
+        </Section>
+      )}
+      {resolution.weak.length > 0 && (
+        <Disclosure className="mb-5" title={t("Similar names")} description={t.n(resolution.weak.length, "{n} pair, probably two companies: merge only if you know they are one", "{n} pairs, probably different companies: merge only if you know they are one")} flush>
+          <ul>
+            {resolution.weak.map((m) => (
+              <DuplicateSuggestion key={`${m.keep}|${m.merge}`} pair={pair(m)} />
+            ))}
+          </ul>
+        </Disclosure>
+      )}
       <div className="rounded-lg border border-rule">
         {rows.length === 0 ? (
           <Empty

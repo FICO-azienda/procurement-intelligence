@@ -42,6 +42,7 @@ import { DataFieldError, confirmDataField, linkProductDocument, saveDataField, u
 import { isFieldKey } from "@/lib/dataset/fields";
 import { isJudgementKey, isLevel } from "@/lib/negotiation/engine";
 import { keepEstimateHistory, saveJudgement } from "@/server/negotiation";
+import { SupplierMergeError, autoMergeSuppliers, canonicalSupplierId, keepSuppliersResolved, keepSuppliersSeparate, matchOf, mergeSuppliers, undoSupplierMerge } from "@/server/suppliers";
 import { MapperError, confirmMappings, keepSeparate, mergeProducts, saveMapping, type MappingEdit } from "@/server/mapper";
 import {
   benchmarkInput,
@@ -73,7 +74,9 @@ const invalid = (t: T, errors: FieldErrors): FormState => ({
 
 function refresh() {
   revalidatePath("/", "layout");
-  // A write may change what a price could be negotiated to: the history of the estimates follows (server/negotiation.ts).
+  // A write may have created a supplier that a VAT number proves to be one already on file (server/suppliers.ts)…
+  keepSuppliersResolved();
+  // …and may change what a price could be negotiated to: the history of the estimates follows (server/negotiation.ts).
   keepEstimateHistory();
 }
 
@@ -119,6 +122,9 @@ export async function saveSupplier(_: FormState, formData: FormData): Promise<Fo
     const db = await getDb();
     if (id) await db.update(suppliers).set(values).where(eq(suppliers.id, id));
     else createdId = (await db.insert(suppliers).values(values).returning({ id: suppliers.id }))[0].id;
+    // The same VAT number as a supplier on file: it is that supplier, under another name.
+    await autoMergeSuppliers(db);
+    if (createdId) createdId = await canonicalSupplierId(db, createdId);
   } catch (err) {
     return failed(t, "supplier", err);
   }
@@ -469,6 +475,64 @@ export async function setProductKind(productId: string, kind: ProductKind): Prom
   } catch (err) {
     console.error("[product kind]", err);
     return { ok: false, error: t("Something went wrong.") };
+  }
+}
+
+// ---------------- Supplier entity resolution ----------------
+
+const MERGE_ERROR: Record<string, Msg> = {
+  not_found: "One of the two suppliers is no longer on file.",
+  same: "These are already the same supplier.",
+  not_merged: "This supplier is not merged into another.",
+};
+const mergeFailed = (t: T, err: unknown): SimpleResult => {
+  if (err instanceof SupplierMergeError && MERGE_ERROR[err.message]) return { ok: false, error: t(MERGE_ERROR[err.message]) };
+  console.error("[supplier resolution]", err);
+  return { ok: false, error: t("Something went wrong. Nothing was changed — please try again.") };
+};
+
+/**
+ * The user says two supplier records are one company: `mergeId` is read as
+ * `keepId` from now on. Both records stay as they are; the merge can be taken
+ * back. What the match rests on is worked out here, not taken from the page.
+ */
+export async function mergeSuppliersAction(mergeId: string, keepId: string): Promise<SimpleResult> {
+  const t = await getT();
+  try {
+    const db = await getDb();
+    const match = await matchOf(db, mergeId, keepId);
+    await mergeSuppliers(db, mergeId, keepId, { basis: match?.basis ?? [], confidence: match?.confidence ?? null, decidedBy: "user" });
+    refresh();
+    return { ok: true };
+  } catch (err) {
+    return mergeFailed(t, err);
+  }
+}
+
+/** The user says two supplier records are two companies: the pair is not proposed again. */
+export async function keepSuppliersSeparateAction(a: string, b: string): Promise<SimpleResult> {
+  const t = await getT();
+  try {
+    const db = await getDb();
+    const match = await matchOf(db, a, b);
+    await keepSuppliersSeparate(db, a, b, { basis: match?.basis ?? [], confidence: match?.confidence ?? null });
+    refresh();
+    return { ok: true };
+  } catch (err) {
+    return mergeFailed(t, err);
+  }
+}
+
+/** Takes a merge back: the record stands for itself again, with every purchase and quote it always had. */
+export async function undoSupplierMergeAction(supplierId: string): Promise<SimpleResult> {
+  const t = await getT();
+  try {
+    await undoSupplierMerge(await getDb(), supplierId);
+    // The pair comes back as a suggestion: a merge taken back is never made again by itself.
+    refresh();
+    return { ok: true };
+  } catch (err) {
+    return mergeFailed(t, err);
   }
 }
 

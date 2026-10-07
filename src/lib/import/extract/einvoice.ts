@@ -322,6 +322,7 @@ export function eInvoiceToItems(file: EInvoiceFile): EInvoiceItems {
       data.date = inv.date;
       data.supplierName = file.supplier.name;
       data.supplierVat = file.supplier.vat ?? file.supplier.taxCode;
+      data.supplierTaxCode = file.supplier.taxCode ?? null;
       data.supplierCountry = file.supplier.country;
       data.productName = l.description;
       data.supplierSku = l.code;

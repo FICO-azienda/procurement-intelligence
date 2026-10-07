@@ -9,6 +9,8 @@ export interface ItemData {
   supplierName: string | null;
   supplierCountry: string | null;
   supplierVat: string | null;
+  /** Tax code or company registration number, when the document gives one besides the VAT number. */
+  supplierTaxCode?: string | null;
   productName: string | null;
   sku: string | null;
   supplierSku: string | null;

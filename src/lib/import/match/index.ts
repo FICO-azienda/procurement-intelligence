@@ -36,7 +36,8 @@ export interface MatchResult {
 }
 
 export interface MatchContext {
-  suppliers: { id: string; name: string; vatNumber: string | null }[];
+  /** Every name a company is known by: a record merged into another comes with the id of the one it is read as. */
+  suppliers: { id: string; name: string; vatNumber: string | null; taxCode?: string | null }[];
   supplierAliases: { supplierId: string; normalized: string }[];
   /** `kind`: what the product is for the company's spend; absent = a product of the catalogue. */
   products: { id: string; sku: string; name: string; description: string | null; kind?: string | null }[];
@@ -77,31 +78,53 @@ const round = (n: number) => Math.round(n * 100) / 100;
 
 // ---------------- Suppliers ----------------
 
-export function matchSupplier(input: { name: string | null; vat?: string | null }, ctx: MatchContext): MatchResult {
+/**
+ * Who a name on a document is. The hierarchy: VAT number, tax code, the very
+ * same name, a name confirmed before, then similar names — which are only
+ * ever suggestions. A name alone never wins over a VAT number that says
+ * otherwise: two companies can share a name.
+ */
+export function matchSupplier(input: { name: string | null; vat?: string | null; taxCode?: string | null }, ctx: MatchContext): MatchResult {
   const vat = vatKey(input.vat);
-  if (vat.length >= 8) {
+  const hasVat = vat.length >= 8;
+  if (hasVat) {
     const byVat = ctx.suppliers.find((s) => vatKey(s.vatNumber) === vat);
     if (byVat) return exact(byVat.id, "Same VAT number");
   }
+  const tax = codeKey(input.taxCode);
+  if (tax.length >= 8) {
+    // A company's tax code is often its VAT number: either may be written in either field.
+    const byTax = ctx.suppliers.find((s) => codeKey(s.taxCode) === tax || vatKey(s.vatNumber) === vatKey(tax));
+    if (byTax) return exact(byTax.id, "Same tax code");
+  }
   const name = tidy(input.name);
   if (!name) return none();
+  /** The document states a VAT number and the record has another: not the same company, whatever the name. */
+  const otherVat = (s: { vatNumber: string | null }) => hasVat && vatKey(s.vatNumber).length >= 8 && vatKey(s.vatNumber) !== vat;
 
+  const cands: Candidate[] = [];
   const lower = name.toLowerCase();
-  const same = ctx.suppliers.find((s) => tidy(s.name).toLowerCase() === lower);
-  if (same) return exact(same.id, "Same name");
+  const same = ctx.suppliers.filter((s) => tidy(s.name).toLowerCase() === lower);
+  const sameOk = same.find((s) => !otherVat(s));
+  if (sameOk) return exact(sameOk.id, "Same name");
+  for (const s of same) cands.push({ id: s.id, confidence: 0.7, reason: "Same name, but a different VAT number" });
 
   const key = companyKey(name);
   const alias = ctx.supplierAliases.find((a) => a.normalized === key);
-  if (alias) return exact(alias.supplierId, "Recognised from a previous confirmation");
+  if (alias) {
+    const target = ctx.suppliers.find((s) => s.id === alias.supplierId);
+    if (!target || !otherVat(target)) return exact(alias.supplierId, "Recognised from a previous confirmation");
+    cands.push({ id: alias.supplierId, confidence: 0.7, reason: "Same name, but a different VAT number" });
+  }
 
-  const cands: Candidate[] = [];
   for (const s of ctx.suppliers) {
     const sKey = companyKey(s.name);
-    if (!sKey || !key) continue;
+    if (!sKey || !key || same.includes(s)) continue;
     if (sKey === key) {
-      cands.push({ id: s.id, confidence: 0.92, reason: "Same name, different spelling or legal form" });
+      cands.push(otherVat(s) ? { id: s.id, confidence: 0.65, reason: "Same name, but a different VAT number" } : { id: s.id, confidence: 0.92, reason: "Same name, different spelling or legal form" });
       continue;
     }
+    if (otherVat(s)) continue;
     const sim = Math.max(ratio(sKey, key), 0.6 * containment(key, sKey) + 0.4 * dice(key, sKey));
     if (sim >= 0.8) cands.push({ id: s.id, confidence: sim * 0.9, reason: "Similar name" });
   }

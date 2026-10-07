@@ -40,6 +40,7 @@ import { inferByContent, isConfidentMapping, missingRequired, proposeMapping, ty
 import { MAX_FILE_BYTES } from "@/lib/import/files";
 import { productGroupKey, supplierGroupKey } from "@/lib/import/groups";
 import { matchProduct, matchSupplier, type MatchContext, type MatchResult } from "@/lib/import/match";
+import { readSupplierRows } from "./suppliers";
 import { companyKey, productKey, tidy } from "@/lib/import/normalize/text";
 import { normalizeUnit } from "@/lib/import/normalize/units";
 import type { CurrentData, DraftItem, ExtractedData, Issue, ItemData, RecordType } from "@/lib/import/types";
@@ -385,10 +386,12 @@ async function processEInvoice(db: DB, session: ImportSession, bytes: Uint8Array
 async function matchContext(db: DB, data?: Dataset, learning?: Learning): Promise<{ ctx: MatchContext; data: Dataset }> {
   const d = data ?? (await readDataset(db));
   const l = learning ?? (await readLearning(db));
+  const { rows, canon } = await readSupplierRows(db);
   return {
     data: d,
     ctx: {
-      suppliers: d.suppliers.map((s) => ({ id: s.id, name: s.name, vatNumber: s.vatNumber })),
+      // Every record, merged ones too: a name or a VAT number written on a merged record leads to the company it is read as.
+      suppliers: rows.map((s) => ({ id: canon.get(s.id) ?? s.id, name: s.name, vatNumber: s.vatNumber, taxCode: s.taxCode })),
       products: d.products.map((p) => ({ id: p.id, sku: p.sku, name: p.name, description: p.description, kind: p.kind })),
       supplierAliases: l.supplierAliases,
       productAliases: l.productAliases,
@@ -411,7 +414,7 @@ function matchItem(row: ItemState, ctx: MatchContext, docText?: string) {
   const d = row.data;
   let { supplierId, supplierMatch, supplierResolution, productId, productMatch, productResolution } = row;
   if (!supplierResolution || supplierResolution === "auto") {
-    let m = matchSupplier({ name: d.supplierName, vat: d.supplierVat }, ctx);
+    let m = matchSupplier({ name: d.supplierName, vat: d.supplierVat, taxCode: d.supplierTaxCode }, ctx);
     if (m.status !== "exact" && docText) m = supplierInText(docText, ctx) ?? m;
     supplierMatch = m;
     supplierId = m.status === "exact" ? m.id : null;
@@ -603,7 +606,7 @@ export async function resolveSupplier(db: DB, sessionId: string, groupKey: strin
   if (decision.type === "create") {
     const [s] = await db
       .insert(suppliers)
-      .values({ name: tidy(decision.name), country: decision.country, vatNumber: decision.vatNumber })
+      .values({ name: tidy(decision.name), country: decision.country, vatNumber: decision.vatNumber, taxCode: sample.supplierTaxCode && sample.supplierTaxCode !== decision.vatNumber ? sample.supplierTaxCode : null })
       .returning({ id: suppliers.id });
     supplierId = s.id;
     resolution = "created";

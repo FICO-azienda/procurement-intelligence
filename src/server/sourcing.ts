@@ -30,6 +30,7 @@ import type { DiscoveryRequest, Providers } from "@/lib/sourcing/providers";
 import { SOURCING_CONFIG, isCandidateStatus, isCompanyType, isPriceType, isSourceLevel, isTechnicalFit, type CandidateStatus, type Comparability, type Confidence, type MarketBenchmark, type SupplierCandidate, type TechnicalFit } from "@/lib/sourcing/types";
 import type { benchmarkInput, candidateInput } from "@/lib/validation";
 import { confirmedQuantities } from "./confirmed";
+import { readSupplierRows } from "./suppliers";
 import { connectedProviders } from "./providers";
 
 const numOrNull = (v: string | null) => (v == null ? null : Number(v));
@@ -100,15 +101,17 @@ export function toBenchmark(r: typeof marketBenchmarks.$inferSelect): MarketBenc
 }
 
 export async function readSourcing(db: DB): Promise<{ candidates: SupplierCandidate[]; benchmarks: MarketBenchmark[]; requests: RfqRequest[]; pilot: string[] }> {
-  const [c, b, r, pilot] = await Promise.all([
+  const [c, b, r, pilot, { canon }] = await Promise.all([
     db.select().from(supplierCandidates).orderBy(supplierCandidates.createdAt),
     db.select().from(marketBenchmarks).orderBy(marketBenchmarks.createdAt),
     db.select().from(rfqRequests).orderBy(rfqRequests.sentAt),
     db.select({ id: products.id }).from(products).where(eq(products.inPilot, true)),
+    readSupplierRows(db),
   ]);
   return {
     pilot: pilot.map((x) => x.id),
-    candidates: c.map(toCandidate),
+    // A candidate that became a supplier follows it when its record is merged into another.
+    candidates: c.map(toCandidate).map((x) => (x.supplierId ? { ...x, supplierId: canon.get(x.supplierId) ?? x.supplierId } : x)),
     benchmarks: b.map(toBenchmark),
     requests: r.map((x) => ({ id: x.id, supplierKey: x.supplierKey, supplierName: x.supplierName, candidateIds: x.candidateIds, productIds: x.productIds, kind: x.kind === "update" || x.kind === "follow_up" ? x.kind : "request", sentAt: x.sentAt })),
   };
@@ -158,8 +161,10 @@ export async function recordCandidateQuote(db: DB, candidateId: string, v: Quote
   const [c] = await db.select().from(supplierCandidates).where(eq(supplierCandidates.id, candidateId));
   if (!c) throw new Error("Candidate not found");
   const key = companyKey(c.name);
-  const same = (await db.select({ id: suppliers.id, name: suppliers.name }).from(suppliers)).find((x) => companyKey(x.name) === key);
-  const supplierId = same?.id ?? (await db.insert(suppliers).values({ name: c.name, country: c.country, website: c.website }).returning({ id: suppliers.id }))[0].id;
+  // Any name the company is known by will do: a record merged into another leads to the one it is read as.
+  const known = await readSupplierRows(db);
+  const same = known.rows.find((x) => companyKey(x.name) === key);
+  const supplierId = same ? (known.canon.get(same.id) ?? same.id) : (await db.insert(suppliers).values({ name: c.name, country: c.country, website: c.website }).returning({ id: suppliers.id }))[0].id;
   const [quote] = await db
     .insert(quotes)
     .values({

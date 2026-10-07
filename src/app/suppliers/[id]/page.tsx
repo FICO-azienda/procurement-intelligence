@@ -1,8 +1,14 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import type { Metadata } from "next";
 import { PurchaseDialog, QuoteDialog, SupplierDialog } from "@/components/dialogs";
 import { Remember } from "@/components/shell/recent";
+import { DuplicateSuggestion, UndoMergeButton } from "@/components/suppliers/resolution";
+import { getDb } from "@/db";
+import { catalogueOf } from "@/lib/catalog/spend";
+import { LEVEL_LABEL } from "@/lib/negotiation/engine";
+import { BASIS_LABEL, type MatchBasis } from "@/lib/suppliers/resolve";
+import { canonicalSupplierId, readResolution, supplierIdentity, supplierRelationship } from "@/server/suppliers";
 import { Basis, Crumbs, Delta, Disclosure, Empty, PageHeader, Section, SupplierStatusBadge, Table, Td, Th, rowClass } from "@/components/ui";
 import { basePrice, isPriced, priceChange, supplierMetrics, supplierOrderStats, todayISO } from "@/lib/analytics";
 import { countryName } from "@/lib/countries";
@@ -10,6 +16,7 @@ import { KIND_LABEL } from "@/lib/catalog/kinds";
 import { getDataset, getIntel, getLearning, getSpend, getT } from "@/lib/data";
 import { SourceTag } from "@/components/import/labels";
 import * as f from "@/lib/format";
+import { lowerFirst } from "@/lib/i18n";
 import { lookups } from "@/lib/lookups";
 
 export async function generateMetadata({ params }: PageProps<"/suppliers/[id]">): Promise<Metadata> {
@@ -24,7 +31,20 @@ export default async function SupplierPage({ params }: PageProps<"/suppliers/[id
   const otherSpend = spend.items.filter((i) => i.supplierIds.includes(id));
   const supplier = data.suppliers.find((s) => s.id === id);
   const si = intel.suppliers.find((s) => s.supplier.id === id);
-  if (!supplier || !si) notFound();
+  const db = await getDb();
+  if (!supplier || !si) {
+    // A record merged into another: its page is the page of the company it is read as.
+    const canonical = await canonicalSupplierId(db, id);
+    if (canonical !== id && data.suppliers.some((s) => s.id === canonical)) redirect(`/suppliers/${canonical}`);
+    notFound();
+  }
+  const [identity, relationship, resolution] = await Promise.all([supplierIdentity(db, id), supplierRelationship(db, id, data, catalogueOf(data), t), readResolution(db, t)]);
+  const duplicates = [...resolution.suggestions, ...resolution.weak].filter((x) => x.keep === id || x.merge === id);
+  const named = (rid: string) => {
+    const r = resolution.names.get(rid)!;
+    return { id: rid, name: r.name, detail: [r.vatNumber ? t("VAT {vat}", { vat: r.vatNumber }) : t("no VAT number"), countryName(r.country, t.locale), t.n(r.records, "{n} line", "{n} lines")].filter(Boolean).join(" · ") };
+  };
+  const lev = relationship.leverage;
 
   const asOf = todayISO();
   const l = lookups(data);
@@ -86,6 +106,157 @@ export default async function SupplierPage({ params }: PageProps<"/suppliers/[id
         />
         <Figure label={t("Orders")} value={String(stats.ordersLast12m)} note={stats.averageOrderValue != null ? t("{amount} on average", { amount: f.money(Math.round(stats.averageOrderValue)) }) : t("in the last 12 months")} />
       </section>
+
+      {duplicates.length > 0 && (
+        <Section className="mb-6" title={t("This supplier may be on file twice")} description={t("Merging reads one record as the other: both stay on file with their invoices, and it can be undone.")} flush>
+          <ul className="border-t border-rule">
+            {duplicates.map((x) => (
+              <DuplicateSuggestion key={`${x.keep}|${x.merge}`} pair={{ keep: named(x.keep), merge: named(x.merge), why: x.why, confidence: x.confidence, conflicts: x.conflicts }} />
+            ))}
+          </ul>
+        </Section>
+      )}
+
+      {/* Who it is: one company, whatever name a document writes. */}
+      {identity && (
+        <Section className="mb-6" title={t("Who this supplier is")} description={t("One company, whatever name a document writes: recognised by its VAT number first, then by the names confirmed.")}>
+          <dl className="grid gap-x-8 gap-y-2 text-[13px] @2xl:grid-cols-2">
+            {[
+              [t("VAT number"), identity.vatNumbers.join(", ")],
+              [t("Tax code"), identity.taxCodes.join(", ")],
+              [t("Web domain"), identity.domains.join(", ")],
+              [t("Address"), identity.addresses.map((a) => [a.city, countryName(a.country, t.locale)].filter(Boolean).join(", ")).join(" · ")],
+              [t("Contacts"), identity.contacts.join(" · ")],
+              [t("Records on file"), `${t.n(identity.purchases, "{n} purchase", "{n} purchases")} · ${t.n(identity.quotes, "{n} quote", "{n} quotes")}`],
+            ].map(([label, value]) => (
+              <div key={label} className="flex justify-between gap-4 border-b border-rule pb-1.5">
+                <dt className="text-ink-3">{label}</dt>
+                <dd className={value ? "text-right font-medium" : "text-ink-4"}>{value || "—"}</dd>
+              </div>
+            ))}
+          </dl>
+          <div className="mt-4">
+            <h3 className="text-[13px] font-semibold">{t("Names it is known by")}</h3>
+            {identity.aliases.length === 0 ? (
+              <p className="mt-1 text-[13px] text-ink-3">{t("Only one: every document on file writes “{name}”.", { name: identity.canonicalName })}</p>
+            ) : (
+              <ul className="mt-1.5 space-y-1 text-[13px]">
+                {identity.aliases.map((a) => (
+                  <li key={a.name} className="flex flex-wrap items-baseline justify-between gap-x-4">
+                    <span className="font-medium">{a.name}</span>
+                    <span className="text-[12.5px] text-ink-3">
+                      {[a.source === "record" ? t("a supplier record merged into this one") : a.source === "alias" ? t("a name you confirmed") : t("as written on documents"), a.lines ? t.n(a.lines, "{n} line", "{n} lines") : null, a.vatNumber ? t("VAT {vat}", { vat: a.vatNumber }) : null].filter(Boolean).join(" · ")}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="mt-2 text-[12.5px] text-ink-3">
+              {t("Lines tied to this company: {vat} by VAT number, {name} by name, {other} entered by hand or otherwise.", { vat: identity.matched.byVat, name: identity.matched.byName, other: identity.matched.other })}{" "}
+              {identity.documents.length > 0 && t.n(identity.documents.length, "Read from {n} document.", "Read from {n} documents.")}
+            </p>
+          </div>
+          {identity.merged.length > 0 && (
+            <div className="mt-4">
+              <h3 className="text-[13px] font-semibold">{t("Records merged into this one")}</h3>
+              <ul className="mt-1.5 divide-y divide-rule text-[13px]">
+                {identity.merged.map((m) => (
+                  <li key={m.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 py-1.5">
+                    <span>
+                      <span className="font-medium">{m.name}</span>{" "}
+                      <span className="text-[12.5px] text-ink-3">
+                        {[m.vatNumber ? t("VAT {vat}", { vat: m.vatNumber }) : null, t.n(m.lines, "{n} line", "{n} lines"), m.basis.map((b) => lowerFirst(t(BASIS_LABEL[b as MatchBasis] ?? "Similar name"))).join(", "), m.decidedBy === "auto" ? t("merged automatically on {date}", { date: f.date(m.at.slice(0, 10)) }) : t("merged by you on {date}", { date: f.date(m.at.slice(0, 10)) })].filter(Boolean).join(" · ")}
+                      </span>
+                    </span>
+                    <UndoMergeButton supplierId={m.id} />
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-1.5 text-[12px] text-ink-3">{t("A merged record keeps its name, its invoices and its quotes: nothing was moved, so a merge can always be taken back.")}</p>
+            </div>
+          )}
+          {identity.history.length > 0 && (
+            <Disclosure className="mt-4" title={t("Decisions taken")} description={t.n(identity.history.length, "{n} decision on file", "{n} decisions on file")}>
+              <ul className="space-y-1 text-[13px] text-ink-2">
+                {identity.history.map((h, i) => (
+                  <li key={i}>
+                    {h.decision === "separate" ? t("Kept separate from {name} on {date}.", { name: h.name, date: f.date(h.at.slice(0, 10)) }) : t("Merged with {name} on {date}, taken back on {undone}.", { name: h.name, date: f.date(h.at.slice(0, 10)), undone: f.date((h.undoneAt ?? h.at).slice(0, 10)) })}
+                  </li>
+                ))}
+              </ul>
+            </Disclosure>
+          )}
+        </Section>
+      )}
+
+      {/* Everything bought from it, over every name it is known by. */}
+      <Section className="mb-6" title={t("The whole relationship")} description={t("Everything you buy from this company, over every name it is known by: what the leverage on each of its products is read from.")}>
+        <dl className="grid gap-x-8 gap-y-2 text-[13px] @2xl:grid-cols-2">
+          {[
+            [t("Total spend, last 12 months"), f.money(Math.round(relationship.totalSpend))],
+            [t("Historical spend on file"), relationship.firstPurchase ? t("{amount} since {date}", { amount: f.money(Math.round(relationship.historicalSpend)), date: f.date(relationship.firstPurchase) }) : "—"],
+            [t("Products purchased"), String(relationship.products.length)],
+            [t("Categories bought"), lev ? `${lev.facts.groups.length} (${lev.facts.groups.map((g) => (g.label ? t(g.label) : g.name)).join(", ")})` : "—"],
+            [t("Purchase frequency"), lev ? lev.parts.find((x) => x.key === "regularity")!.fact : "—"],
+            [t("Quotes on file"), String(relationship.quotes)],
+            [t("Requests for quotation sent"), String(relationship.requests)],
+            [t("Spend beyond its largest product"), lev ? `${f.money(Math.round(lev.onFile.cross))} (${lev.productName})` : "—"],
+            [t("Relationship breadth"), lev ? t(LEVEL_LABEL[lev.breadth]) : "—"],
+            [t("Supplier relationship leverage"), lev ? `${t("{score} out of 10", { score: f.number(lev.score, 1) })} · ${t(LEVEL_LABEL[lev.level])}` : "—"],
+          ].map(([label, value]) => (
+            <div key={label} className="flex justify-between gap-4 border-b border-rule pb-1.5">
+              <dt className="text-ink-3">{label}</dt>
+              <dd className="text-right font-medium">{value}</dd>
+            </div>
+          ))}
+        </dl>
+        {lev && (
+          <p className="mt-2 text-[12.5px] text-ink-3">
+            {t("The leverage is read on its largest product and is a lever at the table, never a discount.")}{" "}
+            <Link href={`/products/${lev.productId}#negotiation`} className="font-medium text-ledger hover:underline">
+              {t("View leverage analysis")}
+            </Link>
+          </p>
+        )}
+        {relationship.products.length > 0 && (
+          <div className="mt-4 overflow-hidden rounded-lg border border-rule">
+            <Table>
+              <thead>
+                <tr>
+                  <Th className="border-t-0">{t("Current products")}</Th>
+                  <Th className="border-t-0" align="right">{t("Spend, 12 months")}</Th>
+                  <Th className="border-t-0" align="right">{t("Share")}</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {relationship.products.map((x) => (
+                  <tr key={x.id} className={rowClass(true)}>
+                    <Td className="whitespace-normal! font-medium">
+                      <Link href={`/products/${x.id}`} className="stretched">
+                        {x.name}
+                      </Link>
+                    </Td>
+                    <Td align="right">{f.money(Math.round(x.spend))}</Td>
+                    <Td align="right" muted>{`${f.number(x.share * 100, 0)}%`}</Td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+          </div>
+        )}
+        {relationship.byMonth.length > 1 && (
+          <Disclosure className="mt-4" title={t("Spend by month")} description={t.n(relationship.byMonth.length, "{n} month on file", "{n} months on file")}>
+            <ul className="grid gap-x-8 gap-y-1 text-[13px] @2xl:grid-cols-2">
+              {relationship.byMonth.map((x) => (
+                <li key={x.month} className="flex justify-between gap-4 border-b border-rule pb-1">
+                  <span className="text-ink-2">{f.month(`${x.month}-01`, t)}</span>
+                  <span className="num font-medium">{f.money(Math.round(x.spend))}</span>
+                </li>
+              ))}
+            </ul>
+          </Disclosure>
+        )}
+      </Section>
 
       {/* Key observations: what a buyer would point out */}
       <Section title={t("Key observations")} className="mb-6">

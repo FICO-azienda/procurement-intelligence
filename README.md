@@ -409,6 +409,19 @@ Per ogni prodotto l'app stima **quanto si potrebbe realisticamente pagare**: un 
 
 Le regole e i pesi sono in `src/lib/negotiation/config.ts` (ipotesi di partenza, da calibrare sulle negoziazioni reali). Non c'è machine learning: è un motore a regole, modulare, pensato per accogliere in futuro modelli per categoria, benchmark proprietari ed esiti storici delle negoziazioni.
 
+## Riconoscimento dei fornitori (Supplier Entity Resolution)
+
+Lo stesso fornitore scritto in modi diversi — "SER S.p.A.", "SER SPA", "S.E.R. S.p.A." — viene letto come un'unica azienda, così spesa, prodotti, preventivi e leva della relazione si calcolano sull'azienda intera.
+
+- **Gerarchia di abbinamento**: partita IVA, codice fiscale, dominio web, stesso nome normalizzato, nome simile; telefono e città solo come supporto. Il nome da solo non basta mai: due partite IVA diverse sono due aziende, qualunque sia il nome.
+- **Unione automatica solo su identificativi forti** (stessa partita IVA o codice fiscale, oppure stesso dominio con nomi compatibili). Tutto il resto è un suggerimento in pagina Fornitori: *Unisci* o *Mantieni separati*.
+- **Nulla viene distrutto**: unire significa che una scheda viene letta come l'altra. La scheda unita conserva nome, fatture e preventivi; l'unione si può annullare in qualsiasi momento e lo storico delle decisioni resta in archivio. Un'unione annullata non viene rifatta da sola.
+- **Alias sempre conservati**: nella scheda del fornitore si vedono tutti i nomi con cui è conosciuto, le partite IVA, quante righe sono state collegate dalla partita IVA e quante dal nome, e i documenti di origine.
+- **Vista d'insieme del fornitore**: spesa totale e storica, prodotti e categorie, frequenza d'acquisto, preventivi, richieste inviate, spesa oltre il prodotto principale, ampiezza della relazione e leva della relazione.
+- **In import** vale la stessa gerarchia: prima partita IVA e codice fiscale, poi i nomi; lo stesso nome con una partita IVA diversa diventa una domanda, non un abbinamento.
+
+Non viene usato alcun modello linguistico: le regole decidono cosa proporre, gli identificativi cosa unire.
+
 ## Demo su GitHub Pages
 
 Ogni push su `main` lancia `.github/workflows/pages.yml`: l'app parte con i dati demo, `scripts/snapshot.mjs` salva ogni pagina come HTML statico e il risultato viene pubblicato su https://fico-azienda.github.io/procurement-intelligence/. È una demo in sola lettura: import, moduli, salvataggi e download richiedono il server e lì non funzionano.

@@ -680,7 +680,7 @@ export function SupplierForm({ supplier, deleteNote, close }: { supplier?: Suppl
   const [state, action, pending] = useActionState(saveSupplier, initial);
   useSaved(state, close, "supplier_saved");
   const e = state.fieldErrors ?? {};
-  const extras = !!(supplier && (supplier.city || supplier.contactName || supplier.email || supplier.phone || supplier.website || supplier.notes));
+  const extras = !!(supplier && (supplier.vatNumber || supplier.city || supplier.contactName || supplier.email || supplier.phone || supplier.website || supplier.notes));
   return (
     <SheetForm
       action={action}
@@ -697,8 +697,11 @@ export function SupplierForm({ supplier, deleteNote, close }: { supplier?: Suppl
         </Field>
       </Grid>
       <Datalists />
-      <MoreDetails summary={t("contacts, payment terms, lead time, currency")} defaultOpen={extras}>
+      <MoreDetails summary={t("VAT number, contacts, payment terms, lead time, currency")} defaultOpen={extras}>
         <Grid>
+          <Field label={t("VAT number")} error={e.vatNumber} hint={t("How the supplier is recognised, whatever name a document writes.")} className="sm:col-span-2">
+            <Input name="vatNumber" defaultValue={supplier?.vatNumber ?? ""} />
+          </Field>
           <Field label={t("Email")} error={e.email}>
             <Input name="email" type="email" defaultValue={supplier?.email ?? ""} aria-invalid={!!e.email} />
           </Field>

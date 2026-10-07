@@ -574,7 +574,6 @@ export const ui = {
   "Grade, certifications, anything else": "Qualità, certificazioni, qualsiasi altra cosa",
   "Add supplier": "Aggiungi fornitore",
   "Supplier name": "Nome del fornitore",
-  "contacts, payment terms, lead time, currency": "contatti, termini di pagamento, consegna, valuta",
   "Website": "Sito web",
   "Write what you bought, from whom and at what price.": "Scrivi che cosa hai comprato, da chi e a che prezzo.",
   "We couldn't read that. Try again, or use the normal form.": "Non siamo riusciti a leggerla. Riprova, oppure usa il modulo normale.",
