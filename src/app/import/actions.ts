@@ -11,11 +11,14 @@ import type { ProductKind } from "@/lib/catalog/kinds";
 import type { ItemData } from "@/lib/import/types";
 import * as catalog from "@/server/catalog";
 import * as svc from "@/server/imports";
+import { keepEstimateHistory } from "@/server/negotiation";
 
 export type ActionResult = { ok: boolean; error?: string };
 
 const done = (): ActionResult => {
   revalidatePath("/", "layout");
+  // New purchases change the price paid: the history of the negotiation estimates follows.
+  keepEstimateHistory();
   return { ok: true };
 };
 

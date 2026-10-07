@@ -40,6 +40,8 @@ import { parseResearchFile } from "@/lib/research/file";
 import { isCandidateStatus, isTechnicalFit } from "@/lib/sourcing/types";
 import { DataFieldError, confirmDataField, linkProductDocument, saveDataField, uploadProductFile } from "@/server/product-data";
 import { isFieldKey } from "@/lib/dataset/fields";
+import { isJudgementKey, isLevel } from "@/lib/negotiation/engine";
+import { keepEstimateHistory, saveJudgement } from "@/server/negotiation";
 import { MapperError, confirmMappings, keepSeparate, mergeProducts, saveMapping, type MappingEdit } from "@/server/mapper";
 import {
   benchmarkInput,
@@ -71,6 +73,8 @@ const invalid = (t: T, errors: FieldErrors): FormState => ({
 
 function refresh() {
   revalidatePath("/", "layout");
+  // A write may change what a price could be negotiated to: the history of the estimates follows (server/negotiation.ts).
+  keepEstimateHistory();
 }
 
 /**
@@ -696,6 +700,23 @@ const DATA_ERROR: Record<string, Msg> = {
   nothing_to_confirm: "There is no estimate to confirm.",
   document_type: "Choose what kind of document it is.",
 };
+
+/**
+ * What a person knows better than the rules about a product — how hard
+ * switching would be, how standard or critical it is — with the reason. An
+ * empty level takes the correction back, and the software's estimate returns.
+ */
+export async function saveJudgementAction(productId: string, key: string, level: string, reason: string): Promise<SourcingResult> {
+  const t = await getT();
+  if (!isJudgementKey(key) || (level !== "" && !isLevel(level))) return { ok: false, error: t("Something went wrong.") };
+  try {
+    await saveJudgement(await getDb(), productId, key, level === "" ? null : (level as "low" | "medium" | "high"), reason);
+    refresh();
+    return { ok: true };
+  } catch (err) {
+    return sourcingFailed(t, err);
+  }
+}
 
 /** A field of the product's data, typed by a person. Empty clears it. */
 export async function saveDataFieldAction(productId: string, field: string, raw: string): Promise<SourcingResult> {

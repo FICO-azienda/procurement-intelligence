@@ -33,6 +33,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import type { Said } from "../lib/i18n";
+import type { EstimateSnapshot } from "../lib/negotiation/history";
 import { OPPORTUNITY_STATUSES, type OpportunityStatus } from "../lib/intel/statuses";
 
 /** Where a record came from. Extend here when a new ingestion channel ships. */
@@ -567,7 +568,7 @@ export const productDataFields = pgTable(
     productId: uuid("product_id")
       .notNull()
       .references(() => products.id, { onDelete: "cascade" }),
-    /** A key of lib/dataset/fields.ts. */
+    /** A key of lib/dataset/fields.ts — or a judgement a person corrected for the negotiation estimate (lib/negotiation/engine.ts: JUDGEMENT_KEYS), with its reason in `note` and the software's own estimate in `estimate`. */
     field: text("field").notNull(),
     /** The value, for fields kept here. Null: the value lives in its own column. */
     value: text("value"),
@@ -607,6 +608,48 @@ export const trueCostScenarios = pgTable("true_cost_scenarios", {
   notes: text("notes"),
   ...timestamps,
 });
+
+// ---------------- Negotiation intelligence ----------------
+
+/**
+ * The history of the achievable price range of a product: what the software
+ * estimated, each time its answer changed (lib/negotiation/history.ts). The
+ * estimate itself is never read from here — it is worked out fresh from the
+ * evidence on file; a row only records what was said then, so the estimate
+ * can be seen firming up as quotes and references come in.
+ *
+ * A row rests on the buyer's own purchase prices: it is private to the
+ * account that owns them (`data_class`, lib/negotiation/data-class.ts) and is
+ * never a price to show about a supplier to anyone else.
+ */
+export const negotiationEstimates = pgTable(
+  "negotiation_estimates",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    productId: uuid("product_id")
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    /** range | no_upside | not_enough_data */
+    status: text("status").notNull(),
+    /** What kind of price fact a row is: always a model estimate, built on private prices. */
+    dataClass: text("data_class").notNull().default("model_estimate"),
+    /** EUR per product unit, at the precision the estimate was given. */
+    currentPrice: money("current_price"),
+    low: money("low"),
+    high: money("high"),
+    target: money("target"),
+    /** low | medium | high */
+    confidence: text("confidence"),
+    /** low | medium | high | very_high */
+    strength: text("strength").notNull(),
+    /** The visible answer as one string: a new row is written only when it changes. */
+    signature: text("signature").notNull(),
+    /** Upside, scores, the evidence used with its class, the factors corrected, and what changed. */
+    snapshot: jsonb("snapshot").$type<EstimateSnapshot>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("negotiation_estimates_product_idx").on(t.productId, t.createdAt)],
+);
 
 // ---------------- Deep research ----------------
 

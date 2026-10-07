@@ -9,10 +9,11 @@ import { dataset } from "./it/dataset";
 import { engine } from "./it/engine";
 import { imports } from "./it/imports";
 import { mapper } from "./it/mapper";
+import { negotiation } from "./it/negotiation";
 import { research } from "./it/research";
 import { sourcing } from "./it/sourcing";
 import { ui } from "./it/ui";
 
-export const PARTS = { engine, imports, ui, catalog, mapper, sourcing, research, dataset };
+export const PARTS = { engine, imports, ui, catalog, mapper, sourcing, research, dataset, negotiation };
 
-export const it = { ...engine, ...imports, ...ui, ...catalog, ...mapper, ...sourcing, ...research, ...dataset };
+export const it = { ...engine, ...imports, ...ui, ...catalog, ...mapper, ...sourcing, ...research, ...dataset, ...negotiation };

@@ -5,6 +5,7 @@ import { Hint } from "@/components/hint";
 import { ConfidenceBadge, OpportunityStatusBadge } from "@/components/intel/badges";
 import { OpportunityStatusSelect } from "@/components/intel/controls";
 import { QuoteDialog } from "@/components/dialogs";
+import { NegotiationOpportunities } from "@/components/negotiation/opportunities";
 import { ButtonLink, Empty, ExportLink, PageHeader, Table, Td, Th, cx, rowClass } from "@/components/ui";
 import { getDataset, getIntel, getOpportunityStates, getT } from "@/lib/data";
 import * as f from "@/lib/format";
@@ -13,6 +14,7 @@ import type { TrackedOpportunity } from "@/lib/intel/engine";
 import { explain } from "@/lib/intel/explain";
 import { OPPORTUNITY_LABEL, type ImpactBasis, type OpportunityType } from "@/lib/intel/opportunities";
 import { lookups } from "@/lib/lookups";
+import { getAllNegotiations } from "@/server/negotiation";
 
 export async function generateMetadata(): Promise<Metadata> {
   return { title: (await getT())("Opportunities") };
@@ -43,7 +45,7 @@ export default async function OpportunitiesPage({ searchParams }: PageProps<"/op
   const sp = await searchParams;
   const view = VIEWS.find((v) => v.key === sp.view) ?? VIEWS[0];
   const type = typeof sp.type === "string" && sp.type in OPPORTUNITY_LABEL ? (sp.type as OpportunityType) : null;
-  const [data, intel, states, t] = await Promise.all([getDataset(), getIntel(), getOpportunityStates(), getT()]);
+  const [data, intel, states, negotiations, t] = await Promise.all([getDataset(), getIntel(), getOpportunityStates(), getAllNegotiations(), getT()]);
   const EXPLAIN = explain(t);
   const l = lookups(data);
 
@@ -82,6 +84,7 @@ export default async function OpportunitiesPage({ searchParams }: PageProps<"/op
     return (
       <>
         {header}
+        <NegotiationOpportunities items={negotiations} t={t} className="mb-5" />
         <div className="rounded-lg border border-dashed border-rule-strong">
           <Empty
             title={t("No opportunities yet")}
@@ -246,6 +249,8 @@ export default async function OpportunitiesPage({ searchParams }: PageProps<"/op
           </ul>
         </section>
       )}
+
+      <NegotiationOpportunities items={negotiations} t={t} className="mt-8" />
     </>
   );
 }

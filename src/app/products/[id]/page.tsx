@@ -13,6 +13,7 @@ import { PriceChart } from "@/components/price-chart";
 import { ProductSummary } from "@/components/review/product-summary";
 import { Remember } from "@/components/shell/recent";
 import { DeepResearchButton } from "@/components/sourcing/research";
+import { NegotiationCard } from "@/components/negotiation/card";
 import { FieldStatusTag, FieldProvenance, ProductDataPanel } from "@/components/dataset/product-data";
 import { FIELDS, FIELD_KEYS, SECTION_LABEL, type Section as DataSection } from "@/lib/dataset/fields";
 import type { ProductProfile } from "@/lib/dataset/profile";
@@ -35,6 +36,7 @@ import { OPPORTUNITY_LABEL } from "@/lib/intel/opportunities";
 import { comparableObservations, type WindowChange } from "@/lib/intel/price-metrics";
 import { CONFIDENCE_WORD } from "@/lib/intel/summary";
 import { lookups } from "@/lib/lookups";
+import { getNegotiations, keepEstimateHistory, readEstimateHistory } from "@/server/negotiation";
 import { getResearch } from "@/server/research";
 
 export async function generateMetadata({ params }: PageProps<"/products/[id]">): Promise<Metadata> {
@@ -61,7 +63,16 @@ export default async function ProductPage({ params, searchParams }: PageProps<"/
   const { product, price } = pi;
   const profile = (await getProfiles([product.id])).get(product.id)!;
   const db = await getDb();
-  const [onFile, linkedDocs, priority] = await Promise.all([documentsOnFile(db, product.id), linkedProductDocuments(db, product.id), query.review ? getPriorityDataset() : Promise.resolve(null)]);
+  const [onFile, linkedDocs, priority, negotiations, estimates] = await Promise.all([
+    documentsOnFile(db, product.id),
+    linkedProductDocuments(db, product.id),
+    query.review ? getPriorityDataset() : Promise.resolve(null),
+    getNegotiations([product.id]),
+    readEstimateHistory(db, product.id),
+  ]);
+  const negotiation = negotiations.get(product.id) ?? null;
+  // What is shown now joins the history once the page is out, if it differs from the last estimate kept.
+  keepEstimateHistory([product.id]);
   // Reviewing the Top 5: the next of them that still has something missing or to confirm.
   const top = priority?.rows.filter((r) => r.top) ?? [];
   const after = top.slice(top.findIndex((r) => r.intel.product.id === product.id) + 1).find((r) => r.profile.missing.length || r.profile.toConfirm.length);
@@ -142,6 +153,9 @@ export default async function ProductPage({ params, searchParams }: PageProps<"/
 
       {/* The answer first: where this product stands, what is at stake, what to check. */}
       <ProductSummary d={d} columns={compareColumns(pi, intel.config, t)} />
+
+      {/* Not only what is paid: what could realistically be paid, and why. */}
+      {negotiation && <NegotiationCard n={negotiation} history={estimates} t={t} className="mt-5" />}
 
       <ProductDataPanel
         profile={profile}

@@ -8,6 +8,7 @@ import { CandidateBoard, type CandidateVM } from "@/components/sourcing/candidat
 import { BenchmarkForm, DeleteBenchmarkButton } from "@/components/sourcing/market-forms";
 import { CustomsCodeForm, DeepResearchButton, ResearchClassSelect } from "@/components/sourcing/research";
 import { BenchmarkMonth, PilotToggle, RfqSpecForm } from "@/components/sourcing/spec";
+import { NegotiationLine } from "@/components/negotiation/card";
 import { QuoteOpportunityBlock, TrueCostTable } from "@/components/sourcing/true-cost-table";
 import { ComparabilityText, PriceTypeTag, ResearchStatusPill } from "@/components/sourcing/tags";
 import { Crumbs, Delta, Disclosure, Label, PageHeader, Section, Table, Td, Th, cx } from "@/components/ui";
@@ -31,6 +32,7 @@ import { REGION_LABEL, crossesCustoms } from "@/lib/sourcing/regions";
 import { ROLE_LABEL, contactHistory } from "@/lib/sourcing/screening";
 import { POSITION_LABEL, SOURCE_LEVEL_LABEL } from "@/lib/sourcing/types";
 import { connectedProviders } from "@/server/providers";
+import { getNegotiations } from "@/server/negotiation";
 import { WEB_RESEARCH, getResearch } from "@/server/research";
 import { discoveryRequest, getMarketViews, readProductCosts, readRfqLines, readSourcing } from "@/server/sourcing";
 
@@ -76,6 +78,7 @@ export default async function ProductSourcingPage({ params }: PageProps<"/sourci
   const line = lines.get(id)!;
   const spec = line.spec;
   const costs = (await readProductCosts(db, intel, views, t)).get(id) ?? null;
+  const negotiation = (await getNegotiations([id])).get(id) ?? null;
   const ranked = new Map(v.candidates.map((r) => [r.candidate.id, r]));
   const candidates: CandidateVM[] = v.screening.all.map((x) => {
     const c = x.candidate;
@@ -396,6 +399,12 @@ export default async function ProductSourcingPage({ params }: PageProps<"/sourci
           <p className="text-[13.5px] text-ink-2">
             <span className="font-medium">{t("Not estimated.")}</span> {costs ? (costs.quotes.some((q) => !q.cost.complete) ? t("The true cost of a quote on file is incomplete: add what is missing above to see what the difference is worth.") : t("No quote on file has a true cost below what you pay today.")) : v.opportunityNote}
           </p>
+        )}
+        {/* Apart from what the quotes prove: what the software estimates could be negotiated. */}
+        {negotiation && (
+          <div className="mt-4 border-t border-rule pt-3">
+            <NegotiationLine n={negotiation} t={t} />
+          </div>
         )}
       </Section>
 
