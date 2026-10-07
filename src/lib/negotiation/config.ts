@@ -24,7 +24,7 @@ export type AnchorKind = "quote" | "other_supplier" | "published_price" | "bench
 
 export const NEGOTIATION_CONFIG = {
   /**
-   * How much each score weighs in the negotiation strength, by kind of
+   * How much each score weighs in the buyer's negotiation power, by kind of
    * product. A commodity is negotiated on market evidence and volume; a
    * custom part on how hard it is to move and how well it is specified;
    * packaging on volume and on the terms around the price (minimum order,
@@ -38,7 +38,7 @@ export const NEGOTIATION_CONFIG = {
     other: { buyer: 0.2, competition: 0.2, substitutability: 0.15, evidence: 0.2, switching: 0.15, commercial: 0.1 },
   } satisfies Record<NegotiationProfile, Record<DimensionKey, number>>,
 
-  /** Strength in words: below `medium` is low, from `veryHigh` up is very high (scores are 0–10). */
+  /** The power in words: below `medium` is low, from `veryHigh` up is very high (scores are 0–10). */
   strength: { medium: 4, high: 6, veryHigh: 8 },
 
   /** What a year of the product is worth (EUR) → the score of the volume. Below the last step: `smallSpendScore`. */
@@ -55,11 +55,59 @@ export const NEGOTIATION_CONFIG = {
   /** A full truck, for products bought by weight: an order near it is a full load. */
   fullLoadKg: 24_000,
   fullLoadShare: 0.8,
-  /** Products bought from the same supplier that make the account worth negotiating as a whole. */
-  accountProducts: 3,
-  /** Purchases on file from which the orders are called regular, and below which the history is called short. */
-  regularPurchases: 6,
+  /** Purchases on file below which the history is called short. */
   minPurchases: 3,
+
+  /**
+   * What the buyer's own leverage is made of, and how much each part weighs:
+   * what a year of the product is worth, how large the usual order is, whether
+   * orders could be grouped or committed, and what the whole relationship
+   * with the supplier adds. A part nothing on file can tell drops out.
+   */
+  buyerParts: { volume: 0.4, orderSize: 0.15, consolidation: 0.1, relationship: 0.35 },
+
+  /**
+   * Supplier relationship leverage: the whole of what is bought from the
+   * supplier, read as five scores. They are leverage, never a discount.
+   */
+  relationship: {
+    weights: { total_spend: 0.25, cross_spend: 0.2, breadth: 0.2, regularity: 0.2, bundle: 0.15 },
+    /** What a year with the supplier is worth (EUR) → score. Below the last step: 2. */
+    totalSteps: [
+      [2_000_000, 10],
+      [500_000, 9],
+      [250_000, 8],
+      [100_000, 7],
+      [25_000, 5],
+      [5_000, 3],
+    ] as [number, number][],
+    /** What a year of the supplier's other products is worth (EUR) → score. Below the last step: 2; nothing at all: 1. */
+    crossSteps: [
+      [500_000, 9],
+      [250_000, 8],
+      [100_000, 6],
+      [25_000, 5],
+      [5_000, 3],
+    ] as [number, number][],
+    /** Cross-category spend (EUR a year) that counts in the breadth of a relationship, once and twice. */
+    crossMaterial: 25_000,
+    crossLarge: 100_000,
+    /** Purchase dates in the period from which orders are recurring, and frequent. */
+    regularDates: 6,
+    manyDates: 12,
+    /** An interval up to this many days between purchases is "at least monthly". */
+    monthlyDays: 31,
+    /** Months of purchases from which a relationship is called stable, and below which too short to judge. */
+    stableMonths: 12,
+    shortHistoryMonths: 6,
+    /** Other products, and their share of the account, from which several can be negotiated together with weight. */
+    bundleProducts: 3,
+    bundleShare: 0.1,
+    /** Nobody has said how much the buyer matters to the supplier: the score stops here, and its confidence is not high. */
+    unknownImportanceCap: 8,
+    /** The score in words: below `medium` low, from `high` up high. */
+    level: { medium: 4, high: 7 },
+  },
   /** Without a real offer or a second source, competition is only on paper: its score stops here. */
   untestedCompetitionCap: 7,
   /** Without a real offer, the price evidence score stops here. */

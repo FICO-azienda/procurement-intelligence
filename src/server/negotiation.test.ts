@@ -92,6 +92,35 @@ describe("from what is on file to an estimate", () => {
   });
 });
 
+describe("the relationship with the supplier", () => {
+  it("is read from every invoice of the supplier, and what lies beyond the product is never counted twice", async () => {
+    const n = await one();
+    const product = 24_000 * (1.48 + 1.48 + 1.52 + 1.5);
+    const rel = n.relationship!;
+    expect(rel.onFile.product).toBeCloseTo(product, 2);
+    expect(rel.onFile.cross).toBeCloseTo(1504, 2);
+    expect(rel.onFile.total).toBeCloseTo(product + 1504, 2);
+    expect(rel.facts).toMatchObject({ products: 2, groupsAreCategories: false });
+    expect(rel).toMatchObject({ bundle: "medium" });
+    expect(n.inputs.find((x) => x.key === "cross_spend")).toMatchObject({ group: "relationship", status: "confirmed" });
+    expect(n.inputs.find((x) => x.key === "buyer_importance")).toMatchObject({ group: "relationship", status: "missing" });
+    expect(rel.limits[0]).toMatch(/How much you matter to Mock Current Supplier S\.p\.A\. as a customer is not known/);
+    // The container is nearly nothing next to the paraffin: for it, the relationship is almost all "beyond the product".
+    const other = (await readNegotiations(db)).get(otherId)!.relationship!;
+    expect(other.onFile.cross).toBeCloseTo(product, 2);
+  });
+
+  it("takes the buyer's word on how much it matters to the supplier", async () => {
+    const before = (await one()).relationship!;
+    await saveJudgement(db, productId, "buyer_importance", "high", "Among their ten largest customers");
+    const after = await one();
+    expect(after.relationship!.score).toBeGreaterThan(before.score);
+    expect(after.inputs.find((x) => x.key === "buyer_importance")).toMatchObject({ status: "confirmed", value: "High" });
+    await saveJudgement(db, productId, "buyer_importance", null, null);
+    expect((await one()).relationship!.score).toBeCloseTo(before.score, 6);
+  });
+});
+
 describe("the history follows the evidence", () => {
   it("keeps the first estimate once, and nothing while the answer stays the same", async () => {
     expect(await recordEstimates(db)).toBe(1);

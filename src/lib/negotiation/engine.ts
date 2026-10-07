@@ -6,10 +6,12 @@
  * It is an estimate, and says so. It is not a market price, not a quote and
  * not a saving. It is built in three steps, each one explainable:
  *
- *  1. Negotiation strength — six scores from what is on file about this
- *     buyer and this product (volume, alternatives, how standard the product
- *     is, how much price evidence exists, how hard switching is, which terms
- *     can be traded), weighted by the kind of product.
+ *  1. The buyer's negotiation power — six scores from what is on file about
+ *     this buyer and this product (its own leverage: volume, order size and
+ *     the whole relationship with the supplier; the alternatives; how
+ *     standard the product is; how much price evidence exists; how hard
+ *     switching is; which terms can be traded), weighted by the kind of
+ *     product. Leverage is never turned into a discount by itself.
  *  2. The range — anchored on price evidence, never on a percentage of the
  *     current price. Real comparable offers set both ends. Without them the
  *     low end is how far the published references could carry this buyer
@@ -33,6 +35,7 @@ import type { ProductClass } from "../research/strategy";
 import type { Comparability, Confidence } from "../sourcing/types";
 import { DIMENSION_KEYS, NEGOTIATION_CONFIG, profileOf, type AnchorKind, type DimensionKey, type NegotiationConfig, type NegotiationProfile } from "./config";
 import type { PriceDataClass } from "./data-class";
+import { relationshipLeverage, type RelationshipFacts, type RelationshipLeverage } from "./relationship";
 
 export type InputStatus = "confirmed" | "estimated" | "missing";
 
@@ -54,13 +57,14 @@ export const DIMENSION_LABEL: Record<DimensionKey, Msg> = {
 };
 
 /** What the software can only estimate and a person knows better: each can be corrected, with the reason. */
-export const JUDGEMENT_KEYS = ["switching_difficulty", "standardization", "criticality"] as const;
+export const JUDGEMENT_KEYS = ["switching_difficulty", "standardization", "criticality", "buyer_importance"] as const;
 export type JudgementKey = (typeof JUDGEMENT_KEYS)[number];
 export const isJudgementKey = (v: unknown): v is JudgementKey => typeof v === "string" && (JUDGEMENT_KEYS as readonly string[]).includes(v);
 export const JUDGEMENT_LABEL: Record<JudgementKey, { label: Msg; question: Msg }> = {
   switching_difficulty: { label: "Switching difficulty", question: "How hard would it be to buy this from another supplier (tests, approvals, tooling, contracts)?" },
   standardization: { label: "Product standardization", question: "How standard is it: can other suppliers sell the very same product?" },
   criticality: { label: "Product criticality", question: "How much does your production depend on this product arriving exactly as it is today?" },
+  buyer_importance: { label: "Your importance to the supplier", question: "How much do you matter to this supplier as a customer, for what you know of its size and of your share of its sales?" },
 };
 
 export interface Judgement {
@@ -132,8 +136,8 @@ export interface NegotiationInput {
   };
   /** EUR bought in the last 12 months on file: what a year is worth when no yearly volume is known. */
   spendOnFile: number;
-  /** Catalogue products bought from the current supplier, this one included. */
-  supplierProducts: number;
+  /** Everything bought from the current supplier, as the invoices show it. Null: no current supplier. */
+  relationship: RelationshipFacts | null;
   history: {
     purchases: number;
     /** Suppliers this product was really bought from. */
@@ -183,10 +187,15 @@ export interface Negotiation {
   upside: { perUnit: number; pct: number; annual: number | null; volume: number | null; volumeStatus: InputStatus } | null;
   confidence: Confidence | null;
   confidenceWhy: string | null;
+  /** The buyer's negotiation power, in words and as the 0–10 figure behind them. */
   strength: Strength;
   strengthScore: number;
   profile: NegotiationProfile;
   dimensions: DimensionScore[];
+  /** What the power mostly rests on: the first reasons of each score, the heaviest first. */
+  drivers: string[];
+  /** What the whole relationship with the supplier weighs, read apart. Null: no current supplier. */
+  relationship: (RelationshipLeverage & { effect: { buyerWith: number; buyerAlone: number; power: number } }) | null;
   positives: string[];
   limits: string[];
   anchors: AnchorUse[];
@@ -255,7 +264,9 @@ export function negotiate(input: NegotiationInput, t: T = en, cfg: NegotiationCo
     switchingWhy.push(t("You said the product is critical."));
   }
   const switching = judgement("switching_difficulty", systemSwitching, switchingWhy.join(" "));
-  const judgements = { switching_difficulty: switching, standardization, criticality };
+  // Nothing on file says how much the buyer matters to the supplier: only a person can.
+  const importance = judgement("buyer_importance", null, null);
+  const judgements = { switching_difficulty: switching, standardization, criticality, buyer_importance: importance };
   const yours = (j: Judgement) => (j.user ? (j.user.reason ? ` ${t("Your judgement: {reason}", { reason: j.user.reason })}` : ` ${t("Your judgement.")}`) : "");
 
   // ---------------- 1. The evidence that can be used ----------------
@@ -287,35 +298,49 @@ export function negotiate(input: NegotiationInput, t: T = en, cfg: NegotiationCo
   /** Evidence a range can rest on by itself. Border averages under an unconfirmed code and system estimates only support. */
   const standsAlone = (a: Anchor) => (a.kind === "trade" ? input.customsCodeConfirmed : a.kind !== "estimate");
 
-  // ---------------- 2. Negotiation strength ----------------
+  // ---------------- 2. The buyer's negotiation power ----------------
   const dims: DimensionScore[] = [];
   const add = (key: DimensionKey, score: number, positives: string[], limits: string[]) => dims.push({ key, score: clamp(score), weight: cfg.weights[profile][key], positives, limits });
 
-  // Buyer leverage: what a year of this product is worth, how it is ordered, what else is bought from the same supplier.
+  // Buyer leverage: what a year of this product is worth, how it is ordered, and what the whole relationship with the
+  // supplier adds. The product's own spend is counted once, as its volume: the relationship adds only what lies beyond it.
+  const rel = input.relationship ? relationshipLeverage(input.relationship, { supplier, importance: importance.effective }, t, cfg) : null;
+  let relationship: Negotiation["relationship"] = null;
   {
     const pos: string[] = [];
     const neg: string[] = [];
     const parts: [score: number, weight: number][] = [];
     const yearly = P != null && input.volume.annual != null ? P * input.volume.annual : input.spendOnFile > 0 ? input.spendOnFile : null;
     if (yearly != null) {
-      parts.push([cfg.spendSteps.find(([min]) => yearly >= min)?.[1] ?? cfg.smallSpendScore, 0.5]);
+      parts.push([cfg.spendSteps.find(([min]) => yearly >= min)?.[1] ?? cfg.smallSpendScore, cfg.buyerParts.volume]);
       const amount = f.moneyApprox(yearly);
       if (yearly >= cfg.largeSpend) pos.push(input.volume.annual != null && input.volume.annualStatus === "estimated" ? t("High purchase volume: about {amount} a year, estimated from the purchases on file.", { amount }) : t("High purchase volume: about {amount} a year.", { amount }));
       else if (yearly < cfg.smallSpend) neg.push(t("Small purchase volume: about {amount} a year gives little weight with a supplier.", { amount }));
     }
+    const fullLoad = input.volume.typicalOrderKg != null && input.volume.typicalOrderKg / cfg.fullLoadKg >= cfg.fullLoadShare;
     if (input.volume.typicalOrderKg != null && input.volume.typicalOrder != null) {
       const share = input.volume.typicalOrderKg / cfg.fullLoadKg;
-      parts.push([share >= cfg.fullLoadShare ? 10 : share >= cfg.fullLoadShare / 2 ? 6 : 4, 0.2]);
-      if (share >= cfg.fullLoadShare) pos.push(t("Full-load orders: a usual order of {quantity}.", { quantity: f.quantity(Math.round(input.volume.typicalOrder), input.unit) }));
+      parts.push([fullLoad ? 10 : share >= cfg.fullLoadShare / 2 ? 6 : 4, cfg.buyerParts.orderSize]);
+      if (fullLoad) pos.push(t("Full-load orders: a usual order of {quantity}.", { quantity: f.quantity(Math.round(input.volume.typicalOrder), input.unit) }));
     }
-    parts.push([input.supplierProducts >= cfg.accountProducts ? 8 : input.supplierProducts === 2 ? 6 : 4, 0.2]);
-    if (input.supplierProducts >= cfg.accountProducts && supplier) pos.push(t("You buy {n} products from {supplier}: the volumes can be negotiated together.", { n: input.supplierProducts, supplier }));
+    // Order consolidation: frequent orders can be grouped into larger ones; frequent full loads can become a yearly commitment.
+    const every = input.relationship?.productEveryDays ?? null;
+    const frequent = every != null && every <= cfg.relationship.monthlyDays;
+    if (every != null) parts.push([frequent ? (fullLoad ? 6 : 8) : 4, cfg.buyerParts.consolidation]);
     const n = input.history.purchases;
-    parts.push([n >= cfg.regularPurchases ? 8 : n >= cfg.minPurchases ? 6 : 3, 0.1]);
-    if (n >= cfg.regularPurchases) pos.push(t("Regular orders: {n} purchases on file.", { n }));
-    else if (n < cfg.minPurchases) neg.push(t.n(n, "Very little purchase history: {n} purchase on file.", "Very little purchase history: {n} purchases on file."));
-    const total = parts.reduce((s, [, x]) => s + x, 0);
-    add("buyer", parts.reduce((s, [score, x]) => s + score * x, 0) / total, pos, neg);
+    if (n < cfg.minPurchases) neg.push(t.n(n, "Very little purchase history: {n} purchase on file.", "Very little purchase history: {n} purchases on file."));
+    const mean = (xs: [number, number][]) => (xs.length ? xs.reduce((sum, [score, x]) => sum + score * x, 0) / xs.reduce((sum, [, x]) => sum + x, 0) : 5);
+    const own = parts;
+    const buyerWith = mean(rel ? [...own, [rel.added, cfg.buyerParts.relationship]] : own);
+    if (rel) {
+      // Against the same buyer, had it bought only this product from the supplier.
+      const buyerAlone = mean([...own, [rel.alone, cfg.buyerParts.relationship]]);
+      relationship = { ...rel, effect: { buyerWith, buyerAlone, power: (buyerWith - buyerAlone) * cfg.weights[profile].buyer } };
+      pos.push(...rel.positives.slice(0, 3));
+      if (importance.effective == null) neg.push(rel.limits[0]);
+    }
+    if (frequent) pos.push(fullLoad ? t("Regular full loads, about every {days}: a volume commitment over the year is something to offer.", { days: f.days(every!, t) }) : t("You order about every {days}: fewer, larger orders are something to offer.", { days: f.days(every!, t) }));
+    add("buyer", buyerWith, pos, neg);
   }
 
   // Supplier competition: who else could supply, and whether any of them has been put to the test.
@@ -455,10 +480,15 @@ export function negotiate(input: NegotiationInput, t: T = en, cfg: NegotiationCo
   else if (input.volume.annualStatus === "estimated") better("confirm_volume", t("Confirm the annual volume: today it is an estimate"));
   if (indirect.some((a) => a.kind === "trade") && !input.customsCodeConfirmed) better("customs_code", t("Confirm the customs code the trade statistics are read under"));
   if (input.terms.paymentDays == null) better("payment_terms", t("Add the payment terms of your current supplier"));
-  if (!switching.user && !criticality.user) better("your_knowledge", t("Say how hard switching would be and how critical the product is: you know it better than the software"));
+  if (!switching.user && !criticality.user && !importance.user) better("your_knowledge", t("Say how hard switching would be, how critical the product is and how much you matter to the supplier: you know it better than the software"));
 
   const warnings = [...new Set(input.anchors.filter((a) => a.recent && a.warning).map((a) => a.warning!))];
-  const positives = [...dimensions].sort((a, b) => b.weight - a.weight).flatMap((d) => d.positives);
+  const byWeight = [...dimensions].sort((a, b) => b.weight - a.weight);
+  const positives = byWeight.flatMap((d) => d.positives);
+  // The main drivers: the buyer's own leverage first — volume, order size, the relationship with the supplier — then the
+  // first reason of each other score, the heaviest first.
+  const own = dimensions.find((d) => d.key === "buyer")!.positives.slice(0, 5);
+  const drivers = [...own, ...byWeight.filter((d) => d.key !== "buyer").map((d) => d.positives[0]).filter((x): x is string => !!x)].slice(0, 7);
   const limits = [...dimensions].sort((a, b) => b.weight - a.weight).flatMap((d) => d.limits);
 
   const describe = (a: Anchor, role: AnchorRole, weight: number): AnchorUse => ({
@@ -469,7 +499,7 @@ export function negotiate(input: NegotiationInput, t: T = en, cfg: NegotiationCo
     role,
     how: role === "not_used" ? (!a.recent ? t("Expired or too old to count.") : a.comparability === "not" ? t("Not comparable with what you buy.") : t("No usable price.")) : weightWords(weight, t),
   });
-  const base = { unit: input.unit, step, strength, strengthScore, profile, dimensions, judgements, improve, warnings };
+  const base = { unit: input.unit, step, strength, strengthScore, profile, dimensions, drivers, relationship, judgements, improve, warnings };
 
   // ---------------- 3. The range ----------------
   if (P == null) {
@@ -539,7 +569,7 @@ export function negotiate(input: NegotiationInput, t: T = en, cfg: NegotiationCo
       how.push(
         isReal(a)
           ? t("The low end comes from the price quoted by {supplier}, counted for half of its distance: its true cost is still incomplete.", { supplier: a.label })
-          : t("No real offer is on file, so the low end is an estimate: your price is about {pct}% above {label}, which is counted for a part of that distance — nobody has confirmed it for your specification, quantity and delivery terms. How far it carries depends on your negotiation strength ({strength}).", {
+          : t("No real offer is on file, so the low end is an estimate: your price is about {pct}% above {label}, which is counted for a part of that distance — nobody has confirmed it for your specification, quantity and delivery terms. How far it carries depends on your negotiation power ({strength}).", {
               label: a.label,
               pct: Math.round(((P - mid(a)) / mid(a)) * 100),
               strength: t(STRENGTH_LABEL[strength]).toLowerCase(),
@@ -616,7 +646,7 @@ export function negotiate(input: NegotiationInput, t: T = en, cfg: NegotiationCo
   }
 
   how.push(
-    t("The suggested target is not the lowest end: it sits where a buyer with {strength} negotiation strength can realistically arrive, held to the confidence of the evidence ({confidence}).", {
+    t("The suggested target is not the lowest end: it sits where a buyer with {strength} negotiation power can realistically arrive, held to the confidence of the evidence ({confidence}).", {
       strength: t(STRENGTH_LABEL[strength]).toLowerCase(),
       confidence: t(LEVEL_LABEL[confidence]).toLowerCase(),
     }),

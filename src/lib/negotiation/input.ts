@@ -23,7 +23,8 @@ import type { MarketView } from "../sourcing/market";
 import type { Comparability, MarketBenchmark } from "../sourcing/types";
 import { NEGOTIATION_CONFIG, type NegotiationConfig } from "./config";
 import { dataClassOf } from "./data-class";
-import { JUDGEMENT_KEYS, JUDGEMENT_LABEL, LEVEL_LABEL, negotiate, precisionOf, type Anchor, type InputStatus, type Negotiation, type NegotiationInput } from "./engine";
+import { JUDGEMENT_LABEL, LEVEL_LABEL, negotiate, precisionOf, type Anchor, type InputStatus, type JudgementKey, type Negotiation, type NegotiationInput } from "./engine";
+import { RELATIONSHIP_PART_LABEL, type RelationshipFacts } from "./relationship";
 
 /** An offer on file with its true cost, as the true-cost module works it out. */
 export interface QuoteEvidence {
@@ -50,18 +51,19 @@ export interface NegotiationContext {
   /** Why the product is read as that class, and whether the user chose it. */
   classReason: Msg;
   classChosen: boolean;
-  /** Catalogue products whose current supplier is this product's, this one included. */
-  supplierProducts: number;
+  /** Everything bought from the product's current supplier, as the invoices show it (relationship.ts). */
+  relationship: RelationshipFacts | null;
   customsCodeConfirmed: boolean;
   judgements: NegotiationInput["judgements"];
   asOf: string;
 }
 
 /** One input the estimate rests on: what it is, how sure, where it comes from. */
-export type FactorGroup = "buyer" | "product" | "competition" | "price" | "terms" | "market";
-export const FACTOR_GROUPS: FactorGroup[] = ["buyer", "product", "competition", "price", "terms", "market"];
+export type FactorGroup = "buyer" | "relationship" | "product" | "competition" | "price" | "terms" | "market";
+export const FACTOR_GROUPS: FactorGroup[] = ["buyer", "relationship", "product", "competition", "price", "terms", "market"];
 export const FACTOR_GROUP_LABEL: Record<FactorGroup, Msg> = {
   buyer: "Buyer power",
+  relationship: "Relationship with the supplier",
   product: "Product|negotiation",
   competition: "Market competition",
   price: "Price intelligence",
@@ -188,7 +190,7 @@ export function negotiationInput(ctx: NegotiationContext, t: T = en, cfg: Negoti
       typicalOrderKg: typicalOrder != null && mass?.dimension === "mass" && mass.factor ? typicalOrder * mass.factor : null,
     },
     spendOnFile: view.history.annualSpend,
-    supplierProducts: ctx.supplierProducts,
+    relationship: ctx.relationship,
     history: { purchases: intel.metrics.purchaseCount, suppliersUsed: view.history.suppliers.length, trend: intel.price.trend, recentHigh },
     competition: {
       found: view.screening.counts.found,
@@ -221,6 +223,13 @@ export function factorInputs(ctx: NegotiationContext, result: Negotiation, t: T 
     out.push({ key, group, label: t(FIELDS[key].label), value: x.display, status: x.status, source: x.source?.label ?? null, sourceDate: x.source?.date ?? null, method: x.method ?? x.note });
   };
   const put = (group: FactorGroup, key: string, label: string, value: string | null, status: InputStatus, source: string | null = null, sourceDate: string | null = null, method: string | null = null) => out.push({ key, group, label, value, status, source, sourceDate, method });
+  /** A factor a person can correct: the person's word, else the software's estimate, else nothing. */
+  const judged = (group: FactorGroup, key: JudgementKey) => {
+    const j = result.judgements[key];
+    if (j.user) put(group, key, t(JUDGEMENT_LABEL[key].label), t(LEVEL_LABEL[j.user.level]), "confirmed", t("Entered by you"), j.user.date, [j.user.reason, j.system && j.system !== j.user.level ? t("The software had estimated: {level}.", { level: t(LEVEL_LABEL[j.system]).toLowerCase() }) : null].filter(Boolean).join(" ") || null);
+    else if (j.system) put(group, key, t(JUDGEMENT_LABEL[key].label), t(LEVEL_LABEL[j.system]), "estimated", t("Rules of the software"), null, j.systemWhy);
+    else put(group, key, t(JUDGEMENT_LABEL[key].label), null, "missing", null, null, t("Nothing on file can tell: only you know."));
+  };
   const invoices = t("Your invoices");
   const research = t("Supplier research");
   const lastPurchase = view.history.latest?.date ?? null;
@@ -230,20 +239,34 @@ export function factorInputs(ctx: NegotiationContext, result: Negotiation, t: T 
   fromProfile("buyer", "typical_order");
   fromProfile("buyer", "purchase_frequency");
   put("buyer", "spend_on_file", t("Spend on file, last 12 months"), view.history.annualSpend > 0 ? f.money(Math.round(view.history.annualSpend)) : null, view.history.annualSpend > 0 ? "confirmed" : "missing", invoices, lastPurchase, t("Sum of the purchases of the last 12 months on file."));
-  put("buyer", "supplier_products", t("Products bought from the same supplier"), view.currentSupplier ? String(ctx.supplierProducts) : null, view.currentSupplier ? "confirmed" : "missing", invoices, lastPurchase, t("Catalogue products whose latest purchase is from the same supplier."));
   put("buyer", "suppliers_used", t("Suppliers you buy it from"), view.history.suppliers.length ? view.history.suppliers.map((s) => s.name).join(", ") : null, view.history.suppliers.length ? "confirmed" : "missing", invoices, lastPurchase);
-  put("buyer", "relationship", t("Contract and relationship with the supplier"), null, "missing", null, null, t("Not on file: the app holds no contracts yet."));
+
+  // ---- Relationship with the supplier: the whole of what is bought from it
+  const rel = result.relationship;
+  if (rel) {
+    const x = rel.facts;
+    const yearly = (n: number) => (rel.yearly?.estimated ? ` · ${t("about {amount} a year, estimated from {months} months on file", { amount: f.moneyApprox(n * (x.annualFactor ?? 1)), months: f.number(x.historyMonths, 1) })}` : "");
+    const sums = t("Purchases of the last 12 months on file, catalogue products only.");
+    put("relationship", "product_spend", t("Spend on this product"), f.money(Math.round(rel.onFile.product)) + yearly(rel.onFile.product), "confirmed", invoices, lastPurchase, sums);
+    put("relationship", "supplier_spend", t(RELATIONSHIP_PART_LABEL.total_spend), f.money(Math.round(rel.onFile.total)) + yearly(rel.onFile.total), "confirmed", invoices, lastPurchase, sums);
+    put("relationship", "cross_spend", t(RELATIONSHIP_PART_LABEL.cross_spend), f.money(Math.round(rel.onFile.cross)) + yearly(rel.onFile.cross), "confirmed", invoices, lastPurchase, t("Total spend with the supplier minus the spend on this product: nothing is counted twice."));
+    put("relationship", "supplier_products", t("Products bought from the supplier"), String(x.products), "confirmed", invoices, lastPurchase, t("Catalogue products with a purchase from the supplier in the last 12 months."));
+    put("relationship", "groups", t("Categories bought"), `${x.groups.length} (${x.groups.map((g) => (g.label ? t(g.label) : g.name)).join(", ")})`, x.groupsAreCategories ? "confirmed" : "estimated", x.groupsAreCategories ? t("Your catalogue") : t("Classification rules"), null, x.groupsAreCategories ? null : t("Products without a category yet are counted by kind of purchase."));
+    put("relationship", "supplier_frequency", t("Purchase frequency with the supplier"), x.everyDays != null ? t("{n} purchase dates on file, about every {days}", { n: x.purchaseDates, days: f.days(x.everyDays, t) }) : t.n(x.purchaseDates, "{n} purchase date on file", "{n} purchase dates on file"), x.purchaseDates ? "confirmed" : "missing", invoices, lastPurchase, x.everyDays != null ? t("Median interval between distinct purchase dates.") : null);
+    put("relationship", "duration", t("Relationship duration"), x.firstPurchase ? t("At least {months} months: first invoice on file {date}", { months: f.number(x.monthsWithSupplier, 1), date: f.date(x.firstPurchase) }) : null, x.firstPurchase ? "estimated" : "missing", invoices, x.firstPurchase, t("From the first invoice on file: the relationship may be older."));
+    put("relationship", "supplier_share", t("Share of your product spend that goes to this supplier"), x.supplierShare != null ? `${f.number(x.supplierShare * 100, 0)}%` : null, x.supplierShare != null ? "confirmed" : "missing", invoices, lastPurchase, sums);
+    put("relationship", "breadth", t(RELATIONSHIP_PART_LABEL.breadth), t(LEVEL_LABEL[rel.breadth]), "estimated", t("Rules of the software"), null, t("From the products and categories bought, the spend beyond this product, and how recurring and long-standing the orders are."));
+    put("relationship", "bundle", t(RELATIONSHIP_PART_LABEL.bundle), t(LEVEL_LABEL[rel.bundle]), "estimated", t("Rules of the software"), null, t("From how many other products you buy from the supplier and what they are worth. A lever to use, not a discount."));
+  } else put("relationship", "supplier_spend", t(RELATIONSHIP_PART_LABEL.total_spend), null, "missing", null, null, t("No current supplier on file for this product."));
+  judged("relationship", "buyer_importance");
+  put("relationship", "supplier_size", t("The supplier's size and margins"), null, "missing", null, null, t("Not on file: nothing here knows the supplier's side."));
+  put("relationship", "more_from_supplier", t("What else this supplier could sell you"), null, "missing", null, null, t("Not on file: its range is not known."));
 
   // ---- Product
   put("product", "class", t("Kind of product"), t(CLASS_LABEL[ctx.productClass]), ctx.classChosen ? "confirmed" : "estimated", ctx.classChosen ? t("Entered by you") : t("Classification rules"), null, t(ctx.classReason));
   fromProfile("product", "technical_spec");
   fromProfile("product", "datasheet");
-  for (const key of JUDGEMENT_KEYS) {
-    const j = result.judgements[key];
-    if (j.user) put("product", key, t(JUDGEMENT_LABEL[key].label), t(LEVEL_LABEL[j.user.level]), "confirmed", t("Entered by you"), j.user.date, [j.user.reason, j.system && j.system !== j.user.level ? t("The software had estimated: {level}.", { level: t(LEVEL_LABEL[j.system]).toLowerCase() }) : null].filter(Boolean).join(" ") || null);
-    else if (j.system) put("product", key, t(JUDGEMENT_LABEL[key].label), t(LEVEL_LABEL[j.system]), "estimated", t("Rules of the software"), null, j.systemWhy);
-    else put("product", key, t(JUDGEMENT_LABEL[key].label), null, "missing", null, null, t("Nothing on file can tell: only you know."));
-  }
+  for (const key of ["switching_difficulty", "standardization", "criticality"] as const) judged("product", key);
 
   // ---- Market competition
   const counts = view.screening.counts;

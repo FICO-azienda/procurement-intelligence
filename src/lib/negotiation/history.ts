@@ -20,6 +20,8 @@ export interface EstimateSnapshot {
   step: number;
   upside: { perUnit: number; pct: number; annual: number | null; volume: number | null; volumeStatus: InputStatus } | null;
   scores: Record<DimensionKey, number>;
+  /** The supplier relationship leverage as it was read then. Absent on estimates kept before it existed. */
+  relationship?: { score: number; breadth: Level; bundle: Level } | null;
   /** The evidence the estimate used, each with what kind of price it is. */
   anchors: { key: string; kind: AnchorKind; dataClass: PriceDataClass; label: string; value: number; role: AnchorRole }[];
   /** The factors a person corrected. */
@@ -86,6 +88,7 @@ export function estimateRecord(n: Negotiation, previous: EstimateRecord | null):
       step: n.step,
       upside: n.upside,
       scores: Object.fromEntries(n.dimensions.map((d) => [d.key, Math.round(d.score * 10) / 10])) as Record<DimensionKey, number>,
+      relationship: n.relationship ? { score: Math.round(n.relationship.score * 10) / 10, breadth: n.relationship.breadth, bundle: n.relationship.bundle } : null,
       anchors: used(n).map((a) => ({ key: a.key, kind: a.kind, dataClass: a.dataClass, label: a.label, value: a.value, role: a.role })),
       judgements: corrected(n),
       change: changeSince(n, previous),

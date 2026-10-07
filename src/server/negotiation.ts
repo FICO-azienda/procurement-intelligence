@@ -15,14 +15,17 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { after, connection } from "next/server";
 import { getDb, type DB } from "@/db";
 import { negotiationEstimates, productDataFields, products } from "@/db/schema";
+import type { Dataset } from "@/lib/analytics";
 import { attributesOf } from "@/lib/catalog/attributes";
-import { getIntel, getLearning, getSettings, getT, readLearning, readSettings } from "@/lib/data";
+import { catalogueOf } from "@/lib/catalog/spend";
+import { getDataset, getIntel, getLearning, getSettings, getT, readLearning, readSettings } from "@/lib/data";
 import type { LedgerRow, ProductProfile } from "@/lib/dataset/profile";
 import { en, type T } from "@/lib/i18n";
 import type { Intel } from "@/lib/intel/engine";
 import { isJudgementKey, isLevel, type JudgementKey, type Level, type NegotiationInput, type NegotiationStatus, type Strength } from "@/lib/negotiation/engine";
 import { estimateRecord, type EstimateRecord, type EstimateSnapshot } from "@/lib/negotiation/history";
 import { negotiationFor, type ProductNegotiation } from "@/lib/negotiation/input";
+import { relationshipFacts } from "@/lib/negotiation/relationship";
 import { classifyProduct } from "@/lib/research/strategy";
 import type { MarketView } from "@/lib/sourcing/market";
 import type { Confidence, MarketBenchmark } from "@/lib/sourcing/types";
@@ -30,6 +33,10 @@ import { getProfiles, readLedger, readProfiles } from "./product-data";
 import { getMarketViews, getSourcingData, readMarketViews, readProductCosts, readSourcing, type ProductCosts } from "./sourcing";
 
 interface Assembly {
+  /** The catalogue's purchases and products: what the relationship with a supplier is read from. */
+  catalogue: Pick<Dataset, "purchases" | "products">;
+  /** First and last purchase date of everything on file: how much history there is. */
+  coverage: { from: string; to: string } | null;
   intel: Intel;
   views: Map<string, MarketView>;
   profiles: Map<string, ProductProfile>;
@@ -50,11 +57,6 @@ function judgementsOf(rows: LedgerRow[]): NegotiationInput["judgements"] {
 
 function assemble(a: Assembly, productIds: string[], t: T): Map<string, ProductNegotiation> {
   const supplierOf = (p: Intel["products"][number]) => p.product.currentSupplierId ?? p.metrics.lastSupplierId ?? null;
-  const bySupplier = new Map<string, number>();
-  for (const p of a.intel.products) {
-    const s = supplierOf(p);
-    if (s) bySupplier.set(s, (bySupplier.get(s) ?? 0) + 1);
-  }
   const out = new Map<string, ProductNegotiation>();
   for (const id of productIds) {
     const intel = a.intel.products.find((p) => p.product.id === id);
@@ -84,7 +86,7 @@ function assemble(a: Assembly, productIds: string[], t: T): Map<string, ProductN
           productClass: cls.productClass,
           classReason: cls.reason,
           classChosen: cls.chosen,
-          supplierProducts: supplier ? (bySupplier.get(supplier) ?? 1) : 1,
+          relationship: relationshipFacts(a.catalogue, id, supplier, a.intel.asOf, a.coverage),
           customsCodeConfirmed: !!row?.customsCode && row.customsCodeConfirmed,
           judgements: judgementsOf(a.ledger.get(id) ?? []),
           asOf: a.intel.asOf,
@@ -96,23 +98,28 @@ function assemble(a: Assembly, productIds: string[], t: T): Map<string, ProductN
   return out;
 }
 
+const coverageOf = (data: Dataset) => {
+  const dates = data.purchases.map((p) => p.date).sort();
+  return dates.length ? { from: dates[0], to: dates.at(-1)! } : null;
+};
+
 const productRows = (db: DB) => db.select({ id: products.id, kind: products.kind, researchClass: products.researchClass, customsCode: products.customsCode, customsCodeConfirmed: products.customsCodeConfirmed }).from(products);
 
 /** Straight from the database: for the history, the tests, and a write that needs the estimate as it stands. */
 export async function readNegotiations(db: DB, t: T = en, productIds?: string[]): Promise<Map<string, ProductNegotiation>> {
-  const [{ views, intel }, sourcing, learning, settings, rows] = await Promise.all([readMarketViews(db, t), readSourcing(db), readLearning(db), readSettings(db), productRows(db)]);
+  const [{ views, intel, catalogue, data }, sourcing, learning, settings, rows] = await Promise.all([readMarketViews(db, t), readSourcing(db), readLearning(db), readSettings(db), productRows(db)]);
   const ids = productIds ?? intel.products.map((p) => p.product.id);
   const [profiles, costs, ledger] = await Promise.all([readProfiles(db, ids, t), readProductCosts(db, intel, views, t), readLedger(db, ids)]);
-  return assemble({ intel, views, profiles, costs, benchmarks: sourcing.benchmarks, aliases: learning.productAliases, companyName: settings.companyName, rows, ledger }, ids, t);
+  return assemble({ catalogue, coverage: coverageOf(data), intel, views, profiles, costs, benchmarks: sourcing.benchmarks, aliases: learning.productAliases, companyName: settings.companyName, rows, ledger }, ids, t);
 }
 
 /** For the pages: the estimates of the given products, from this request's data. */
 export async function getNegotiations(productIds: string[]): Promise<Map<string, ProductNegotiation>> {
   await connection();
-  const [intel, { views }, sourcing, learning, settings, t, db] = await Promise.all([getIntel(), getMarketViews(), getSourcingData(), getLearning(), getSettings(), getT(), getDb()]);
+  const [data, intel, { views }, sourcing, learning, settings, t, db] = await Promise.all([getDataset(), getIntel(), getMarketViews(), getSourcingData(), getLearning(), getSettings(), getT(), getDb()]);
   const ids = productIds.filter((id) => intel.products.some((p) => p.product.id === id));
   const [profiles, costs, ledger, rows] = await Promise.all([getProfiles(ids), readProductCosts(db, intel, views, t), readLedger(db, ids), productRows(db)]);
-  return assemble({ intel, views, profiles, costs, benchmarks: sourcing.benchmarks, aliases: learning.productAliases, companyName: settings.companyName, rows, ledger }, ids, t);
+  return assemble({ catalogue: catalogueOf(data), coverage: coverageOf(data), intel, views, profiles, costs, benchmarks: sourcing.benchmarks, aliases: learning.productAliases, companyName: settings.companyName, rows, ledger }, ids, t);
 }
 
 /** Every catalogue product with a price paid: the list the opportunities page reads. */

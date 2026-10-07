@@ -7,7 +7,8 @@ import { said, type T } from "@/lib/i18n";
 import type { AnchorKind } from "@/lib/negotiation/config";
 import { DATA_CLASS } from "@/lib/negotiation/data-class";
 import { ANCHOR_ROLE_LABEL, DIMENSION_LABEL, LEVEL_LABEL, STRENGTH_LABEL, roundTo, type ImproveKind, type Strength } from "@/lib/negotiation/engine";
-import { FACTOR_GROUPS, FACTOR_GROUP_LABEL, type ProductNegotiation } from "@/lib/negotiation/input";
+import { FACTOR_GROUPS, FACTOR_GROUP_LABEL, type FactorInput, type ProductNegotiation } from "@/lib/negotiation/input";
+import { RELATIONSHIP_PART_LABEL } from "@/lib/negotiation/relationship";
 import { NEGOTIATION_CONFIG } from "@/lib/negotiation/config";
 import type { PriceType } from "@/lib/sourcing/types";
 import type { EstimateRow } from "@/server/negotiation";
@@ -90,7 +91,7 @@ export function NegotiationCard({ n, history, t, className }: { n: ProductNegoti
           <p className="mt-1 text-[13px] font-medium">{n.current == null ? t("Add or import a purchase of this product.") : t("Get one comparable quote to estimate a negotiation range.")}</p>
           {n.current != null && (
             <p className="mt-2 text-[12.5px] text-ink-3">
-              {t("Current price: {price}.", { price: price(n.current, unit) })} {t("Negotiation strength: {strength}.", { strength: t(STRENGTH_LABEL[n.strength]).toLowerCase() })}
+              {t("Current price: {price}.", { price: price(n.current, unit) })}
             </p>
           )}
         </div>
@@ -99,7 +100,7 @@ export function NegotiationCard({ n, history, t, className }: { n: ProductNegoti
           <Figure label={t("Current price")} note={t("From your invoices")}>
             <span className="num">{price(n.current!, unit)}</span>
           </Figure>
-          <Figure label={t("Estimated achievable range")} note={n.status === "no_upside" ? t("No room below what you pay") : t("Negotiation strength: {strength}.", { strength: t(STRENGTH_LABEL[n.strength]).toLowerCase() })}>
+          <Figure label={t("Estimated achievable range")} note={n.status === "no_upside" ? t("No room below what you pay") : t("From the lowest end to the cautious end")}>
             <span className="num">{rangeOf(n.range!.low, n.range!.high, unit)}</span>
           </Figure>
           <Figure label={t("Suggested target")} note={n.status === "no_upside" ? t("Hold the price") : t("Realistic, not the lowest end")}>
@@ -125,6 +126,34 @@ export function NegotiationCard({ n, history, t, className }: { n: ProductNegoti
           </Figure>
         </dl>
       )}
+
+      {/* Who is at the table: the buyer's power in one word, and what it mostly rests on. */}
+      <div className="border-t border-rule px-5 py-4 sm:px-6">
+        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+          <h3 className="text-[13px] font-semibold">{t("Buyer negotiation power")}</h3>
+          <span className={cx("inline-flex h-[20px] items-center rounded-full px-2 text-[11.5px] font-semibold", STRENGTH_TONE[n.strength])}>{t(STRENGTH_LABEL[n.strength])}</span>
+          <span className="text-[12.5px] text-ink-3">{t("Leverage at the table: it moves where the estimate falls, it is never a discount by itself.")}</span>
+        </div>
+        {n.drivers.length > 0 && (
+          <>
+            <div className="mt-2.5 text-[12px] text-ink-3">{t("Main drivers")}</div>
+            <ul className="mt-1 grid gap-x-8 gap-y-1 text-[13px] text-ink-2 @3xl:grid-cols-2">
+              {n.drivers.map((line) => (
+                <li key={line} className="flex gap-2">
+                  <span aria-hidden className="font-semibold text-down">
+                    +
+                  </span>
+                  <span>{line}</span>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </div>
+
+      <Disclosure className="mx-5 mb-3 sm:mx-6" title={<span className="whitespace-nowrap">{t("View leverage analysis")}</span>} description={t("What you buy from this supplier in all, and what that weighs")}>
+        <LeverageAnalysis n={n} t={t} />
+      </Disclosure>
 
       <Disclosure className="mx-5 mb-5 sm:mx-6" title={<span className="whitespace-nowrap">{t("View analysis")}</span>} description={n.status === "not_enough_data" ? t("What is on file, what is missing and how to get an estimate") : t("Why this range, the evidence behind it and how to improve it")}>
         <div className="space-y-6">
@@ -178,7 +207,7 @@ export function NegotiationCard({ n, history, t, className }: { n: ProductNegoti
 
           <div>
             <h3 className="text-[13px] font-semibold">
-              {t("Negotiation strength")}{" "}
+              {t("Buyer negotiation power")}{" "}
               <span className={cx("ml-1 inline-flex h-[20px] items-center rounded-full px-2 text-[11.5px] font-semibold", STRENGTH_TONE[n.strength])}>{t(STRENGTH_LABEL[n.strength])}</span>
             </h3>
             <p className="mt-1 text-[12.5px] text-ink-3">{t("Six readings of what is on file, weighed for this kind of product. They move where the range and the target fall; they are not a price.")}</p>
@@ -288,23 +317,7 @@ export function NegotiationCard({ n, history, t, className }: { n: ProductNegoti
                         {t(FACTOR_GROUP_LABEL[group])}
                       </td>
                     </tr>,
-                    ...n.inputs
-                      .filter((x) => x.group === group)
-                      .map((x) => (
-                        <tr key={`${group}:${x.key}`}>
-                          <Td className="whitespace-normal! text-ink-2">{x.label}</Td>
-                          <Td className="whitespace-normal!">
-                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                              <FieldStatusTag status={x.status} />
-                              <span className={x.value ? "font-medium" : "text-ink-4"}>{x.value ?? "—"}</span>
-                            </div>
-                          </Td>
-                          <Td className="hidden whitespace-normal! text-[12px] text-ink-3 @2xl:table-cell">
-                            {[x.source, x.sourceDate ? f.date(x.sourceDate) : null].filter(Boolean).join(" · ")}
-                            {x.method && <div>{x.method}</div>}
-                          </Td>
-                        </tr>
-                      )),
+                    ...n.inputs.filter((x) => x.group === group).map((x) => <InputRow key={`${group}:${x.key}`} x={x} />),
                   ])}
                 </tbody>
               </Table>
@@ -363,5 +376,124 @@ export function NegotiationLine({ n, t }: { n: ProductNegotiation; t: T }) {
         {t("View analysis")}
       </Link>
     </p>
+  );
+}
+
+/** One input with its status, where it comes from and how it was worked out. */
+function InputRow({ x }: { x: FactorInput }) {
+  return (
+    <tr>
+      <Td className="whitespace-normal! text-ink-2">{x.label}</Td>
+      <Td className="whitespace-normal!">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <FieldStatusTag status={x.status} />
+          <span className={x.value ? "font-medium" : "text-ink-4"}>{x.value ?? "—"}</span>
+        </div>
+      </Td>
+      <Td className="hidden whitespace-normal! text-[12px] text-ink-3 @2xl:table-cell">
+        {[x.source, x.sourceDate ? f.date(x.sourceDate) : null].filter(Boolean).join(" · ")}
+        {x.method && <div>{x.method}</div>}
+      </Td>
+    </tr>
+  );
+}
+
+const score = (n: number) => f.number(n, 1);
+
+/**
+ * The relationship with the supplier, read apart: everything bought from it,
+ * what lies beyond this product, and what that weighs in the buyer's power.
+ * Leverage to use at the table — never a discount worked out from it.
+ */
+function LeverageAnalysis({ n, t }: { n: ProductNegotiation; t: T }) {
+  const rel = n.relationship;
+  if (!rel) return <p className="text-[13px] text-ink-3">{t("No current supplier on file for this product: there is no relationship to read yet.")}</p>;
+  const { effect } = rel;
+  const before = wordOf(n.strengthScore - effect.power);
+  return (
+    <div className="space-y-6">
+      <div>
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <h3 className="text-[13px] font-semibold">{t("Supplier relationship leverage")}</h3>
+          <span className="num text-[17px] font-semibold tracking-[-0.01em]">{t("{score} out of 10", { score: score(rel.score) })}</span>
+          <span className={cx("inline-flex h-[20px] items-center rounded-full px-2 text-[11.5px] font-semibold", STRENGTH_TONE[rel.level])}>{t(LEVEL_LABEL[rel.level])}</span>
+        </div>
+        <p className="mt-1 text-[12.5px] text-ink-3">{t("A reading of the invoices by rule, not a measure: thresholds are starting assumptions. Buying more products from a supplier does not by itself mean a lower price.")}</p>
+      </div>
+
+      <div className="overflow-hidden rounded-lg border border-rule">
+        <Table>
+          <tbody>{n.inputs.filter((x) => x.group === "relationship").map((x) => <InputRow key={x.key} x={x} />)}</tbody>
+        </Table>
+      </div>
+
+      <div>
+        <h3 className="text-[13px] font-semibold">{t("How the score is made")}</h3>
+        <div className="mt-2 overflow-hidden rounded-lg border border-rule">
+          <Table>
+            <tbody>
+              {rel.parts.map((p) => (
+                <tr key={p.key}>
+                  <Td className="whitespace-normal! text-ink-2">{t(RELATIONSHIP_PART_LABEL[p.key])}</Td>
+                  <Td className="whitespace-normal!">{p.key === "breadth" ? `${t(LEVEL_LABEL[rel.breadth])} · ${p.fact}` : p.key === "bundle" ? `${t(LEVEL_LABEL[rel.bundle])} · ${p.fact}` : p.fact}</Td>
+                  <Td align="right" className="font-medium">{t("{score} out of 10", { score: score(p.score) })}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        </div>
+        <p className="mt-1.5 text-[12px] text-ink-3">{t("Confidence of this reading: {level}.", { level: t(LEVEL_LABEL[rel.confidence]).toLowerCase() })} {rel.confidenceWhy}</p>
+      </div>
+
+      <div className="grid gap-x-8 gap-y-4 @3xl:grid-cols-2">
+        <div>
+          <h3 className="text-[13px] font-semibold">{t("Why")}</h3>
+          <ul className="mt-1.5 space-y-1 text-[13px] text-ink-2">
+            {rel.positives.length ? (
+              rel.positives.map((line) => (
+                <li key={line} className="flex gap-2">
+                  <span aria-hidden className="font-semibold text-down">
+                    +
+                  </span>
+                  <span>{line}</span>
+                </li>
+              ))
+            ) : (
+              <li className="text-ink-3">{t("Nothing in the relationship adds to this product's own volume.")}</li>
+            )}
+          </ul>
+        </div>
+        <div>
+          <h3 className="text-[13px] font-semibold">{t("Limiting factors")}</h3>
+          <ul className="mt-1.5 space-y-1 text-[13px] text-ink-2">
+            {rel.limits.map((line) => (
+              <li key={line} className="flex gap-2">
+                <span aria-hidden className="font-semibold text-up">
+                  −
+                </span>
+                <span>{line}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+
+      <div>
+        <h3 className="text-[13px] font-semibold">{t("What it changes in your negotiation power")}</h3>
+        <p className="mt-1 text-[13px] text-ink-2">
+          {effect.power >= 0.05
+            ? before === n.strength
+              ? t("Against buying only this product from the supplier, the relationship lifts your leverage as a buyer from {from} to {to} out of 10. Your negotiation power stays {after}: it was there already on the product's own volume.", { from: score(effect.buyerAlone), to: score(effect.buyerWith), after: t(STRENGTH_LABEL[n.strength]).toLowerCase() })
+              : t("Against buying only this product from the supplier, the relationship lifts your leverage as a buyer from {from} to {to} out of 10. Your negotiation power is {after}; without it, it would be {before}.", {
+                  from: score(effect.buyerAlone),
+                  to: score(effect.buyerWith),
+                  after: t(STRENGTH_LABEL[n.strength]).toLowerCase(),
+                  before: t(STRENGTH_LABEL[before]).toLowerCase(),
+                })
+            : t("This product is all, or nearly all, of what you buy from the supplier: the relationship adds nothing to its own volume. Your leverage as a buyer is {to} out of 10.", { to: score(effect.buyerWith) })}
+        </p>
+        <p className="mt-1 text-[12px] text-ink-3">{t("The spend on this product is counted once, as its volume. The relationship adds only what lies beyond it: the spend on the other products, how many they are, how regular the orders.")}</p>
+      </div>
+    </div>
   );
 }

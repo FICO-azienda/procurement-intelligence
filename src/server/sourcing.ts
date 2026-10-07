@@ -705,9 +705,10 @@ export const getMarketViews = cache(async (): Promise<MarketViews> => {
   return buildViews(intel, overview, sourcing, settings.country, t);
 });
 
-/** The same, read straight from the database: for a research that has just written to it. The analysis it was built on comes with it. */
+/** The same, read straight from the database: for a research that has just written to it. The catalogue and the analysis it was built on come with it. */
 export async function readMarketViews(db: DB, t: T = en) {
   const [data, learning, states, sourcing, settings] = await Promise.all([readDataset(db), readLearning(db), readOpportunityStates(db), readSourcing(db), readSettings(db)]);
-  const intel = analyze(catalogueOf(data), learning.supplierProducts, states, todayISO(), undefined, t);
-  return { ...buildViews(intel, purchasingOverview(intel, t), sourcing, settings.country, t), intel };
+  const catalogue = catalogueOf(data);
+  const intel = analyze(catalogue, learning.supplierProducts, states, todayISO(), undefined, t);
+  return { ...buildViews(intel, purchasingOverview(intel, t), sourcing, settings.country, t), intel, catalogue, data };
 }
