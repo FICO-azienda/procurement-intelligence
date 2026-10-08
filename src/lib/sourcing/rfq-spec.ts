@@ -13,6 +13,7 @@ import { attributesOf, ATTRIBUTE_LABEL } from "../catalog/attributes";
 import { en, type T } from "../i18n";
 import { normalizeKey } from "../import/normalize/text";
 import { productTerms } from "../research/inspect";
+import { separate } from "../catalog/identity";
 import { neutralName } from "./discovery";
 
 export type Readiness = "ready" | "partial" | "not_ready";
@@ -67,7 +68,8 @@ const isCode = (token: string, codes: Set<string>) => codes.has(normalizeKey(tok
 export function rfqSpec(input: RfqSpecInput, t: T = en): RfqSpec {
   const codes = new Set(input.supplierCodes.map((c) => normalizeKey(c)).filter(Boolean));
   const tokens = neutralName({ name: input.name, knownSuppliers: input.knownSuppliers }).split(" ");
-  const removed = tokens.filter((x) => isCode(x, codes));
+  // A long number the supplier writes in the description is its code: the name was left without it.
+  const removed = [...tokens.filter((x) => isCode(x, codes)), ...separate(input.name, { names: input.knownSuppliers ?? [] }).codes.filter((c) => /^\d{4,}$/.test(c))];
   const suggested = tokens.filter((x) => !isCode(x, codes)).join(" ").trim() || null;
   const terms = suggested ? productTerms({ name: suggested, companyName: input.companyName }) : { words: [], specs: [] };
   const attributes = [...attributesOf(input.name).map((a) => ({ label: ATTRIBUTE_LABEL[a.key] as string, value: a.value })), ...Object.entries(input.specs ?? {}).map(([label, value]) => ({ label, value }))];

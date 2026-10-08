@@ -5,9 +5,9 @@
  * declared different. Purchases, prices, quantities, suppliers and dates are
  * never rewritten: a merge only moves them under the product that stays.
  */
-import { and, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { DB } from "@/db";
-import { importItems, opportunities, productAliases, productFamilies, productSeparations, products, purchases, quotes, supplierProducts } from "@/db/schema";
+import { importItems, marketBenchmarks, productAliases, productDataFields, productDocuments, productFamilies, productMerges, productSeparations, products, purchases, quotes, researchEvidence, researchRuns, supplierCandidates, supplierProducts } from "@/db/schema";
 import { todayISO } from "@/lib/analytics";
 import { isProductKind, isStrategic, type ProductKind } from "@/lib/catalog/kinds";
 import { mapCatalogue, toMapInput, type MapAnalysis, type MapInput, type Mapping } from "@/lib/catalog/mapper";
@@ -90,48 +90,118 @@ export async function confirmMappings(db: DB, opts: ConfirmOptions = {}): Promis
   return { confirmed: chosen.length };
 }
 
+/** The tables whose rows follow a product into the one it is merged with. Each row keeps everything it says: only whose product it is changes. */
+const FOLLOWERS = [
+  ["purchases", purchases],
+  ["quotes", quotes],
+  ["import_items", importItems],
+  ["product_aliases", productAliases],
+  ["supplier_candidates", supplierCandidates],
+  ["market_benchmarks", marketBenchmarks],
+  ["research_runs", researchRuns],
+  ["research_evidence", researchEvidence],
+  ["product_documents", productDocuments],
+] as const;
+/** One table is enough to type the moves: every follower has an id and a product_id. */
+type Follower = typeof purchases;
+
 /**
- * Several products are one: the first stays, the others' purchases, quotes,
- * descriptions and supplier codes move under it, and they are removed. Every
- * purchase keeps its own price, quantity, date, supplier and original text.
+ * Several products are one: the first stays, and the others' purchases,
+ * quotes, descriptions, candidates, benchmarks, research and documents move
+ * under it. Nothing is deleted: a merged product stays on file, hidden, with
+ * what could not move, and the rows that moved are logged (product_merges) so
+ * the merge can be taken back. Every purchase keeps its own price, quantity,
+ * date, supplier and original text.
  */
 export async function mergeProducts(db: DB, productIds: string[], name: string, t: T = en): Promise<{ productId: string }> {
   const ids = [...new Set(productIds)];
   const rows = await db.select().from(products).where(inArray(products.id, ids));
-  if (rows.length < 2 || rows.length !== ids.length) throw new Error("Nothing to merge");
+  if (rows.length < 2 || rows.length !== ids.length || rows.some((r) => r.mergedIntoId)) throw new Error("Nothing to merge");
   if (new Set(rows.map((r) => r.unit)).size > 1) throw new MapperError(t("These products are bought in different units: they can't be merged."));
   const analysis = await analyzeCatalogue(db, t);
   const ordered = ids.map((id) => rows.find((r) => r.id === id)!);
   const [keep, ...others] = ordered;
-  const gone = others.map((o) => o.id);
+  const finalName = tidy(name) || keep.name;
 
-  await db.update(purchases).set({ productId: keep.id }).where(inArray(purchases.productId, gone));
-  await db.update(quotes).set({ productId: keep.id }).where(inArray(quotes.productId, gone));
-  await db.update(importItems).set({ productId: keep.id }).where(inArray(importItems.productId, gone));
-  await db.update(productAliases).set({ productId: keep.id }).where(inArray(productAliases.productId, gone));
-  // One link per supplier: the product that stays keeps its own, and takes the others' where it had none.
-  const links = await db.select().from(supplierProducts).where(inArray(supplierProducts.productId, [keep.id, ...gone]));
-  const linked = new Set(links.filter((l) => l.productId === keep.id).map((l) => l.supplierId));
-  for (const l of links.filter((x) => x.productId !== keep.id)) {
-    if (linked.has(l.supplierId)) await db.delete(supplierProducts).where(eq(supplierProducts.id, l.id));
-    else {
-      await db.update(supplierProducts).set({ productId: keep.id }).where(eq(supplierProducts.id, l.id));
-      linked.add(l.supplierId);
+  for (const o of others) {
+    const moved: Record<string, string[]> = {};
+    for (const [key, table] of FOLLOWERS) {
+      const done = await db.update(table as Follower).set({ productId: keep.id }).where(eq((table as Follower).productId, o.id)).returning({ id: (table as Follower).id });
+      if (done.length) moved[key] = done.map((x) => x.id);
     }
+    // One link per supplier, one value per field: the product that stays keeps its own and takes the other's only where it had none. The rest stays with the merged product.
+    const links = await db.select().from(supplierProducts).where(inArray(supplierProducts.productId, [keep.id, o.id]));
+    const linked = new Set(links.filter((l) => l.productId === keep.id).map((l) => l.supplierId));
+    const freeLinks = links.filter((l) => l.productId === o.id && !linked.has(l.supplierId)).map((l) => l.id);
+    if (freeLinks.length) await db.update(supplierProducts).set({ productId: keep.id }).where(inArray(supplierProducts.id, freeLinks));
+    const fields = await db.select().from(productDataFields).where(inArray(productDataFields.productId, [keep.id, o.id]));
+    const filled = new Set(fields.filter((f) => f.productId === keep.id).map((f) => f.field));
+    const freeFields = fields.filter((f) => f.productId === o.id && !filled.has(f.field)).map((f) => f.id);
+    if (freeFields.length) await db.update(productDataFields).set({ productId: keep.id }).where(inArray(productDataFields.id, freeFields));
+    if (freeLinks.length) moved.supplier_products = freeLinks;
+    if (freeFields.length) moved.product_data_fields = freeFields;
+    await keepOldName(db, keep.id, o.name);
+    await db.update(products).set({ mergedIntoId: keep.id, updatedAt: new Date() }).where(eq(products.id, o.id));
+    await db.insert(productMerges).values({ productId: keep.id, mergedId: o.id, moved, nameBefore: keep.name, nameAfter: finalName });
   }
-  await db.delete(opportunities).where(inArray(opportunities.productId, gone));
-  for (const o of others) await keepOldName(db, keep.id, o.name);
-  await db.delete(products).where(inArray(products.id, gone));
 
   // The product that stays takes the name chosen and, if it was not confirmed yet, what the engine read of it.
   const m = analysis.products.find((x) => x.productId === keep.id);
-  const finalName = tidy(name) || keep.name;
   if (m && !m.mapped) await write(db, { ...m, variant: m.family ? tidy(finalName.replace(new RegExp(`^${m.family.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*`, "i"), "")) || m.variant : null }, finalName);
   else {
     if (normalizeKey(finalName) !== normalizeKey(keep.name)) await keepOldName(db, keep.id, keep.name);
     await db.update(products).set({ name: finalName, updatedAt: new Date() }).where(eq(products.id, keep.id));
   }
   return { productId: keep.id };
+}
+
+/** The product a merged one is read as. Null: the product stands for itself, or does not exist. */
+export async function mergedInto(db: DB, productId: string): Promise<string | null> {
+  if (!/^[0-9a-f-]{36}$/i.test(productId)) return null;
+  const [row] = await db.select({ into: products.mergedIntoId }).from(products).where(eq(products.id, productId));
+  return row?.into ?? null;
+}
+
+export interface ProductMergeRow {
+  id: string;
+  productId: string;
+  productName: string;
+  mergedId: string;
+  mergedName: string;
+  createdAt: string;
+}
+
+/** The merges in force, the latest first: what can be taken back. */
+export async function readProductMerges(db: DB): Promise<ProductMergeRow[]> {
+  const [merges, all] = await Promise.all([db.select().from(productMerges).where(isNull(productMerges.undoneAt)).orderBy(desc(productMerges.createdAt)), db.select({ id: products.id, name: products.name, mergedIntoId: products.mergedIntoId }).from(products)]);
+  const byId = new Map(all.map((p) => [p.id, p]));
+  return merges
+    .filter((m) => byId.get(m.mergedId)?.mergedIntoId === m.productId)
+    .map((m) => ({ id: m.id, productId: m.productId, productName: byId.get(m.productId)?.name ?? "", mergedId: m.mergedId, mergedName: byId.get(m.mergedId)?.name ?? "", createdAt: m.createdAt.toISOString() }));
+}
+
+/**
+ * Takes a merge back: the rows that moved go back under the product they
+ * came from, which is listed again with the name it had. What was bought or
+ * recorded under the product that stayed after the merge stays there.
+ */
+export async function undoProductMerge(db: DB, mergeId: string, t: T = en): Promise<{ productId: string }> {
+  const [m] = await db.select().from(productMerges).where(eq(productMerges.id, mergeId));
+  const [merged] = m ? await db.select().from(products).where(eq(products.id, m.mergedId)) : [];
+  if (!m || m.undoneAt || !merged || merged.mergedIntoId !== m.productId) throw new MapperError(t("This merge is no longer in force."));
+  for (const [key, table] of [...FOLLOWERS, ["supplier_products", supplierProducts], ["product_data_fields", productDataFields]] as const) {
+    const ids = m.moved[key] ?? [];
+    if (ids.length) await db.update(table as Follower).set({ productId: m.mergedId }).where(inArray((table as Follower).id, ids));
+  }
+  // The merged product's name had been added to the other as one more way of writing it.
+  await db.delete(productAliases).where(and(eq(productAliases.productId, m.productId), eq(productAliases.normalized, productKey(merged.name)), eq(productAliases.source, "rename"), isNull(productAliases.supplierId)));
+  await db.update(products).set({ mergedIntoId: null, updatedAt: new Date() }).where(eq(products.id, m.mergedId));
+  await db.update(productMerges).set({ undoneAt: new Date() }).where(eq(productMerges.id, m.id));
+  // The name goes back too, when the merge changed it, nobody changed it since, and nothing else is merged into the product.
+  const [kept] = await db.select().from(products).where(eq(products.id, m.productId));
+  const still = await db.select({ id: productMerges.id }).from(productMerges).where(and(eq(productMerges.productId, m.productId), isNull(productMerges.undoneAt)));
+  if (kept && !still.length && kept.name === m.nameAfter && m.nameBefore !== m.nameAfter) await db.update(products).set({ name: m.nameBefore, updatedAt: new Date() }).where(eq(products.id, m.productId));
+  return { productId: m.mergedId };
 }
 
 /** "They are different products": remembered pair by pair, so the question is not asked again. */
@@ -174,6 +244,12 @@ export async function saveMapping(db: DB, productId: string, edit: MappingEdit):
     spend: 0,
     supplierId: null,
     supplierName: null,
+    originals: [],
+    supplierTerms: [],
+    supplierCodes: [],
+    identity: "named",
+    options: [],
+    group: "confident",
   };
   await write(db, m, edit.name);
 }

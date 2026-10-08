@@ -4,7 +4,7 @@
  * loading the dataset per request keeps the code simple. When that stops being
  * true, push the aggregations into SQL behind these same functions.
  */
-import { eq } from "drizzle-orm";
+import { eq, isNull } from "drizzle-orm";
 import { unstable_rethrow } from "next/navigation";
 import { connection } from "next/server";
 import { cache } from "react";
@@ -53,7 +53,8 @@ const sourceCols = {
 export async function readDataset(db: DB): Promise<Dataset> {
   const [s, p, pu, q] = await Promise.all([
     db.select().from(suppliers).orderBy(suppliers.name),
-    db.select().from(products).orderBy(products.name),
+    // A product merged into another stays on file, but is not a product of its own any more.
+    db.select().from(products).where(isNull(products.mergedIntoId)).orderBy(products.name),
     db
       .select({ row: purchases, ...sourceCols })
       .from(purchases)

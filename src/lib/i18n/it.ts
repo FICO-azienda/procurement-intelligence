@@ -9,6 +9,7 @@ import { dataset } from "./it/dataset";
 import { engine } from "./it/engine";
 import { imports } from "./it/imports";
 import { mapper } from "./it/mapper";
+import { identity } from "./it/identity";
 import { negotiation } from "./it/negotiation";
 import { portfolio } from "./it/portfolio";
 import { research } from "./it/research";
@@ -16,6 +17,6 @@ import { sourcing } from "./it/sourcing";
 import { suppliers } from "./it/suppliers";
 import { ui } from "./it/ui";
 
-export const PARTS = { engine, imports, ui, catalog, mapper, sourcing, research, dataset, negotiation, suppliers, portfolio };
+export const PARTS = { engine, imports, ui, catalog, mapper, sourcing, research, dataset, negotiation, suppliers, portfolio, identity };
 
-export const it = { ...engine, ...imports, ...ui, ...catalog, ...mapper, ...sourcing, ...research, ...dataset, ...negotiation, ...suppliers, ...portfolio };
+export const it = { ...engine, ...imports, ...ui, ...catalog, ...mapper, ...sourcing, ...research, ...dataset, ...negotiation, ...suppliers, ...portfolio, ...identity };

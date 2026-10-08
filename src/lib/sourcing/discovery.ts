@@ -8,6 +8,7 @@
  */
 import { allSubs, categorize } from "../catalog/taxonomy";
 import { withoutPackNotes } from "../catalog/attributes";
+import { separate } from "../catalog/identity";
 import { countryName } from "../countries";
 import { en, type T } from "../i18n";
 import { companyKey, normalizeKey } from "../import/normalize/text";
@@ -42,10 +43,9 @@ export function neutralName(input: Pick<QueryInput, "name" | "knownSuppliers">):
 }
 
 function coreName(input: Pick<QueryInput, "name" | "knownSuppliers">): string {
-  const own = new Set((input.knownSuppliers ?? []).flatMap((s) => companyKey(s).split(" ")).filter((word) => word.length >= 3 && !categorize(word)));
-  const words = tidy(withoutPackNotes(input.name).replace(/\([^)]*\)/g, " ")).split(" ");
-  const kept = words.filter((word) => !own.has(normalizeKey(word)));
-  return (kept.length ? kept : words).join(" ");
+  // The same reading the catalogue uses (lib/catalog/identity.ts): who sold it and how it calls it are not what the product is.
+  const body = separate(withoutPackNotes(input.name), { names: input.knownSuppliers ?? [] }).body;
+  return tidy(body.replace(/\([^)]*\)/g, " ")) || tidy(input.name);
 }
 const numbersIn = (text: string) => (text.match(/\d+(?:[.,/x]\d+)*/g) ?? []).slice(0, 2).join(" ");
 

@@ -43,7 +43,7 @@ import { isFieldKey } from "@/lib/dataset/fields";
 import { isJudgementKey, isLevel } from "@/lib/negotiation/engine";
 import { keepEstimateHistory, saveJudgement } from "@/server/negotiation";
 import { SupplierMergeError, autoMergeSuppliers, canonicalSupplierId, keepSuppliersResolved, keepSuppliersSeparate, matchOf, mergeSuppliers, undoSupplierMerge } from "@/server/suppliers";
-import { MapperError, confirmMappings, keepSeparate, mergeProducts, saveMapping, type MappingEdit } from "@/server/mapper";
+import { MapperError, confirmMappings, keepSeparate, mergeProducts, saveMapping, undoProductMerge, type MappingEdit } from "@/server/mapper";
 import {
   benchmarkInput,
   candidateInput,
@@ -948,6 +948,18 @@ export async function mergeProductsAction(productIds: string[], name: string): P
   const t = await getT();
   try {
     await mergeProducts(await getDb(), productIds, name, t);
+    refresh();
+    return { ok: true };
+  } catch (err) {
+    return mapperFailed(t, err);
+  }
+}
+
+/** A merge of two products taken back: what moved goes back, the merged product is listed again. */
+export async function undoProductMergeAction(mergeId: string): Promise<SimpleResult> {
+  const t = await getT();
+  try {
+    await undoProductMerge(await getDb(), mergeId, t);
     refresh();
     return { ok: true };
   } catch (err) {

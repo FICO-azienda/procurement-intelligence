@@ -130,6 +130,11 @@ export const products = pgTable("products", {
   application: text("application"),
   /** One of the products of the live pilot: the first real round of requests. */
   inPilot: boolean("in_pilot").notNull().default(false),
+  /**
+   * Set when the user said this product is the same as another: it stays on file with everything it had that could not
+   * move, and is no longer listed. Clearing it (with the merge's log) takes the merge back.
+   */
+  mergedIntoId: uuid("merged_into_id").references((): AnyPgColumn => products.id, { onDelete: "set null" }),
   ...timestamps,
 });
 
@@ -340,6 +345,33 @@ export const productAliases = pgTable(
 );
 
 /** Two products that look alike and that the user said are not the same one: not asked again. */
+/**
+ * A merge of two products, kept so that it can be taken back: which rows were moved under the product that stays
+ * (purchases, quotes, descriptions, candidates, benchmarks…), table by table, and the name it had before.
+ */
+export const productMerges = pgTable(
+  "product_merges",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** The product that stays. */
+    productId: uuid("product_id")
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    /** The product read as the other one from now on. */
+    mergedId: uuid("merged_id")
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    /** Rows moved from the merged product to the one that stays: table name → row ids. */
+    moved: jsonb("moved").$type<Record<string, string[]>>().notNull(),
+    /** The name of the product that stays, before and after the merge: restored on undo if nobody changed it since. */
+    nameBefore: text("name_before").notNull(),
+    nameAfter: text("name_after").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    undoneAt: timestamp("undone_at", { withTimezone: true }),
+  },
+  (t) => [index("product_merges_product_idx").on(t.productId)],
+);
+
 export const productSeparations = pgTable(
   "product_separations",
   {

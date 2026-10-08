@@ -99,6 +99,13 @@
       "when": 1791398992211,
       "tag": "0013_supplier_resolution",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1791438385731,
+      "tag": "0014_product_identity",
+      "breakpoints": true
     }
   ]
 }

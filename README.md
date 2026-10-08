@@ -422,6 +422,19 @@ Lo stesso fornitore scritto in modi diversi — "SER S.p.A.", "SER SPA", "S.E.R.
 
 Non viene usato alcun modello linguistico: le regole decidono cosa proporre, gli identificativi cosa unire.
 
+## Identità dei prodotti (Product Normalization)
+
+Chi ha venduto non è cosa è stato comprato, e come il fornitore chiama la merce non è cosa sia il prodotto. La descrizione in fattura è un dato grezzo: resta in archivio com'è scritta e viene letta ogni volta.
+
+- "Paraffina SER 52/54 (XXF)" venduta da SER S.p.A. viene letta come: prodotto **Paraffina 52/54**, fornitore SER, codici del fornitore XXF e PRP026.
+- "WAX SER 14581 (FXF)": le parole dicono "cera", non quale. Non viene rinominata né classificata: il software propone tre possibilità, "altro" e "non lo so ancora".
+- Dove solo il codice articolo del fornitore distingue un prodotto (i contenitori "ART. LC TR."), il codice resta nel nome e il gruppo va confermato a mano, con una sola risposta per tutta la gamma.
+- Simile non vuol dire uguale: 52/54 e 56/58 sono due prodotti della stessa famiglia.
+- All'import, lo stesso prodotto scritto da un altro fornitore viene proposto come collegamento, mai collegato da solo; il codice del fornitore già visto viene riconosciuto anche scritto in un altro modo.
+- Unire due prodotti non cancella nulla e si può annullare.
+
+Pagina **Pulizia prodotti** (`/products/review`). Codice: `src/lib/catalog/identity.ts`, `src/lib/catalog/mapper.ts`, `src/server/mapper.ts`.
+
 ## Strategia di sourcing (Sourcing Mix)
 
 Pagina **Strategia** (`/strategy`): per i prodotti che pesano di più (Top 5, poi Top 18) mostra il portafoglio di oggi e, per ogni obiettivo, il mix di fornitori che farebbe meglio — costo più basso, bundle, specialisti, valore economico totale, qualità, consegna, rischio, liquidità, meno fornitori, bilanciato, pesi personalizzati.

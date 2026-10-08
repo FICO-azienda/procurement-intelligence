@@ -20,11 +20,12 @@
  * are never touched — a mapping only changes how a product is called and filed.
  */
 import { basePrice, baseTotal, isPriced, windowStart, type Dataset } from "../analytics";
-import { codeKey, companyKey, normalizeKey, productTokens } from "../import/normalize/text";
+import { codeKey, normalizeKey, productTokens } from "../import/normalize/text";
 import { en, type Msg, type T } from "../i18n";
 import { withoutPackNotes } from "./attributes";
 import { classify } from "./classify";
 import { cleanName } from "./clean";
+import { separate, type DescriptionParts } from "./identity";
 import { KIND_LABEL, isProductKind, isStrategic, type ProductKind } from "./kinds";
 import { differByOneWord } from "./propose";
 import { matchTokens, numbersOf, sameNumbers } from "./specs";
@@ -76,7 +77,27 @@ export interface Mapping {
   spend: number;
   supplierId: string | null;
   supplierName: string | null;
+  /** Every description the documents wrote for it: the raw source, never changed. */
+  originals: string[];
+  /** Words of those descriptions that are the supplier's own name: who sold it, not what it is. */
+  supplierTerms: string[];
+  /** The supplier's own codes: in the description, in front of it, or the document's article code. */
+  supplierCodes: string[];
+  /**
+   * named: the words and the grade say what it is · supplier_code: the words say the kind of thing, and only the
+   * supplier's article code tells it apart · unidentified: the words name a material that can be several different
+   * things and nothing says which.
+   */
+  identity: Identity;
+  /** For an unidentified product: the few things it could be (taxonomy subcategory keys). */
+  options: string[];
+  /** Where it stands in the cleanup: confirmed already, safe to confirm in bulk, to look at, or to be told what it is. */
+  group: CleanupGroup;
 }
+
+export type Identity = "named" | "supplier_code" | "unidentified";
+export type CleanupGroup = "done" | "confident" | "review" | "unclassified";
+export const GROUP_LABEL: Record<CleanupGroup, Msg> = { done: "Confirmed|cleanup", confident: "Auto-confident", review: "Needs review", unclassified: "Needs classification" };
 
 export interface DuplicateGroup {
   key: string;
@@ -100,6 +121,8 @@ export interface ReviewCard {
   kind: ProductKind | null;
   reason: string;
   spend: number;
+  /** What the product could be, when the words name something that can be several things: at most three, never chosen by the software. */
+  options: string[];
 }
 
 export interface FamilySummary {
@@ -126,6 +149,8 @@ export interface MapAnalysis {
     inDuplicates: number;
     review: number;
     reviewSpend: number;
+    /** Not confirmed yet, by where each stands in the cleanup. */
+    groups: Record<CleanupGroup, number>;
   };
   /** How many products, largest first, make up each share of the spend. */
   pareto: { share: number; products: number; reached: number }[];
@@ -224,8 +249,8 @@ function dropRepeats(text: string): string {
   return kept.join(" - ");
 }
 
-/** The text a product is read from: its name — or the full description, when the name was cut short. */
-function baseText(p: MapInput): string {
+/** The text a product is read from: its name — or the full description, when the name was cut short — without the supplier's own name and codes. */
+function baseText(p: MapInput): { base: string; parts: DescriptionParts } {
   let s = p.name;
   if (s.endsWith("…")) {
     const head = normalizeKey(s.slice(0, -1));
@@ -237,11 +262,9 @@ function baseText(p: MapInput): string {
     .replace(/(\d)\s*[xX×]\s*(?=\d)/g, "$1x")
     .replace(/\s+/g, " ")
     .trim();
-  // The supplier's own name inside the product's ("Paraffina SER 52/54") says who sells it, not what it is.
-  const own = new Set(companyKey(p.suppliers[0]?.name).split(" ").filter((word) => word.length >= 3 && !categorize(word)));
-  const words = s.split(" ");
-  const kept = words.filter((word) => !own.has(normalizeKey(word)));
-  return kept.length >= 2 ? kept.join(" ") : s;
+  // The supplier's own name and codes inside the product's ("Paraffina SER 52/54 (XXF)") say who sells it and how it calls it, not what it is.
+  const parts = separate(s, { names: p.suppliers.map((x) => x.name), skus: p.aliases.map((a) => a.supplierSku) });
+  return { base: parts.body, parts };
 }
 
 function tokenize(text: string): Tok[] {
@@ -283,6 +306,8 @@ interface Reading {
   family: string | null;
   /** A long supplier code in front of the name was left out of the proposal. */
   dropped: boolean;
+  /** The supplier's name and codes taken out of the description before reading it. */
+  parts: DescriptionParts;
   /** A word to put in front of a name that has no noun. */
   noun: string | null;
   /** Tokens the noun in front already says ("Legno" under "Stoppino legno"). */
@@ -290,9 +315,9 @@ interface Reading {
 }
 
 function read(p: MapInput): Reading {
-  const base = baseText(p);
+  const { base, parts } = baseText(p);
   const toks = tokenize(base);
-  const r: Reading = { p, base, toks, hit: null, anchor: null, path: [], ends: [], depth: 0, cls: null, by: "none", kind: p.kind, reason: null, family: null, dropped: false, noun: null, skip: new Set() };
+  const r: Reading = { p, base, toks, hit: null, anchor: null, path: [], ends: [], depth: 0, cls: null, by: "none", kind: p.kind, reason: null, family: null, dropped: false, parts, noun: null, skip: new Set() };
   const hit = categorize(base);
   if (!hit) return r;
   const inside = toks.map((tok, i) => (tok.start >= 0 && tok.start < hit.at + hit.length && tok.start + tok.norm.length > hit.at ? i : -1)).filter((i) => i >= 0);
@@ -365,7 +390,7 @@ function pieces(r: Reading) {
   // An article code in front ("ART. LC TR.", "F60/8N -") goes after the noun; a word in front ("Natural wax") stays.
   const moved = leadWords.length > 0 && (marked || !isReal(leadWords[0]));
   const longCode = moved && leadWords.length >= LONG_CODE && !leadWords.some(isReal);
-  return { lead, tail, leadWords, moved, longCode, phrase: r.family ?? phraseText(r, Math.max(r.depth, 1)) };
+  return { lead, tail, leadWords, marked, moved, longCode, phrase: r.family ?? phraseText(r, Math.max(r.depth, 1)) };
 }
 
 function compose(r: Reading, keepCode: boolean): { name: string; variant: string | null } {
@@ -379,7 +404,10 @@ function compose(r: Reading, keepCode: boolean): { name: string; variant: string
     return { name: clean([r.noun ?? "", text]), variant: r.family ? text : null };
   }
   const x = pieces(r);
-  const dropCode = x.longCode && !keepCode;
+  // The supplier's article code in front is left out of the name when something else tells the product apart (a size, a
+  // grade, a word): it stays on file as the supplier's code. It comes back only where two names would otherwise be one.
+  const codeLead = x.moved && (x.marked || x.leadWords.some((tok) => /[a-z]/i.test(tok.text)));
+  const dropCode = (x.longCode || (codeLead && x.tail.some((tok) => !isDash(tok)))) && !keepCode;
   const lead = dropCode ? [] : x.moved ? x.leadWords : x.lead;
   // A code moved from the front goes last: "Vino bianco … Santa Messa 5 CT 6 BT.CC.1000".
   const tail = x.tail.map(tidyTok);
@@ -433,6 +461,8 @@ export function mapCatalogue(input: MapInput[], options: MapOptions = {}): MapAn
       r.kind = subByKey(answer)!.category.kind;
       if (!r.hit || r.hit.sub.key !== answer) {
         // The user knows better than the words: the name's own noun no longer says what it is.
+        // A word that could mean several things ("wax") is replaced by what the user said it is.
+        if (r.hit?.sub.ask && r.anchor) for (let i = r.anchor[0]; i <= r.anchor[1]; i++) r.skip.add(i);
         r.anchor = null;
         r.hit = null;
         r.path = [];
@@ -522,9 +552,34 @@ export function mapCatalogue(input: MapInput[], options: MapOptions = {}): MapAn
     if (left.length >= 2 && sizes.length === 0) for (const r of left) r.family = first.cls!.subcategory ?? first.cls!.category;
   }
 
+  // ---- 3b. Who sold it, how it calls it, and whether anything else says what the product is.
+  const readIdentity = (r: Reading) => {
+    const x = r.anchor ? pieces(r) : null;
+    const first = r.toks.findIndex(isReal);
+    // What stands in front of the noun is the supplier's article code when it is marked as one ("ART. LC TR."), when it is a long run of codes, or when it has letters in it ("F60/8N"); numbers alone ("52/54") are a grade.
+    const leadIsCode = !!x && x.moved && (x.marked || x.longCode || x.leadWords.some((tok) => /[a-z]/i.test(tok.text)));
+    const article = leadIsCode ? clean(x!.leadWords.map(tidyTok)) : r.dropped && first >= LONG_CODE ? clean(r.toks.slice(0, first).map(tidyTok)) : "";
+    const inText = [...(article ? [article] : []), ...r.parts.codes];
+    const codes = [...new Set([...inText, ...r.p.aliases.map((a) => (a.supplierSku ?? "").trim()).filter(Boolean)])];
+    // What is left to tell it apart, once the noun, the supplier's name and its codes are set aside.
+    const spec = x ? x.tail.some((tok) => !isDash(tok)) || (x.moved && !leadIsCode) : r.toks.some((tok, i) => !r.skip.has(i) && !!tok.norm && !MARKER.test(tok.text));
+    const ask = (r.cls?.subKey ? subByKey(r.cls.subKey)?.sub.ask : null) ?? null;
+    const identity: Identity = r.p.mapped || !r.cls || spec || !inText.length ? "named" : ask && r.by !== "user" ? "unidentified" : "supplier_code";
+    return { identity, codes, inText, appended: leadIsCode, options: identity === "unidentified" ? ask!.slice(0, 3) : [] };
+  };
+  const identities = new Map(readings.map((r) => [r.p.id, readIdentity(r)]));
+
   // ---- 4. Names, each one different from every other.
   const named = new Map<string, { name: string; variant: string | null }>();
-  for (const r of open) named.set(r.p.id, compose(r, false));
+  for (const r of open) {
+    const id = identities.get(r.p.id)!;
+    const proposal = compose(r, false);
+    // Nothing says which one it is: it keeps the name it has until someone does. No name is made up from a code.
+    if (id.identity === "unidentified") named.set(r.p.id, { name: r.p.name, variant: null });
+    // Only the supplier's code tells it apart: the code stays, visibly, until a specification is on file.
+    else if (id.identity === "supplier_code" && !id.appended && r.parts.codes.length) named.set(r.p.id, { name: `${proposal.name} ${r.parts.codes[0]}`, variant: r.family ? clean([proposal.variant ?? "", r.parts.codes[0]]) : null });
+    else named.set(r.p.id, proposal);
+  }
   const taken = (id: string, name: string) => readings.some((k) => k.p.id !== id && normalizeKey(k.p.mapped ? k.p.name : named.get(k.p.id)!.name) === normalizeKey(name));
   for (const r of open) {
     if (!taken(r.p.id, named.get(r.p.id)!.name)) continue;
@@ -622,21 +677,38 @@ export function mapCatalogue(input: MapInput[], options: MapOptions = {}): MapAn
   const mappings: Mapping[] = readings
     .map((r): Mapping => {
       const supplier = supplierOf(r);
-      const base = { productId: r.p.id, current: r.p.name, spend: r.p.spend, supplierId: supplier?.id ?? null, supplierName: supplier?.name ?? null };
-      if (r.p.mapped) return { ...base, name: r.p.name, category: r.p.category, subcategory: r.p.subcategory, subKey: r.cls?.subKey ?? null, kind: r.p.kind, family: r.p.family, variant: r.p.variant, level: "high", by: "stored", reason: null, mapped: true };
+      const id = identities.get(r.p.id)!;
+      const seen = new Set<string>();
+      const originals = [r.p.name, ...r.p.aliases.map((a) => a.text)].map((x) => x.trim()).filter((x) => x && !seen.has(normalizeKey(x)) && !!seen.add(normalizeKey(x)));
+      const base = { productId: r.p.id, current: r.p.name, spend: r.p.spend, supplierId: supplier?.id ?? null, supplierName: supplier?.name ?? null, originals, supplierTerms: [...new Set(r.parts.supplierTerms)], supplierCodes: id.codes };
+      if (r.p.mapped) return { ...base, name: r.p.name, category: r.p.category, subcategory: r.p.subcategory, subKey: r.cls?.subKey ?? null, kind: r.p.kind, family: r.p.family, variant: r.p.variant, level: "high", by: "stored", reason: null, mapped: true, identity: "named", options: [], group: "done" };
       const proposal = named.get(r.p.id)!;
+      const who = supplier?.name ?? t("the supplier");
+      if (id.identity === "unidentified") {
+        const reason = t("The words say it is {what}, not which one. {codes}: how {supplier} calls it, not what it is made of. It keeps its name until a data sheet or your answer says what it is.", { what: (r.cls!.subcategory ?? r.cls!.category).toLowerCase(), codes: id.inText.join(", "), supplier: who });
+        return { ...base, name: r.p.name, category: r.cls!.category, subcategory: null, subKey: r.cls!.subKey, kind: r.kind, family: null, variant: null, level: "low", by: r.by, reason, mapped: false, identity: "unidentified", options: id.options, group: "unclassified" };
+      }
       const shortened = !!r.anchor && pieces(r).longCode && normalizeKey(proposal.name) !== normalizeKey(compose(r, true).name);
-      const level: Level = r.by === "user" ? "high" : r.by === "words" ? (shortened ? "medium" : "high") : r.cls ? "medium" : "low";
+      const byCode = id.identity === "supplier_code" && r.by !== "user";
+      const level: Level = r.by === "user" ? "high" : r.by === "words" ? (shortened || byCode ? "medium" : "high") : r.cls ? "medium" : "low";
       const reason =
         r.reason ??
-        (shortened ? t("The name started with a long supplier code: we kept the readable part. The original stays linked as written.") : level === "low" ? t("Nothing in the name says what this is.") : null);
-      return { ...base, name: proposal.name, category: r.cls?.category ?? null, subcategory: r.cls?.subcategory ?? null, subKey: r.cls?.subKey ?? null, kind: r.kind, family: r.family, variant: proposal.variant, level, by: r.by, reason, mapped: false };
+        (shortened
+          ? t("The name started with a long supplier code: we kept the readable part. The original stays linked as written.")
+          : byCode
+            ? t("Only the article code of {supplier} ({code}) tells it apart from the others: the code stays in the name until a size or a specification is on file.", { supplier: who, code: id.inText[0] })
+            : level === "low"
+              ? t("Nothing in the name says what this is.")
+              : null);
+      const group: CleanupGroup = inDuplicates.has(r.p.id) || level === "medium" ? "review" : level === "high" ? "confident" : "unclassified";
+      return { ...base, name: proposal.name, category: r.cls?.category ?? null, subcategory: r.cls?.subcategory ?? null, subKey: r.cls?.subKey ?? null, kind: r.kind, family: r.family, variant: proposal.variant, level, by: r.by, reason, mapped: false, identity: id.identity, options: [], group };
     })
     .sort((a, b) => b.spend - a.spend || a.name.localeCompare(b.name));
 
   // ---- 7. What to ask: one card per supplier and proposal, the largest spend first.
   const toAsk = mappings.filter((m) => !m.mapped && m.level !== "high" && !inDuplicates.has(m.productId));
-  const cards: ReviewCard[] = [...groupBy(toAsk, (m) => `${m.supplierId}|${m.level === "low" ? `low:${m.kind}` : m.subKey ?? m.category}|${m.by}`).values()]
+  // A product nothing identifies is asked about on its own: one supplier's waxes need not be the same wax.
+  const cards: ReviewCard[] = [...groupBy(toAsk, (m) => `${m.supplierId}|${m.identity === "unidentified" ? `ask:${m.productId}` : m.level === "low" ? `low:${m.kind}` : m.subKey ?? m.category}|${m.by}|${m.identity}`).values()]
     .map((ms) => ({
       key: `card_${ms.map((m) => m.productId).sort().join("_").slice(0, 80)}`,
       type: ms[0].level === "low" ? ("classify" as const) : ("check" as const),
@@ -646,6 +718,7 @@ export function mapCatalogue(input: MapInput[], options: MapOptions = {}): MapAn
       kind: ms[0].level === "low" && !isStrategic(ms[0].kind) ? ms[0].kind : null,
       reason: ms[0].reason ?? "",
       spend: sum(ms, (m) => m.spend),
+      options: ms[0].options,
     }))
     .sort((a, b) => b.spend - a.spend);
 
@@ -683,6 +756,7 @@ export function mapCatalogue(input: MapInput[], options: MapOptions = {}): MapAn
       inDuplicates: pending.filter((m) => inDuplicates.has(m.productId)).length,
       review: toAsk.length,
       reviewSpend: sum(toAsk, (m) => m.spend),
+      groups: { done: mappings.length - pending.length, confident: pending.filter((m) => m.group === "confident").length, review: pending.filter((m) => m.group === "review").length, unclassified: pending.filter((m) => m.group === "unclassified").length },
     },
     pareto,
   };

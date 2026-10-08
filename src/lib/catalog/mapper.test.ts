@@ -86,7 +86,9 @@ describe("a readable catalogue from invoice names", () => {
   const a = mapCatalogue([paraffin, tg1204, tg1206, st, woodA, woodB, woodC, lc, c50, typo, auto, c12, c5, c5a]);
 
   it("names the product, not the supplier, and keeps every number", () => {
-    expect(of(a, paraffin)).toMatchObject({ name: "Paraffina 52/54 (XXF)", category: "Waxes and paraffin", subcategory: "Paraffin", level: "high", family: null });
+    // Who sold it (SER) and how it calls it (XXF, PRP026) are kept apart from what it is.
+    expect(of(a, paraffin)).toMatchObject({ name: "Paraffina 52/54", category: "Waxes and paraffin", subcategory: "Paraffin", level: "high", family: null, supplierTerms: ["SER"], supplierCodes: ["XXF", "PRP026"], identity: "named", group: "confident" });
+    expect(of(a, paraffin).originals).toEqual(["Paraffina SER 52/54 (XXF)"]);
   });
 
   it("puts the sizes of one article in a family, each one a variant — never a duplicate", () => {
@@ -97,7 +99,8 @@ describe("a readable catalogue from invoice names", () => {
   });
 
   it("moves an article code after the noun, and writes the noun the way the range writes it", () => {
-    expect(of(a, lc)).toMatchObject({ name: "Contenitori per ceri LC TR", family: "Contenitori per ceri", variant: "LC TR", level: "high" });
+    // Only the supplier's article code tells these apart: the code stays, and the user is asked once for the whole range.
+    expect(of(a, lc)).toMatchObject({ name: "Contenitori per ceri LC TR", family: "Contenitori per ceri", variant: "LC TR", level: "medium", identity: "supplier_code", supplierCodes: ["LC TR"], group: "review" });
     expect(of(a, c50).name).toBe("Contenitori per ceri 50/2");
     expect(of(a, typo).name).toBe("Contenitori per ceri 60 L TR");
   });
@@ -113,13 +116,14 @@ describe("a readable catalogue from invoice names", () => {
     expect(of(a, woodC)).toMatchObject({ name: "Stoppino legno NF (0.76) 19.1x128 MM", family: "Stoppino legno", subcategory: "Wicks", level: "medium", by: "supplier" });
     expect(of(a, auto)).toMatchObject({ name: "Contenitori per ceri 10.50 Autoest. BIA", family: "Contenitori per ceri", level: "medium" });
     expect(a.cards.map((c) => [c.type, c.supplierName, c.productIds.length])).toEqual([
+      ["check", "ERREPLAST SRL", 3],
       ["check", "ERREPLAST SRL", 1],
       ["check", "Monterosa Zelandi Srl", 1],
     ]);
   });
 
   it("says how much is sure, and where the money is", () => {
-    expect(a.totals).toMatchObject({ analysed: 14, confirmed: 0, high: 12, medium: 2, low: 0, review: 2 });
+    expect(a.totals).toMatchObject({ analysed: 14, confirmed: 0, high: 9, medium: 5, low: 0, review: 5, groups: { done: 0, confident: 9, review: 5, unclassified: 0 } });
     expect(a.pareto.map((x) => x.products)).toEqual([1, 1, 1]);
     expect(a.products[0].productId).toBe(paraffin.id);
   });

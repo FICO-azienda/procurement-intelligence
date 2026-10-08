@@ -11,6 +11,8 @@
  * Nothing here writes to the database.
  */
 import { classify } from "../../catalog/classify";
+import { sameNumbers } from "../../catalog/specs";
+import { compareIdentity, identityOf, type Identity } from "../../catalog/identity";
 import { isStrategic } from "../../catalog/kinds";
 import type { Msg } from "../../i18n";
 import { codeKey, companyKey, normalizeKey, productKey, productTokens, tidy, vatKey } from "../normalize/text";
@@ -42,8 +44,28 @@ export interface MatchContext {
   /** `kind`: what the product is for the company's spend; absent = a product of the catalogue. */
   products: { id: string; sku: string; name: string; description: string | null; kind?: string | null }[];
   /** `supplierId`: who writes the product this way (absent on aliases saved before suppliers were recorded). */
-  productAliases: { productId: string; normalized: string; supplierId?: string | null }[];
+  /** `alias`: the description as written, when on file — where the supplier's own codes can still be read. */
+  productAliases: { productId: string; normalized: string; supplierId?: string | null; alias?: string | null }[];
   supplierProducts: { supplierId: string; productId: string; supplierSku: string | null; supplierProductName: string | null }[];
+}
+
+/** What each catalogue product is, read once per context from its name and from every description on file for it. */
+const IDENTITIES = new WeakMap<MatchContext, { id: string; identity: Identity; suppliers: Set<string> }[]>();
+function catalogueIdentities(ctx: MatchContext) {
+  let all = IDENTITIES.get(ctx);
+  if (all) return all;
+  all = [];
+  for (const p of ctx.products) {
+    if (!isStrategic(p.kind)) continue;
+    const links = ctx.supplierProducts.filter((sp) => sp.productId === p.id);
+    const suppliers = new Set(links.map((l) => l.supplierId));
+    const seller = { names: ctx.suppliers.filter((s) => suppliers.has(s.id)).map((s) => s.name), skus: links.map((l) => l.supplierSku) };
+    const texts = new Map<string, string>();
+    for (const text of [p.name, ...ctx.productAliases.filter((a) => a.productId === p.id).map((a) => a.alias)]) if (text && !texts.has(normalizeKey(text))) texts.set(normalizeKey(text), text);
+    for (const text of texts.values()) all.push({ id: p.id, identity: identityOf(text, seller), suppliers });
+  }
+  IDENTITIES.set(ctx, all);
+  return all;
 }
 
 /** Below this, a similarity is not worth suggesting. */
@@ -209,6 +231,31 @@ export function matchProduct(input: ProductInput, supplierId: string | null, ctx
     }
   }
 
+  // 4b. The same product by what it is, whoever wrote it: the seller's own name and codes set aside, the same thing
+  //     in the same grade. From the same seller with the same code it is the product; from anyone else it is a
+  //     question — the user links it or keeps it apart. Another grade is another product, and is never suggested.
+  const otherGrade = new Set<string>();
+  const mine = identityOf(texts[0], { names: supplierId ? ctx.suppliers.filter((s) => s.id === supplierId).map((s) => s.name) : [], skus: [input.supplierSku] });
+  {
+    const same = new Set<string>();
+    const likely = new Set<string>();
+    const byCode = new Set<string>();
+    const written = new Set(texts[0].split(/\s+/).map((word) => codeKey(word)).filter((word) => word.length >= 3));
+    for (const c of catalogueIdentities(ctx)) {
+      const r = mine.subKey ? compareIdentity(mine, c.identity).match : "unrelated";
+      if (r === "other_spec") otherGrade.add(c.id);
+      if (r === "same") same.add(c.id);
+      else if (r === "likely") likely.add(c.id);
+      // The seller's own code, read before on one of its descriptions and written again — in brackets or not — with no other grade next to it.
+      const gradeOk = r !== "other_spec" && (!mine.numbers.length || !c.identity.numbers.length || sameNumbers(mine.numbers, c.identity.numbers));
+      if (supplierId && gradeOk && c.suppliers.has(supplierId) && c.identity.codes.some((code) => written.has(codeKey(code)))) byCode.add(c.id);
+    }
+    for (const id of [...same, ...likely]) otherGrade.delete(id);
+    if (byCode.size === 1) return exact([...byCode][0], "Supplier's own code in the description");
+    if (same.size === 1) return { status: "probable", id: [...same][0], confidence: 0.9, reason: "Same product by what it is: the same thing in the same grade, the supplier's name and codes aside", alternatives: [] };
+    if (!same.size && likely.size === 1) return { status: "probable", id: [...likely][0], confidence: 0.8, reason: "Looks like a product you already have: the same thing in the same grade, described with other words", alternatives: [] };
+  }
+
   // 5–6. Product code written in the text, then fuzzy name/description (products only: spend items are not looked up by name)
   const cands: Candidate[] = [];
   for (const [i, text] of texts.entries()) {
@@ -216,7 +263,7 @@ export function matchProduct(input: ProductInput, supplierId: string | null, ctx
     const tokens = productTokens(text);
     const compact = codeKey(text);
     for (const p of ctx.products) {
-      if (!isStrategic(p.kind)) continue;
+      if (!isStrategic(p.kind) || otherGrade.has(p.id)) continue;
       const pSku = codeKey(p.sku);
       if (pSku.length >= 4 && (compact === pSku || codeTokens(text).includes(pSku))) {
         cands.push({ id: p.id, confidence: 0.9, reason: "Contains the product code" });
@@ -228,7 +275,7 @@ export function matchProduct(input: ProductInput, supplierId: string | null, ctx
       if (score > 0) cands.push({ id: p.id, confidence: score, reason: byName >= byDesc ? "Similar name" : "Similar description" });
     }
     for (const a of ctx.productAliases) {
-      if (!inCatalogue(a.productId)) continue;
+      if (!inCatalogue(a.productId) || otherGrade.has(a.productId)) continue;
       const score = tokenSimilarity(tokens, a.normalized.split(" ")) * weight * 0.95;
       if (score > 0) cands.push({ id: a.productId, confidence: score, reason: "Similar to a known alias" });
     }

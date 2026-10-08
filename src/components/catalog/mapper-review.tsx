@@ -43,6 +43,10 @@ export interface CardVM {
   reason: string;
   spend: number;
   products: MapProductVM[];
+  /** What the product could be, when its words name several different things: offered, never chosen for the user. */
+  ask?: { value: string; label: string; noun: string }[];
+  /** The supplier's code that tells it apart, to keep in the name until a specification is on file. */
+  code?: string | null;
 }
 
 export interface OptionGroup {
@@ -342,14 +346,22 @@ const SHOWN = 8;
 /** Products the software read from their supplier's context (to check), or could not read at all (to classify): one answer for the group. */
 function ReviewCardView({ c, options }: { c: CardVM; options: OptionGroup[] }) {
   const { pending, error, run, t } = useRun();
-  const [answer, setAnswer] = useState(c.answer);
+  // Nothing says which of several things it is: no answer is chosen in advance, and "I don't know yet" is to leave it.
+  const asking = (c.ask?.length ?? 0) > 0;
+  const [answer, setAnswer] = useState(asking ? "" : c.answer);
   const [names, setNames] = useState<Record<string, string>>(Object.fromEntries(c.products.slice(0, SHOWN).map((p) => [p.id, p.name])));
+  const [named, setNamed] = useState("");
   const check = c.type === "check";
   const ids = c.products.map((p) => p.id);
+  const choose = (value: string) => {
+    setAnswer(value);
+    const noun = c.ask?.find((o) => o.value === value)?.noun;
+    if (noun) setNamed([noun, c.code].filter(Boolean).join(" "));
+  };
   return (
     <div className="rounded-lg border border-rule px-5 py-4">
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-        <h4 className="text-[14px] font-semibold">{check ? t("Check what we read") : c.products.length > 1 ? t("What are these?") : t("What is this?")}</h4>
+        <h4 className="text-[14px] font-semibold">{check ? t("Check what we read") : asking ? t("Needs technical identification") : c.products.length > 1 ? t("What are these?") : t("What is this?")}</h4>
         <span className="text-[12.5px] text-ink-3">
           {t.n(c.products.length, "{n} product", "{n} products")} · <span className="num">{f.money(Math.round(c.spend))}</span> {t("a year")}
           {c.supplier && ` · ${c.supplier}`}
@@ -387,16 +399,41 @@ function ReviewCardView({ c, options }: { c: CardVM; options: OptionGroup[] }) {
             ))}
             {c.products.length > SHOWN && <li className="text-[12.5px] text-ink-3">{t("and {n} more", { n: c.products.length - SHOWN })}</li>}
           </ul>
-          <p className="mt-2 text-[12px] text-ink-4">{t("A name that starts with a size or a code gets what it is in front (“Label 50x70 …”). You can change any name afterwards.")}</p>
+          {asking ? (
+            <div className="mt-3">
+              <div className="text-[13px] font-medium">{t("Do you know which description fits best?")}</div>
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {c.ask!.map((o) => (
+                  <button key={o.value} type="button" aria-pressed={answer === o.value} onClick={() => choose(o.value)} className={cx(buttonClass(answer === o.value ? "primary" : "secondary", "sm"))}>
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-2 text-[12px] text-ink-3">
+                {t("Something else: choose it from the list below. If you don't know yet, leave it: it keeps the name it has and waits here.")}{" "}
+                <Link href={`/products/${ids[0]}`} className="text-ledger hover:underline">
+                  {t("Have the technical data sheet? Add it on the product's page.")}
+                </Link>
+              </p>
+              {answer && (
+                <label className="mt-2 block text-[12px] text-ink-3">
+                  {t("The name it will have — the supplier's code stays in it until a grade or a specification is known. Change it if you know better.")}
+                  <Input value={named} onChange={(e) => setNamed(e.target.value)} aria-label={t("Name")} className="mt-1 w-full" />
+                </label>
+              )}
+            </div>
+          ) : (
+            <p className="mt-2 text-[12px] text-ink-4">{t("A name that starts with a size or a code gets what it is in front (“Label 50x70 …”). You can change any name afterwards.")}</p>
+          )}
         </>
       )}
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <WhatSelect value={answer} onChange={setAnswer} options={options} placeholder={c.products.length > 1 ? t("Choose what they are…") : t("Choose what it is…")} />
+        <WhatSelect value={answer} onChange={choose} options={options} placeholder={c.products.length > 1 ? t("Choose what they are…") : t("Choose what it is…")} />
         <button
           type="button"
           disabled={pending || !answer || (check && Object.values(names).some((n) => !n.trim()))}
           className={buttonClass("primary")}
-          onClick={() => run(() => confirmMappingsAction({ productIds: ids, answer: !check || answer !== c.answer ? answer : undefined, names: check ? names : undefined }))}
+          onClick={() => run(() => confirmMappingsAction({ productIds: ids, answer: !check || answer !== c.answer ? answer : undefined, names: check ? names : asking && named.trim() ? { [ids[0]]: named.trim() } : undefined }))}
         >
           {pending ? t("Confirming…") : t("Confirm")}
         </button>

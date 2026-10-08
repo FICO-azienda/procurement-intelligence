@@ -17,7 +17,7 @@ import { readDataset, readLearning } from "@/lib/data";
 import { productKey } from "@/lib/import/normalize/text";
 import { decisionFor } from "@/lib/intel/decision";
 import { analyze } from "@/lib/intel/engine";
-import { analyzeCatalogue, confirmMappings, keepSeparate, mergeProducts, saveMapping } from "./mapper";
+import { analyzeCatalogue, confirmMappings, keepSeparate, mergeProducts, mergedInto, readProductMerges, saveMapping, undoProductMerge } from "./mapper";
 
 let db: DB;
 const ids: Record<string, string> = {};
@@ -69,9 +69,10 @@ beforeAll(async () => {
 describe("the catalogue as the imports left it", () => {
   it("is read without writing: what is sure, what to ask, what may be a duplicate", async () => {
     const a = await analyzeCatalogue(db);
-    expect(a.totals).toMatchObject({ analysed: 10, confirmed: 0, high: 5, low: 3, inDuplicates: 2 });
+    expect(a.totals).toMatchObject({ analysed: 10, confirmed: 0, high: 3, medium: 2, low: 3, inDuplicates: 2 });
     expect(a.duplicates).toMatchObject([{ productIds: [ids.a240, ids.a60], level: "possible", suggestion: "merge" }]);
     expect(a.cards.map((c) => [c.type, c.supplierName, c.productIds.length])).toEqual([
+      ["check", "ERREPLAST SRL", 2],
       ["classify", "SPECIAL SCREEN SRL", 2],
       ["classify", "XONE S.R.L.", 1],
     ]);
@@ -91,8 +92,11 @@ describe("confirming in bulk", () => {
 
   it("writes name, category, family and variant of every sure product, and nothing else", async () => {
     before = await facts();
-    expect(await confirmMappings(db)).toEqual({ confirmed: 5 });
-    expect(await row("par")).toMatchObject({ name: "Paraffina 52/54 (XXF)", category: "Waxes and paraffin", subcategory: "Paraffin", kind: "direct_material", familyId: null });
+    expect(await confirmMappings(db)).toEqual({ confirmed: 3 });
+    // What only a supplier's article code tells apart is not confirmed in bulk: the user looks at the group and confirms it.
+    expect((await row("lc")).mappedAt).toBeNull();
+    expect(await confirmMappings(db, { productIds: [ids.lc, ids.c50] })).toEqual({ confirmed: 2 });
+    expect(await row("par")).toMatchObject({ name: "Paraffina 52/54", category: "Waxes and paraffin", subcategory: "Paraffin", kind: "direct_material", familyId: null });
     expect((await row("par")).mappedAt).not.toBeNull();
     const lc = await row("lc");
     expect(lc).toMatchObject({ name: "Contenitori per ceri LC TR", category: "Containers", subcategory: "Candle containers", variant: "LC TR" });
@@ -152,9 +156,15 @@ describe("the cases only a person can decide", () => {
 
   it("merging makes one product of two: every purchase moves, none changes", async () => {
     const before = await facts();
+    // A mock benchmark on the product that will be merged: what hangs on it must follow, not disappear.
+    await db.insert(schema.marketBenchmarks).values({ productId: ids.a60, type: "direct_benchmark", label: "Mock reference", sourceName: "Mock source" });
     const { productId } = await mergeProducts(db, [ids.a240, ids.a60], "Candela liturgica altare Ø 35x200 mm");
     expect(productId).toBe(ids.a240);
-    expect(await row("a60")).toBeUndefined();
+    // Nothing is deleted: the merged product stays on file, read as the other, and is no longer listed.
+    expect(await row("a60")).toMatchObject({ mergedIntoId: ids.a240, name: "Candela Liturgica Altare Ø 35x200 mm 60 pz. x scat" });
+    expect((await readDataset(db)).products.some((x) => x.id === ids.a60)).toBe(false);
+    expect(await mergedInto(db, ids.a60)).toBe(ids.a240);
+    expect(await db.select().from(schema.marketBenchmarks).where(eq(schema.marketBenchmarks.productId, ids.a240))).toHaveLength(1);
     expect(await row("a240")).toMatchObject({ name: "Candela liturgica altare Ø 35x200 mm", subcategory: "Candles", variant: "Ø 35x200 mm" });
     expect(await db.select().from(schema.purchases).where(eq(schema.purchases.productId, ids.a240))).toHaveLength(3);
     const aliases = (await db.select().from(schema.productAliases).where(eq(schema.productAliases.productId, ids.a240))).map((x) => x.alias).sort();
@@ -162,6 +172,27 @@ describe("the cases only a person can decide", () => {
     expect(await db.select().from(schema.supplierProducts).where(eq(schema.supplierProducts.productId, ids.a240))).toHaveLength(1);
     expect(await facts()).toEqual(before);
     expect((await analyzeCatalogue(db)).duplicates).toEqual([]);
+  });
+
+  it("a merge can be taken back: what moved goes back where it was, and the name too", async () => {
+    const before = await facts();
+    const [merge] = await readProductMerges(db);
+    expect(merge).toMatchObject({ productId: ids.a240, mergedId: ids.a60 });
+    await undoProductMerge(db, merge.id);
+    expect(await row("a60")).toMatchObject({ mergedIntoId: null });
+    expect(await row("a240")).toMatchObject({ name: "Candela Liturgica Altare Ø 35x200 mm 240 pz." });
+    expect(await db.select().from(schema.purchases).where(eq(schema.purchases.productId, ids.a60))).toHaveLength(1);
+    expect(await db.select().from(schema.purchases).where(eq(schema.purchases.productId, ids.a240))).toHaveLength(2);
+    expect(await db.select().from(schema.marketBenchmarks).where(eq(schema.marketBenchmarks.productId, ids.a60))).toHaveLength(1);
+    expect((await db.select().from(schema.productAliases).where(eq(schema.productAliases.productId, ids.a60))).map((x) => x.alias)).toEqual(["CANDELA LITURGICA ALTARE Ø 35X200 MM 60 PZ. X SCAT"]);
+    expect((await readDataset(db)).products.some((x) => x.id === ids.a60)).toBe(true);
+    expect(await facts()).toEqual(before);
+    expect(await readProductMerges(db)).toEqual([]);
+    await expect(undoProductMerge(db, merge.id)).rejects.toThrow("no longer in force");
+    // The two are proposed as one again, and can be merged again.
+    expect((await analyzeCatalogue(db)).duplicates).toHaveLength(1);
+    await mergeProducts(db, [ids.a240, ids.a60], "Candela liturgica altare Ø 35x200 mm");
+    expect(await readProductMerges(db)).toHaveLength(1);
   });
 
   it("does not merge products bought in different units", async () => {

@@ -3,11 +3,16 @@ import { MapperReview, type MapProductVM, type OptionGroup, type ReviewVM } from
 import { Crumbs, PageHeader } from "@/components/ui";
 import { KIND_LABEL, PRODUCT_KINDS, isStrategic } from "@/lib/catalog/kinds";
 import type { Mapping } from "@/lib/catalog/mapper";
-import { TAXONOMY } from "@/lib/catalog/taxonomy";
+import { TAXONOMY, subByKey } from "@/lib/catalog/taxonomy";
 import { getMapAnalysis, getSpend, getT } from "@/lib/data";
+import * as f from "@/lib/format";
+import { getDb } from "@/db";
+import { MergesMade } from "@/components/catalog/merges";
+import { CLEANUP_TOP, ReadingTable } from "@/components/catalog/reading-table";
+import { readProductMerges } from "@/server/mapper";
 
 export async function generateMetadata(): Promise<Metadata> {
-  return { title: (await getT())("Product Mapper") };
+  return { title: (await getT())("Product cleanup") };
 }
 
 /**
@@ -16,7 +21,7 @@ export async function generateMetadata(): Promise<Metadata> {
  * the doubtful cases, the largest spend first.
  */
 export default async function ProductReviewPage() {
-  const [analysis, spend, t] = await Promise.all([getMapAnalysis(), getSpend(), getT()]);
+  const [analysis, spend, t, merges] = await Promise.all([getMapAnalysis(), getSpend(), getT(), getDb().then(readProductMerges)]);
   const byId = new Map(analysis.products.map((m) => [m.productId, m]));
   const vm = (m: Mapping): MapProductVM => ({
     id: m.productId,
@@ -62,6 +67,9 @@ export default async function ProductReviewPage() {
       reason: c.reason,
       spend: c.spend,
       products: c.productIds.map((id) => vm(byId.get(id)!)),
+      ask: c.options.map((key) => subByKey(key)).filter((ref): ref is NonNullable<typeof ref> => !!ref).map((ref) => ({ value: ref.sub.key, label: t(ref.sub.label), noun: t(ref.sub.noun) })),
+      // The code written in the description itself comes first: it is what the buyer reads on the invoice.
+      code: c.options.length ? (byId.get(c.productIds[0])!.supplierCodes[0] ?? null) : null,
     })),
     options,
     families: analysis.families.map((x) => ({ name: x.name, subcategory: x.subcategory, products: x.productIds.length, spend: x.spend })),
@@ -70,10 +78,12 @@ export default async function ProductReviewPage() {
     <>
       <PageHeader
         eyebrow={<Crumbs items={[{ href: "/products", label: t("Products") }]} />}
-        title={t("Product Mapper")}
-        meta={t("We worked out what you buy. You only check where we are in doubt.")}
+        title={t("Product cleanup")}
+        meta={t("An invoice says who sold it and how the seller calls it; what the product is has to be read out of it. We read it for every product: you confirm what is sure, look at what is in doubt, and say what nothing on file can tell.")}
       />
+      <ReadingTable rows={analysis.products.filter((m) => !m.mapped)} top={CLEANUP_TOP} groups={analysis.totals.groups} t={t} />
       <MapperReview review={review} />
+      <MergesMade merges={merges.map((m) => ({ id: m.id, kept: m.productName, merged: m.mergedName, date: f.date(m.createdAt.slice(0, 10)) }))} />
     </>
   );
 }

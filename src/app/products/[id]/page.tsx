@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import type { Metadata } from "next";
 import { AlertTriangle } from "lucide-react";
 import { KindSelect } from "@/components/catalog/kind-select";
@@ -18,6 +18,7 @@ import { FieldStatusTag, FieldProvenance, ProductDataPanel } from "@/components/
 import { FIELDS, FIELD_KEYS, SECTION_LABEL, type Section as DataSection } from "@/lib/dataset/fields";
 import type { ProductProfile } from "@/lib/dataset/profile";
 import { getDb } from "@/db";
+import { mergedInto } from "@/server/mapper";
 import { documentsOnFile, getPriorityDataset, getProfiles, linkedProductDocuments } from "@/server/product-data";
 import { ButtonLink, Crumbs, Delta, Disclosure, Empty, ExportLink, Label, PageHeader, Section, Sku, Table, Td, Th, cx, rowClass } from "@/components/ui";
 import { basePrice, baseTotal, isPriced, normalizePurchases, type Dataset, type ProductData } from "@/lib/analytics";
@@ -57,7 +58,12 @@ export default async function ProductPage({ params, searchParams }: PageProps<"/
   if (!pi) {
     // Not in the catalogue: an item of spend (transport, a service, a utility…), shown for what it is.
     const item = data.products.find((p) => p.id === id);
-    if (!item) notFound();
+    if (!item) {
+      // Merged into another product: its page is the page of the one it is read as.
+      const into = await mergedInto(await getDb(), id);
+      if (into) redirect(`/products/${into}`);
+      notFound();
+    }
     return <SpendItem product={item} data={data} learning={learning} t={t} />;
   }
   const { product, price } = pi;

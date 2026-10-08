@@ -28,6 +28,11 @@ export interface Subcategory {
   words: Word[];
   /** The customs heading (HS, 6 digits) its products usually fall under: a suggestion for trade statistics, to confirm product by product. */
   customs?: string;
+  /**
+   * Its words name something that can be several different things ("wax"): when nothing else tells which, the product
+   * is not classified here — the user is offered these subcategories, and may say "I don't know yet".
+   */
+  ask?: string[];
 }
 
 export interface Category {
@@ -49,7 +54,9 @@ export const TAXONOMY: Category[] = [
     kind: "direct_material",
     subs: [
       { key: "paraffin", label: "Paraffin", noun: "Paraffin", words: [w("paraffin")], customs: "271220" },
-      { key: "wax", label: "Wax", noun: "Wax", words: [w("cera", String.raw`\bcer[ae]\b`), w("wax", String.raw`\bwax\b`), w("stearin")] },
+      { key: "vegetable_wax", label: "Vegetable wax", noun: "Vegetable wax", words: [w("vegetal", String.raw`\bcer[ae] (?:di )?(?:soia|vegetal\w*|colza|palma|cocco)\b|\b(?:soy|soja|rapeseed|palm|coconut|vegetable) wax\b|\bsoia\b`)] },
+      { key: "wax_blend", label: "Candle wax blend", noun: "Wax blend", words: [w("blend", String.raw`\bwax blend\b|\bmiscela (?:di )?cer[ae]\b|\bcandle compound\b`)] },
+      { key: "wax", label: "Wax", noun: "Wax", words: [w("cera", String.raw`\bcer[ae]\b`), w("wax", String.raw`\bwax\b`), w("stearin")], ask: ["paraffin", "wax_blend", "vegetable_wax"] },
     ],
   },
   {
