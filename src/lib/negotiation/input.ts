@@ -53,6 +53,8 @@ export interface NegotiationContext {
   classChosen: boolean;
   /** Everything bought from the product's current supplier, as the invoices show it (relationship.ts). */
   relationship: RelationshipFacts | null;
+  /** Alternatives able to take this product together with others bought from the same supplier (from the sourcing mix). */
+  alternativeBundle?: { suppliers: number; products: number; share: number; names: string[] } | null;
   customsCodeConfirmed: boolean;
   judgements: NegotiationInput["judgements"];
   asOf: string;
@@ -198,6 +200,7 @@ export function negotiationInput(ctx: NegotiationContext, t: T = en, cfg: Negoti
       strong: strong.length,
       manufacturers: strong.filter((s) => s.candidate.companyType === "manufacturer").length,
       countries: new Set(strong.map((s) => s.candidate.country).filter(Boolean)).size,
+      bundle: ctx.alternativeBundle ?? null,
     },
     spec: { readiness: profile.rfq.readiness, technical: field("technical_spec").status !== "missing", datasheet: field("datasheet").status !== "missing" },
     terms: {
@@ -277,6 +280,17 @@ export function factorInputs(ctx: NegotiationContext, result: Negotiation, t: T 
   put("competition", "geography", t("Where the strong alternatives are"), countries.length ? countries.join(", ") : null, countries.length ? "confirmed" : "missing", research, found);
   const makers = strong.filter((s) => s.candidate.companyType === "manufacturer").length;
   put("competition", "manufacturers", t("Manufacturers among them"), strong.length ? String(makers) : null, strong.length ? "confirmed" : "missing", research, found, t("As each company describes itself on its own site."));
+  const bundle = ctx.alternativeBundle ?? null;
+  put(
+    "competition",
+    "alternative_bundle",
+    t("Alternatives for several products at once"),
+    bundle ? t("{names}: {k} products, {pct}% of the spend with the current supplier", { names: bundle.names.join(", "), k: bundle.products, pct: Math.round(bundle.share * 100) }) : null,
+    bundle ? "estimated" : "missing",
+    bundle ? research : null,
+    bundle ? found : null,
+    bundle ? t("Candidates at least plausible for this product and for others bought from the same supplier. On paper until one makes an offer.") : t("No alternative on file could take this product together with others from the same supplier."),
+  );
   const real = result.anchors.filter((a) => (a.kind === "quote" || a.kind === "other_supplier") && a.role !== "not_used");
   put("competition", "quotes", t("Real offers from other suppliers"), real.length ? real.map((a) => a.label).join(", ") : null, real.length ? "confirmed" : "missing", real.length ? t("Quotes and invoices on file") : null, real.map((a) => a.date).filter((d): d is string => !!d).sort().at(-1) ?? null);
 

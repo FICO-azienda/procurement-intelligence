@@ -28,6 +28,7 @@ import { negotiationFor, type ProductNegotiation } from "@/lib/negotiation/input
 import { relationshipFacts } from "@/lib/negotiation/relationship";
 import { classifyProduct } from "@/lib/research/strategy";
 import type { MarketView } from "@/lib/sourcing/market";
+import type { SupplierOpportunity } from "@/lib/sourcing/screening";
 import type { Confidence, MarketBenchmark } from "@/lib/sourcing/types";
 import { getProfiles, readLedger, readProfiles } from "./product-data";
 import { getMarketViews, getSourcingData, readMarketViews, readProductCosts, readSourcing, type ProductCosts } from "./sourcing";
@@ -46,6 +47,8 @@ interface Assembly {
   companyName: string | null;
   rows: { id: string; kind: string; researchClass: string | null; customsCode: string | null; customsCodeConfirmed: boolean }[];
   ledger: Map<string, LedgerRow[]>;
+  /** The companies that could cover several priority products (sourcing): who could take a bundle away from a current supplier. */
+  opportunities: SupplierOpportunity[];
 }
 
 /** What a person said about the product, read back from the ledger. */
@@ -74,6 +77,15 @@ function assemble(a: Assembly, productIds: string[], t: T): Map<string, ProductN
       override: row?.researchClass,
     });
     const supplier = supplierOf(intel);
+    const relationship = relationshipFacts(a.catalogue, id, supplier, a.intel.asOf, a.coverage);
+    // Who could take this product together with others bought from the same supplier: a bundle weighs more at the table than one product.
+    const fromSame = new Set(a.intel.products.filter((p) => supplier != null && supplierOf(p) === supplier).map((p) => p.product.id));
+    const able = a.opportunities
+      .map((o) => ({ name: o.name, lines: o.lines.filter((l) => fromSame.has(l.productId)) }))
+      .filter((o) => o.lines.length >= 2 && o.lines.some((l) => l.productId === id))
+      .map((o) => ({ ...o, spend: o.lines.reduce((sum, l) => sum + l.annualSpend, 0) }))
+      .sort((x, y) => y.spend - x.spend || x.name.localeCompare(y.name));
+    const alternativeBundle = able.length && relationship && relationship.supplierSpend > 0 ? { suppliers: able.length, products: able[0].lines.length, share: Math.min(1, able[0].spend / relationship.supplierSpend), names: able.slice(0, 4).map((o) => o.name) } : null;
     out.set(
       id,
       negotiationFor(
@@ -86,7 +98,8 @@ function assemble(a: Assembly, productIds: string[], t: T): Map<string, ProductN
           productClass: cls.productClass,
           classReason: cls.reason,
           classChosen: cls.chosen,
-          relationship: relationshipFacts(a.catalogue, id, supplier, a.intel.asOf, a.coverage),
+          relationship,
+          alternativeBundle,
           customsCodeConfirmed: !!row?.customsCode && row.customsCodeConfirmed,
           judgements: judgementsOf(a.ledger.get(id) ?? []),
           asOf: a.intel.asOf,
@@ -107,19 +120,19 @@ const productRows = (db: DB) => db.select({ id: products.id, kind: products.kind
 
 /** Straight from the database: for the history, the tests, and a write that needs the estimate as it stands. */
 export async function readNegotiations(db: DB, t: T = en, productIds?: string[]): Promise<Map<string, ProductNegotiation>> {
-  const [{ views, intel, catalogue, data }, sourcing, learning, settings, rows] = await Promise.all([readMarketViews(db, t), readSourcing(db), readLearning(db), readSettings(db), productRows(db)]);
+  const [{ views, intel, catalogue, data, opportunities }, sourcing, learning, settings, rows] = await Promise.all([readMarketViews(db, t), readSourcing(db), readLearning(db), readSettings(db), productRows(db)]);
   const ids = productIds ?? intel.products.map((p) => p.product.id);
   const [profiles, costs, ledger] = await Promise.all([readProfiles(db, ids, t), readProductCosts(db, intel, views, t), readLedger(db, ids)]);
-  return assemble({ catalogue, coverage: coverageOf(data), intel, views, profiles, costs, benchmarks: sourcing.benchmarks, aliases: learning.productAliases, companyName: settings.companyName, rows, ledger }, ids, t);
+  return assemble({ catalogue, coverage: coverageOf(data), intel, views, profiles, costs, benchmarks: sourcing.benchmarks, aliases: learning.productAliases, companyName: settings.companyName, rows, ledger, opportunities }, ids, t);
 }
 
 /** For the pages: the estimates of the given products, from this request's data. */
 export async function getNegotiations(productIds: string[]): Promise<Map<string, ProductNegotiation>> {
   await connection();
-  const [data, intel, { views }, sourcing, learning, settings, t, db] = await Promise.all([getDataset(), getIntel(), getMarketViews(), getSourcingData(), getLearning(), getSettings(), getT(), getDb()]);
+  const [data, intel, { views, opportunities }, sourcing, learning, settings, t, db] = await Promise.all([getDataset(), getIntel(), getMarketViews(), getSourcingData(), getLearning(), getSettings(), getT(), getDb()]);
   const ids = productIds.filter((id) => intel.products.some((p) => p.product.id === id));
   const [profiles, costs, ledger, rows] = await Promise.all([getProfiles(ids), readProductCosts(db, intel, views, t), readLedger(db, ids), productRows(db)]);
-  return assemble({ catalogue: catalogueOf(data), coverage: coverageOf(data), intel, views, profiles, costs, benchmarks: sourcing.benchmarks, aliases: learning.productAliases, companyName: settings.companyName, rows, ledger }, ids, t);
+  return assemble({ catalogue: catalogueOf(data), coverage: coverageOf(data), intel, views, profiles, costs, benchmarks: sourcing.benchmarks, aliases: learning.productAliases, companyName: settings.companyName, rows, ledger, opportunities }, ids, t);
 }
 
 /** Every catalogue product with a price paid: the list the opportunities page reads. */

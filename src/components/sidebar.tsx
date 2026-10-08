@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { ArrowLeftRight, Boxes, Building2, ChevronDown, ClipboardCheck, Globe, Home, Lightbulb, ReceiptText, Settings, Upload, type LucideIcon } from "lucide-react";
+import { ArrowLeftRight, Boxes, Building2, ChevronDown, ClipboardCheck, Globe, Home, Lightbulb, ReceiptText, Scale, Settings, Upload, type LucideIcon } from "lucide-react";
 import { APP_SHORT_NAME } from "@/lib/config";
 import type { Msg } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/client";
@@ -22,6 +22,7 @@ const NAV: NavItem[] = [
   { href: "/suppliers", label: "Suppliers", icon: Building2 },
   { href: "/compare", label: "Compare", icon: ArrowLeftRight },
   { href: "/sourcing", label: "Market|nav", icon: Globe },
+  { href: "/strategy", label: "Strategy|nav", icon: Scale },
   { href: "/import", label: "Import|nav", icon: Upload, also: ["/review"] },
   { href: "/opportunities", label: "Opportunities", icon: Lightbulb },
 ];

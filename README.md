@@ -422,6 +422,19 @@ Lo stesso fornitore scritto in modi diversi — "SER S.p.A.", "SER SPA", "S.E.R.
 
 Non viene usato alcun modello linguistico: le regole decidono cosa proporre, gli identificativi cosa unire.
 
+## Strategia di sourcing (Sourcing Mix)
+
+Pagina **Strategia** (`/strategy`): per i prodotti che pesano di più (Top 5, poi Top 18) mostra il portafoglio di oggi e, per ogni obiettivo, il mix di fornitori che farebbe meglio — costo più basso, bundle, specialisti, valore economico totale, qualità, consegna, rischio, liquidità, meno fornitori, bilanciato, pesi personalizzati.
+
+- Non esiste un fornitore giusto per tutto e il software non ne sceglie uno: ogni mix è da esaminare, con cosa guadagna e a cosa rinuncia.
+- Un prodotto viene assegnato solo a chi ha un prezzo per te (pagato, o un'offerta reale). Un candidato mai interpellato si conta come copertura possibile, non si confronta.
+- Quello che non è in archivio non dà vantaggio: senza tempi di consegna, termini di pagamento o dati di qualità lo scenario dice "Dati insufficienti" e cosa raccogliere.
+- La copertura è pesata sulla spesa ed è un bonus accanto al costo; chi copre un solo prodotto non è penalizzato.
+- Un vantaggio è una stima ai prezzi in archivio (teorico, da validare, validato), mai un risparmio.
+- Nulla viene salvato: obiettivo, pesi e limiti viaggiano nell'indirizzo della pagina.
+
+Codice: `src/lib/portfolio/` (regole pure e test), `src/server/portfolio.ts`, `src/app/strategy/`.
+
 ## Demo su GitHub Pages
 
 Ogni push su `main` lancia `.github/workflows/pages.yml`: l'app parte con i dati demo, `scripts/snapshot.mjs` salva ogni pagina come HTML statico e il risultato viene pubblicato su https://fico-azienda.github.io/procurement-intelligence/. È una demo in sola lettura: import, moduli, salvataggi e download richiedono il server e lì non funzionano.

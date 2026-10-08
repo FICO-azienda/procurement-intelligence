@@ -146,7 +146,15 @@ export interface NegotiationInput {
     /** The highest price paid in the last 12 months, when above today's. */
     recentHigh: { price: number; date: string } | null;
   };
-  competition: { found: number; plausible: number; strong: number; manufacturers: number; countries: number };
+  competition: {
+    found: number;
+    plausible: number;
+    strong: number;
+    manufacturers: number;
+    countries: number;
+    /** Alternatives able to take this product together with others bought from the same supplier: how many, how many products, and their share of the spend with it. */
+    bundle?: { suppliers: number; products: number; share: number } | null;
+  };
   spec: { readiness: "ready" | "partial" | "not_ready"; technical: boolean; datasheet: boolean };
   /** The terms of the current supply. Null: not on file. */
   terms: { paymentDays: number | null; deliveryBasis: string | null; freightIncluded: boolean | null; moq: number | null; leadTimeDays: number | null };
@@ -351,12 +359,24 @@ export function negotiate(input: NegotiationInput, t: T = en, cfg: NegotiationCo
     let score = strong >= 5 ? 9 : strong >= 3 ? 8 : strong === 2 ? 6 : strong === 1 ? 4 : plausible >= 2 ? 3 : plausible === 1 ? 2 : 1;
     if (strong >= 2 && countries >= 2) score += 0.5;
     if (strong >= 1 && manufacturers >= 1) score += 0.5;
+    // Someone who could take several of the supplier's products at once is a stronger alternative than one product alone.
+    const bundle = input.competition.bundle ?? null;
+    if (bundle && bundle.suppliers >= 1) score += cfg.alternativeBundleBonus;
     if (real.length >= 2) score = Math.max(score, 9.5);
     else if (real.length === 1) score = Math.max(score, 7.5);
     else score = Math.min(score, cfg.untestedCompetitionCap);
     if (strong >= 2) pos.push(countries >= 2 ? t("{n} credible alternative suppliers identified, in {k} countries.", { n: strong, k: countries }) : t("{n} credible alternative suppliers identified.", { n: strong }));
     else if (strong === 1) neg.push(t("Only one credible alternative supplier identified."));
     else neg.push(plausible > 0 ? t.n(plausible, "No alternative is a strong match yet: {n} plausible candidate on file.", "No alternative is a strong match yet: {n} plausible candidates on file.") : t("No credible alternative supplier identified."));
+    if (bundle && bundle.suppliers >= 1)
+      pos.push(
+        t.n(
+          bundle.suppliers,
+          "{n} alternative could take over {k} of the products you buy from this supplier together ({pct}% of what you spend with it): a credible alternative bundle weighs more than one product alone.",
+          "{n} alternatives could each take over {k} of the products you buy from this supplier together ({pct}% of what you spend with it): a credible alternative bundle weighs more than one product alone.",
+          { k: bundle.products, pct: Math.round(bundle.share * 100) },
+        ),
+      );
     if (real.length >= 2) pos.push(t("{n} real offers or prices from other suppliers on file.", { n: real.length }));
     else if (!real.length && strong >= 1) neg.push(t("None of the alternatives has made an offer yet: the competition is still on paper."));
     add("competition", score, pos, neg);

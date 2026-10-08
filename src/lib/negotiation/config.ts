@@ -108,6 +108,8 @@ export const NEGOTIATION_CONFIG = {
     /** The score in words: below `medium` low, from `high` up high. */
     level: { medium: 4, high: 7 },
   },
+  /** Added to the competition score when an alternative could take several of the supplier's products at once (sourcing mix). */
+  alternativeBundleBonus: 0.5,
   /** Without a real offer or a second source, competition is only on paper: its score stops here. */
   untestedCompetitionCap: 7,
   /** Without a real offer, the price evidence score stops here. */
