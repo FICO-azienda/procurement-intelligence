@@ -87,6 +87,11 @@ export const productFamilies = pgTable("product_families", {
   name: text("name").notNull(),
   category: text("category"),
   subcategory: text("subcategory"),
+  /**
+   * What tells its products apart, when the user said they are versions of one product: size, colour, material, grade,
+   * capacity, other (lib/catalog/macro.ts). Null: a family the mapper proposed and nobody was asked about.
+   */
+  variantBy: text("variant_by"),
   ...timestamps,
 });
 

@@ -17,7 +17,7 @@ import { readDataset, readLearning } from "@/lib/data";
 import { productKey } from "@/lib/import/normalize/text";
 import { decisionFor } from "@/lib/intel/decision";
 import { analyze } from "@/lib/intel/engine";
-import { analyzeCatalogue, confirmMappings, keepSeparate, mergeProducts, mergedInto, readProductMerges, saveMapping, undoProductMerge } from "./mapper";
+import { analyzeCatalogue, confirmMappings, confirmVariants, keepSeparate, mergeProducts, mergedInto, readProductMerges, saveMapping, undoProductMerge } from "./mapper";
 
 let db: DB;
 const ids: Record<string, string> = {};
@@ -208,5 +208,36 @@ describe("the product's page", () => {
     expect(family.name).toBe("Candele d'altare");
     const a = await analyzeCatalogue(db);
     expect(a.products.find((m) => m.productId === ids.a25)).toMatchObject({ mapped: true, category: "Candele", family: "Candele d'altare" });
+  });
+});
+
+describe("versions of one product", () => {
+  it("are filed under one macro product, each kept as it is, and not asked about again", async () => {
+    await product("v0", "ART. 30/2 Contenitori per ceri", ids.erre, "component", "pcs", [[10000, 0.072]]);
+    await product("vtr", "ART. 30/2 TR Contenitori per ceri", ids.erre, "component", "pcs", [[10000, 0.082]]);
+    await product("vblu", "ART. 30/2 BLU Contenitori per ceri", ids.erre, "component", "pcs", [[5000, 0.094]]);
+    const before = await facts();
+    const group = (await analyzeCatalogue(db)).macros.find((g) => g.name === "Contenitori per ceri 30/2")!;
+    // "BLU" says it is a colour; "TR" next to it is read the same way — proposed, not decided.
+    expect(group).toMatchObject({ differs: "colour", differsSure: false, suggestion: "variants", supplierName: "ERREPLAST SRL" });
+    expect(group.members.map((m) => m.variant).sort()).toEqual(["BLU", "TR", null].sort());
+
+    await confirmVariants(db, [ids.v0, ids.vtr, ids.vblu], "Contenitori per ceri 30/2", "colour");
+    const [family] = (await db.select().from(schema.productFamilies)).filter((x) => x.name === "Contenitori per ceri 30/2");
+    expect(family).toMatchObject({ variantBy: "colour", subcategory: "Candle containers" });
+    // Three products still, each with its own name, purchases and price: only where they are filed changed.
+    expect(await row("vblu")).toMatchObject({ familyId: family.id, variant: "BLU", name: "Contenitori per ceri 30/2 BLU" });
+    expect(await row("v0")).toMatchObject({ familyId: family.id, variant: null });
+    expect((await row("vtr")).mappedAt).not.toBeNull();
+    expect(await facts()).toEqual(before);
+    const after = await analyzeCatalogue(db);
+    expect(after.macros.some((g) => g.name === "Contenitori per ceri 30/2")).toBe(false);
+    expect(after.duplicates.some((d) => d.productIds.includes(ids.vblu))).toBe(false);
+
+    // A new colour of the same article is proposed next to the ones already filed.
+    await product("vgia", "ART. 30/2 GIA Contenitori per ceri", ids.erre, "component", "pcs", [[1000, 0.095]]);
+    const again = (await analyzeCatalogue(db)).macros.find((g) => g.name === "Contenitori per ceri 30/2")!;
+    expect(again.members).toHaveLength(4);
+    await expect(confirmVariants(db, [ids.v0], "Contenitori per ceri 30/2", "colour")).rejects.toThrow("at least two products");
   });
 });

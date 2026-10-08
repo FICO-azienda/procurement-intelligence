@@ -9,6 +9,7 @@ import * as f from "@/lib/format";
 import { useT } from "@/lib/i18n/client";
 import { Input, Select } from "../form-kit";
 import { buttonClass, cx } from "../ui";
+import { VariantsPanel } from "./macro-review";
 
 export interface MapProductVM {
   id: string;
@@ -293,6 +294,7 @@ function HighRow({ p, options }: { p: MapProductVM; options: OptionGroup[] }) {
 function DuplicateCard({ d }: { d: DuplicateVM }) {
   const { pending, error, run, t } = useRun();
   const [name, setName] = useState(d.proposedName);
+  const [asking, setAsking] = useState(false);
   const merge = d.suggestion === "merge";
   const ids = d.products.map((p) => p.id);
   return (
@@ -331,10 +333,14 @@ function DuplicateCard({ d }: { d: DuplicateVM }) {
         <button type="button" disabled={pending || !name.trim()} className={buttonClass(merge ? "primary" : "secondary")} onClick={() => run(() => mergeProductsAction(ids, name))}>
           {t("Merge")}
         </button>
+        <button type="button" disabled={pending} aria-expanded={asking} className={buttonClass("secondary")} onClick={() => setAsking((x) => !x)}>
+          {t("They are variants")}
+        </button>
         <button type="button" disabled={pending} className={buttonClass(merge ? "secondary" : "primary")} onClick={() => run(() => keepSeparateAction(ids))}>
           {t("Keep separate")}
         </button>
       </div>
+      {asking && <VariantsPanel ids={ids} name={name} differs={null} pending={pending} run={run} />}
       <p className="mt-2 text-[12px] text-ink-4">{t("Merging moves every purchase under one product; each purchase keeps its own price, quantity, date and original description.")}</p>
       {error && <div className="mt-2 text-[12.5px] text-up">{error}</div>}
     </div>

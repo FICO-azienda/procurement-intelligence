@@ -43,7 +43,8 @@ import { isFieldKey } from "@/lib/dataset/fields";
 import { isJudgementKey, isLevel } from "@/lib/negotiation/engine";
 import { keepEstimateHistory, saveJudgement } from "@/server/negotiation";
 import { SupplierMergeError, autoMergeSuppliers, canonicalSupplierId, keepSuppliersResolved, keepSuppliersSeparate, matchOf, mergeSuppliers, undoSupplierMerge } from "@/server/suppliers";
-import { MapperError, confirmMappings, keepSeparate, mergeProducts, saveMapping, undoProductMerge, type MappingEdit } from "@/server/mapper";
+import { isVariantBy } from "@/lib/catalog/macro";
+import { MapperError, confirmMappings, confirmVariants, keepSeparate, mergeProducts, saveMapping, undoProductMerge, type MappingEdit } from "@/server/mapper";
 import {
   benchmarkInput,
   candidateInput,
@@ -948,6 +949,19 @@ export async function mergeProductsAction(productIds: string[], name: string): P
   const t = await getT();
   try {
     await mergeProducts(await getDb(), productIds, name, t);
+    refresh();
+    return { ok: true };
+  } catch (err) {
+    return mapperFailed(t, err);
+  }
+}
+
+/** Several products are versions of one: filed under the same macro product, each kept as it is. */
+export async function confirmVariantsAction(productIds: string[], name: string, variantBy: string): Promise<SimpleResult> {
+  const t = await getT();
+  if (!isVariantBy(variantBy)) return { ok: false, error: t("Say what changes between them.") };
+  try {
+    await confirmVariants(await getDb(), productIds, name, variantBy, t);
     refresh();
     return { ok: true };
   } catch (err) {

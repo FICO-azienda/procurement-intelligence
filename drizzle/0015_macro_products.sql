@@ -1,0 +1,1 @@
+ALTER TABLE "product_families" ADD COLUMN "variant_by" text;

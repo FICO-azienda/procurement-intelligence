@@ -27,6 +27,7 @@ import { classify } from "./classify";
 import { cleanName } from "./clean";
 import { separate, type DescriptionParts } from "./identity";
 import { KIND_LABEL, isProductKind, isStrategic, type ProductKind } from "./kinds";
+import { macroGroups, type MacroGroup } from "./macro";
 import { differByOneWord } from "./propose";
 import { matchTokens, numbersOf, sameNumbers } from "./specs";
 import { allSubs, categorize, subByKey, type WordHit } from "./taxonomy";
@@ -45,6 +46,8 @@ export interface MapInput {
   category: string | null;
   subcategory: string | null;
   family: string | null;
+  /** The family is a macro product the user confirmed (its versions differ by something they named). */
+  macro?: boolean;
   variant: string | null;
   /** Who it is bought from, largest spend first. */
   suppliers: { id: string; name: string }[];
@@ -136,6 +139,8 @@ export interface FamilySummary {
 export interface MapAnalysis {
   products: Mapping[];
   duplicates: DuplicateGroup[];
+  /** Articles that may be versions of one product: proposed, never grouped by themselves (lib/catalog/macro.ts). */
+  macros: MacroGroup[];
   cards: ReviewCard[];
   families: FamilySummary[];
   totals: {
@@ -170,6 +175,8 @@ export function toMapInput(
   aliases: { productId: string; alias: string; supplierId: string | null; supplierSku: string | null; ean: string | null }[],
   familyName: Map<string, string>,
   asOf: string,
+  /** The families the user confirmed as macro products. */
+  macroFamilies: Set<string> = new Set(),
 ): MapInput[] {
   const supplierName = new Map(data.suppliers.map((s) => [s.id, s.name]));
   const start = windowStart(asOf);
@@ -187,6 +194,7 @@ export function toMapInput(
       category: p.category,
       subcategory: p.subcategory ?? null,
       family: p.familyId ? (familyName.get(p.familyId) ?? null) : null,
+      macro: !!p.familyId && macroFamilies.has(p.familyId),
       variant: p.variant ?? null,
       suppliers: [...bySupplier.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => ({ id, name: supplierName.get(id) ?? "" })),
       aliases: aliases.filter((a) => a.productId === p.id).map((a) => ({ text: a.alias, supplierId: a.supplierId, supplierSku: a.supplierSku, ean: a.ean })),
@@ -418,6 +426,22 @@ function compose(r: Reading, keepCode: boolean): { name: string; variant: string
 
 // ---------------- The catalogue ----------------
 
+/** Units and markers that add nothing to what a description names: "30 CL" and "30", "ART. LC" and "LC". */
+const LOOSE_NOISE = new Set(["cl", "ml", "cc", "lt", "mm", "cm", "mt", "kg", "gr", "pz", "pcs", "art", "articolo", "cod", "codice", "per", "di", "da", "x"]);
+/** The same words whatever their order, a word cut short ("cont" for "contenitore") standing for the whole one. */
+function sameWords(a: string[], b: string[]): boolean {
+  if (a.length !== b.length || a.length < 2) return false;
+  const left = [...b];
+  const take = (test: (x: string) => boolean) => {
+    const i = left.findIndex(test);
+    if (i >= 0) left.splice(i, 1);
+    return i >= 0;
+  };
+  const rest = a.filter((tok) => !take((x) => x === tok));
+  const short = (x: string, y: string) => /^[a-z]{3,}$/.test(x) && y.length > x.length && y.startsWith(x);
+  return rest.every((tok) => take((x) => short(tok, x) || short(x, tok)));
+}
+
 const samePrice = (a: number | null, b: number | null) => a != null && b != null && Math.abs(a - b) <= Math.max(Math.abs(a), Math.abs(b)) * 0.01;
 
 class Sets {
@@ -610,6 +634,8 @@ export function mapCatalogue(input: MapInput[], options: MapOptions = {}): MapAn
       spec: normalizeKey(withoutPackNotes(r.base)),
       numbers: numbersOf(r.base),
       tokens: matchTokens(r.base),
+      // Every word and letter counts here ("C5" is not "C5A"); only units and markers are left out.
+      loose: normalizeKey(r.base).replace(/(\d)([a-z])/g, "$1 $2").replace(/([a-z])(\d)/g, "$1 $2").split(" ").filter((tok) => tok && !/^\d+$/.test(tok) && !LOOSE_NOISE.has(tok)),
     };
   });
   // A code written on three or more products is the supplier's code for a whole range, not for one article.
@@ -645,6 +671,8 @@ export function mapCatalogue(input: MapInput[], options: MapOptions = {}): MapAn
       else if (a.spec === b.spec && (sharedCode || price)) link(ida, idb, "possible", t("Same product and sizes: only the packing note is different"), price ? "merge" : null);
       else if (ca.size > 0 && cb.size > 0 && !sharedCode) continue;
       else if (sameNumbers(a.numbers, b.numbers) && differByOneWord(a.tokens, b.tokens)) link(ida, idb, "possible", t("Almost the same description: one word is written differently"), price ? "merge" : null);
+      // "CONT LC TR 30", "LC TR CONTENITORE 30 CL": the order of the words, a unit left out and an abbreviation do not make another product.
+      else if (sameNumbers(a.numbers, b.numbers) && sameWords(a.loose, b.loose)) link(ida, idb, "possible", t("The same words and sizes, in another order or abbreviated"), price ? "merge" : null);
     }
   }
   const linksOf = groupBy(links, (l) => sets.find(l.a));
@@ -740,9 +768,30 @@ export function mapCatalogue(input: MapInput[], options: MapOptions = {}): MapAn
     return { share, products: n, reached: spend > 0 ? running / spend : 0 };
   });
 
+  // ---- 8. Articles that may be versions of one product: the same supplier, unit and family, names that begin alike.
+  const byId = new Map(readings.map((r) => [r.p.id, r.p]));
+  const macros = macroGroups(
+    mappings
+      .filter((m) => !inDuplicates.has(m.productId) && m.group !== "unclassified" && m.supplierId && (m.subcategory ?? m.category))
+      .map((m) => ({
+        id: m.productId,
+        name: m.name,
+        family: m.family,
+        filed: !!byId.get(m.productId)!.macro,
+        scope: `${m.supplierId}|${byId.get(m.productId)!.unit}|${normalizeKey(m.subcategory ?? m.category)}`,
+        supplierId: m.supplierId,
+        supplierName: m.supplierName,
+        unit: byId.get(m.productId)!.unit,
+        price: byId.get(m.productId)!.price,
+        spend: m.spend,
+      })),
+    { separated, t },
+  );
+
   return {
     products: mappings,
     duplicates,
+    macros,
     cards,
     families,
     totals: {

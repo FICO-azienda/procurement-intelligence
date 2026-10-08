@@ -106,7 +106,8 @@ export function identityOf(text: string | null | undefined, seller: SellerContex
   const parts = separate(text, seller);
   const body = withoutPackNotes(parts.body).replace(WEIGHT, " ");
   const hit = categorize(body);
-  const words = [...new Set(matchTokens(body).filter((tok) => /^[a-z]+$/.test(tok) && tok.length >= 3 && !FILLER.has(tok) && !UNITS.has(tok) && !categorize(tok)).map(stem))].sort();
+  // Short codes count too: "LC TR" and "LC A B V" are not the same article, and "C12" is not "B12".
+  const words = [...new Set(matchTokens(body).filter((tok) => /^[a-z]+$/.test(tok) && !FILLER.has(tok) && !UNITS.has(tok) && !categorize(tok)).map(stem))].sort();
   return { subKey: hit?.sub.key ?? null, numbers: numbersOf(body), words, codes: parts.codes };
 }
 

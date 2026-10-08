@@ -433,6 +433,16 @@ Chi ha venduto non è cosa è stato comprato, e come il fornitore chiama la merc
 - All'import, lo stesso prodotto scritto da un altro fornitore viene proposto come collegamento, mai collegato da solo; il codice del fornitore già visto viene riconosciuto anche scritto in un altro modo.
 - Unire due prodotti non cancella nulla e si può annullare.
 
+### Macro prodotto e varianti
+
+Struttura: categoria › famiglia di prodotto › **macro prodotto** › variante › prodotto del fornitore › descrizione in fattura.
+
+- Articoli dello stesso fornitore, nella stessa unità, con nomi che cominciano allo stesso modo vengono proposti come versioni di un solo prodotto: "Contenitori per ceri 30/2" in TR, Bi e BLU.
+- Il prezzo uguale è un indizio a favore, mai una prova: due nomi diversi allo stesso prezzo non vengono mai collegati.
+- Quello che cambia (colore, misure, capacità…) viene detto solo se le parole lo dicono; le abbreviazioni vengono mostrate come sono.
+- Decidi tu, con tre risposte: **Sono varianti** (restano prodotti separati sotto un macro prodotto, e ti viene chiesto cosa cambia), **Unisci** (un solo prodotto scritto in più modi, annullabile), **Mantieni separati**.
+- Lo stesso prodotto scritto in un altro ordine, senza unità o abbreviato ("CONT LC TR 30", "LC TR CONTENITORE 30 CL") viene proposto come possibile duplicato, non creato come nuovo.
+
 Pagina **Pulizia prodotti** (`/products/review`). Codice: `src/lib/catalog/identity.ts`, `src/lib/catalog/mapper.ts`, `src/server/mapper.ts`.
 
 ## Strategia di sourcing (Sourcing Mix)

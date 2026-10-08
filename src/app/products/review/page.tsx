@@ -7,6 +7,7 @@ import { TAXONOMY, subByKey } from "@/lib/catalog/taxonomy";
 import { getMapAnalysis, getSpend, getT } from "@/lib/data";
 import * as f from "@/lib/format";
 import { getDb } from "@/db";
+import { MacroReview } from "@/components/catalog/macro-review";
 import { MergesMade } from "@/components/catalog/merges";
 import { CLEANUP_TOP, ReadingTable } from "@/components/catalog/reading-table";
 import { readProductMerges } from "@/server/mapper";
@@ -82,6 +83,25 @@ export default async function ProductReviewPage() {
         meta={t("An invoice says who sold it and how the seller calls it; what the product is has to be read out of it. We read it for every product: you confirm what is sure, look at what is in doubt, and say what nothing on file can tell.")}
       />
       <ReadingTable rows={analysis.products.filter((m) => !m.mapped)} top={CLEANUP_TOP} groups={analysis.totals.groups} t={t} />
+      <MacroReview
+        products={analysis.macros.reduce((n, g) => n + g.members.length, 0)}
+        macros={analysis.macros.map((g) => ({
+          key: g.key,
+          name: g.name,
+          supplier: g.supplierName,
+          unit: g.unit,
+          spend: g.spend,
+          suggestion: g.suggestion,
+          confidence: g.confidence,
+          differs: g.differs,
+          reason: g.reason,
+          members: g.members.map((x) => {
+            const m = byId.get(x.productId)!;
+            return { id: x.productId, name: x.name, variant: x.variant, price: x.price, spend: x.spend, original: m.originals.find((o) => o.toLowerCase() !== x.name.toLowerCase()) ?? null };
+          }),
+          leftOut: g.leftOut.map((x) => ({ name: x.name, price: x.price })),
+        }))}
+      />
       <MapperReview review={review} />
       <MergesMade merges={merges.map((m) => ({ id: m.id, kept: m.productName, merged: m.mergedName, date: f.date(m.createdAt.slice(0, 10)) }))} />
     </>

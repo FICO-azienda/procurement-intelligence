@@ -10,6 +10,7 @@ import type { DB } from "@/db";
 import { importItems, marketBenchmarks, productAliases, productDataFields, productDocuments, productFamilies, productMerges, productSeparations, products, purchases, quotes, researchEvidence, researchRuns, supplierCandidates, supplierProducts } from "@/db/schema";
 import { todayISO } from "@/lib/analytics";
 import { isProductKind, isStrategic, type ProductKind } from "@/lib/catalog/kinds";
+import { variantOf, type VariantBy } from "@/lib/catalog/macro";
 import { mapCatalogue, toMapInput, type MapAnalysis, type MapInput, type Mapping } from "@/lib/catalog/mapper";
 import { subByKey } from "@/lib/catalog/taxonomy";
 import { readDataset, readLearning } from "@/lib/data";
@@ -18,7 +19,7 @@ import { normalizeKey, productKey, tidy } from "@/lib/import/normalize/text";
 
 export async function readMapInput(db: DB, asOf = todayISO()): Promise<{ input: MapInput[]; separated: [string, string][] }> {
   const [data, learning, families, pairs] = await Promise.all([readDataset(db), readLearning(db), db.select().from(productFamilies), db.select().from(productSeparations)]);
-  return { input: toMapInput(data, learning.productAliases, new Map(families.map((f) => [f.id, f.name])), asOf), separated: pairs.map((x) => [x.productA, x.productB]) };
+  return { input: toMapInput(data, learning.productAliases, new Map(families.map((f) => [f.id, f.name])), asOf, new Set(families.filter((f) => f.variantBy).map((f) => f.id))), separated: pairs.map((x) => [x.productA, x.productB]) };
 }
 
 export async function analyzeCatalogue(db: DB, t: T = en, answers?: Map<string, string>): Promise<MapAnalysis> {
@@ -202,6 +203,37 @@ export async function undoProductMerge(db: DB, mergeId: string, t: T = en): Prom
   const still = await db.select({ id: productMerges.id }).from(productMerges).where(and(eq(productMerges.productId, m.productId), isNull(productMerges.undoneAt)));
   if (kept && !still.length && kept.name === m.nameAfter && m.nameBefore !== m.nameAfter) await db.update(products).set({ name: m.nameBefore, updatedAt: new Date() }).where(eq(products.id, m.productId));
   return { productId: m.mergedId };
+}
+
+/**
+ * "They are versions of one product": the products stay apart, each with its
+ * own purchases and price, and are filed under the same macro product (their
+ * family) with what tells each one apart as its variant. What changes between
+ * them — size, colour, material… — is what the user said, kept on the family.
+ * Nothing is merged and no name is changed.
+ */
+export async function confirmVariants(db: DB, productIds: string[], name: string, variantBy: VariantBy, t: T = en): Promise<{ familyId: string }> {
+  const ids = [...new Set(productIds)];
+  const macro = tidy(name);
+  if (ids.length < 2 || !macro) throw new MapperError(t("A macro product needs a name and at least two products."));
+  const analysis = await analyzeCatalogue(db, t);
+  const members = ids.map((id) => analysis.products.find((m) => m.productId === id));
+  if (members.some((m) => !m)) throw new Error("Unknown product");
+  const first = members[0]!;
+  const all = await db.select().from(productFamilies);
+  let family = all.find((x) => normalizeKey(x.name) === normalizeKey(macro) && normalizeKey(x.subcategory) === normalizeKey(first.subcategory));
+  if (family) await db.update(productFamilies).set({ variantBy, updatedAt: new Date() }).where(eq(productFamilies.id, family.id));
+  else [family] = await db.insert(productFamilies).values({ name: macro, category: first.category, subcategory: first.subcategory, variantBy }).returning();
+  const group = analysis.macros.find((g) => ids.every((id) => g.members.some((x) => x.productId === id)));
+  for (const m of members as Mapping[]) {
+    const variant = group ? (group.members.find((x) => x.productId === m.productId)!.variant ?? null) : variantOf(m.name, macro);
+    // A product nobody had confirmed yet is confirmed here, with the name it was read with: saying what it is a version of says what it is.
+    if (m.mapped) await db.update(products).set({ familyId: family.id, variant, updatedAt: new Date() }).where(eq(products.id, m.productId));
+    else await write(db, { ...m, family: macro, variant }, m.name);
+  }
+  // Versions of one product are not the same product: they are not proposed as duplicates again.
+  await keepSeparate(db, ids);
+  return { familyId: family.id };
 }
 
 /** "They are different products": remembered pair by pair, so the question is not asked again. */

@@ -255,7 +255,7 @@ export const getSpend = cache(async (): Promise<CompanySpend> => companySpend(aw
 export const getFamilies = cache(async () => {
   await connection();
   const rows = await (await getDb()).select().from(productFamilies).orderBy(productFamilies.name);
-  return new Map(rows.map((f) => [f.id, { id: f.id, name: f.name, category: f.category, subcategory: f.subcategory }]));
+  return new Map(rows.map((f) => [f.id, { id: f.id, name: f.name, category: f.category, subcategory: f.subcategory, variantBy: f.variantBy }]));
 });
 
 /** The Product Mapper's reading of the catalogue: what each product is, families, possible duplicates, what to ask. */
@@ -263,7 +263,8 @@ export const getMapAnalysis = cache(async (): Promise<MapAnalysis> => {
   const [data, learning, families, t] = await Promise.all([getDataset(), getLearning(), getFamilies(), getT()]);
   const pairs = await (await getDb()).select().from(productSeparations);
   const names = new Map([...families.values()].map((f) => [f.id, f.name]));
-  return mapCatalogue(toMapInput(data, learning.productAliases, names, todayISO()), { separated: pairs.map((x) => [x.productA, x.productB]), t });
+  const macros = new Set([...families.values()].filter((f) => f.variantBy).map((f) => f.id));
+  return mapCatalogue(toMapInput(data, learning.productAliases, names, todayISO(), macros), { separated: pairs.map((x) => [x.productA, x.productB]), t });
 });
 
 /** The Overview page's decision summaries: one pass over the intelligence, once per request. */
