@@ -42,3 +42,6 @@ next-env.d.ts
 
 # local database
 /.data
+
+# documents made for the company from its real data (spreadsheets, reports): never published
+/documenti/
