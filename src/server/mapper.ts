@@ -10,10 +10,12 @@ import type { DB } from "@/db";
 import { importItems, marketBenchmarks, productAliases, productDataFields, productDocuments, productFamilies, productMerges, productSeparations, products, purchases, quotes, researchEvidence, researchRuns, supplierCandidates, supplierProducts } from "@/db/schema";
 import { todayISO } from "@/lib/analytics";
 import { isProductKind, isStrategic, type ProductKind } from "@/lib/catalog/kinds";
+import { apartAmong, boughtSameDay, pairKey, type SameDay } from "@/lib/catalog/apart";
 import { variantOf, type VariantBy } from "@/lib/catalog/macro";
 import { mapCatalogue, toMapInput, type MapAnalysis, type MapInput, type Mapping } from "@/lib/catalog/mapper";
 import { subByKey } from "@/lib/catalog/taxonomy";
 import { readDataset, readLearning } from "@/lib/data";
+import * as f from "@/lib/format";
 import { en, type T } from "@/lib/i18n";
 import { normalizeKey, productKey, tidy } from "@/lib/import/normalize/text";
 
@@ -119,6 +121,13 @@ export async function mergeProducts(db: DB, productIds: string[], name: string, 
   const rows = await db.select().from(products).where(inArray(products.id, ids));
   if (rows.length < 2 || rows.length !== ids.length || rows.some((r) => r.mergedIntoId)) throw new Error("Nothing to merge");
   if (new Set(rows.map((r) => r.unit)).size > 1) throw new MapperError(t("These products are bought in different units: they can't be merged."));
+  // One supplier, one day, two prices: two products. No resemblance overrules what the invoice says.
+  const lines = await db.select({ productId: purchases.productId, supplierId: purchases.supplierId, date: purchases.date, price: purchases.unitPrice }).from(purchases).where(inArray(purchases.productId, ids));
+  const apart = apartAmong(ids, boughtSameDay(lines.map((x) => ({ ...x, price: Number(x.price) }))));
+  if (apart?.evidence.different) {
+    const name = (id: string) => rows.find((r) => r.id === id)!.name;
+    throw new MapperError(t("“{a}” and “{b}” were billed by the same supplier on the same day at different prices ({date}): they are different products and cannot be merged. If they are versions of one product, file them as variants.", { a: name(apart.a), b: name(apart.b), date: f.date(apart.evidence.date) }));
+  }
   const analysis = await analyzeCatalogue(db, t);
   const ordered = ids.map((id) => rows.find((r) => r.id === id)!);
   const [keep, ...others] = ordered;
@@ -170,15 +179,36 @@ export interface ProductMergeRow {
   mergedId: string;
   mergedName: string;
   createdAt: string;
+  /**
+   * What the invoices say against the merge: lines that came with the merged product and lines of the product it was
+   * merged into, billed by one supplier on the same day. At different prices they are two products.
+   */
+  sameDay: SameDay | null;
 }
 
-/** The merges in force, the latest first: what can be taken back. */
+/** The merges in force, the latest first: what can be taken back — each checked against what the invoices say. */
 export async function readProductMerges(db: DB): Promise<ProductMergeRow[]> {
   const [merges, all] = await Promise.all([db.select().from(productMerges).where(isNull(productMerges.undoneAt)).orderBy(desc(productMerges.createdAt)), db.select({ id: products.id, name: products.name, mergedIntoId: products.mergedIntoId }).from(products)]);
   const byId = new Map(all.map((p) => [p.id, p]));
-  return merges
-    .filter((m) => byId.get(m.mergedId)?.mergedIntoId === m.productId)
-    .map((m) => ({ id: m.id, productId: m.productId, productName: byId.get(m.productId)?.name ?? "", mergedId: m.mergedId, mergedName: byId.get(m.mergedId)?.name ?? "", createdAt: m.createdAt.toISOString() }));
+  const live = merges.filter((m) => byId.get(m.mergedId)?.mergedIntoId === m.productId);
+  const kept = [...new Set(live.map((m) => m.productId))];
+  const lines = kept.length ? await db.select({ id: purchases.id, productId: purchases.productId, supplierId: purchases.supplierId, date: purchases.date, price: purchases.unitPrice }).from(purchases).where(inArray(purchases.productId, kept)) : [];
+  return live.map((m) => {
+    // The lines as they were before the merge: the ones that moved stand for the merged product, the rest for the other.
+    const moved = new Set(m.moved.purchases ?? []);
+    const own = lines.filter((x) => x.productId === m.productId).map((x) => ({ productId: moved.has(x.id) ? m.mergedId : m.productId, supplierId: x.supplierId, date: x.date, price: Number(x.price) }));
+    return { id: m.id, productId: m.productId, productName: byId.get(m.productId)?.name ?? "", mergedId: m.mergedId, mergedName: byId.get(m.mergedId)?.name ?? "", createdAt: m.createdAt.toISOString(), sameDay: boughtSameDay(own).get(pairKey(m.mergedId, m.productId)) ?? null };
+  });
+}
+
+/** Several merges taken back at once: the ones the invoices contradict, on the user's word. */
+export async function undoProductMerges(db: DB, mergeIds: string[], t: T = en): Promise<{ undone: number }> {
+  let undone = 0;
+  for (const id of [...new Set(mergeIds)]) {
+    await undoProductMerge(db, id, t);
+    undone++;
+  }
+  return { undone };
 }
 
 /**

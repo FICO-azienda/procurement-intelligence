@@ -443,6 +443,10 @@ Struttura: categoria › famiglia di prodotto › **macro prodotto** › variant
 - Decidi tu, con tre risposte: **Sono varianti** (restano prodotti separati sotto un macro prodotto, e ti viene chiesto cosa cambia), **Unisci** (un solo prodotto scritto in più modi, annullabile), **Mantieni separati**.
 - Lo stesso prodotto scritto in un altro ordine, senza unità o abbreviato ("CONT LC TR 30", "LC TR CONTENITORE 30 CL") viene proposto come possibile duplicato, non creato come nuovo.
 
+### Stesso fornitore, stesso giorno, prezzi diversi
+
+Due descrizioni fatturate dallo stesso fornitore lo stesso giorno a prezzi diversi sono **sempre due prodotti**, per quanto si somiglino. La regola vale ovunque: non vengono proposti come duplicati, non si possono unire (nemmeno dalle schede dei macro prodotti: restano possibili solo come varianti), all'import non finiscono sotto lo stesso prodotto, e le unioni già fatte che la contraddicono vengono segnalate in cima alla pagina con il pulsante per annullarle.
+
 Pagina **Pulizia prodotti** (`/products/review`). Codice: `src/lib/catalog/identity.ts`, `src/lib/catalog/mapper.ts`, `src/server/mapper.ts`.
 
 ## Strategia di sourcing (Sourcing Mix)

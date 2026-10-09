@@ -17,7 +17,7 @@ import { readDataset, readLearning } from "@/lib/data";
 import { productKey } from "@/lib/import/normalize/text";
 import { decisionFor } from "@/lib/intel/decision";
 import { analyze } from "@/lib/intel/engine";
-import { analyzeCatalogue, confirmMappings, confirmVariants, keepSeparate, mergeProducts, mergedInto, readProductMerges, saveMapping, undoProductMerge } from "./mapper";
+import { analyzeCatalogue, confirmMappings, confirmVariants, keepSeparate, mergeProducts, mergedInto, readProductMerges, saveMapping, undoProductMerge, undoProductMerges } from "./mapper";
 
 let db: DB;
 const ids: Record<string, string> = {};
@@ -239,5 +239,33 @@ describe("versions of one product", () => {
     const again = (await analyzeCatalogue(db)).macros.find((g) => g.name === "Contenitori per ceri 30/2")!;
     expect(again.members).toHaveLength(4);
     await expect(confirmVariants(db, [ids.v0], "Contenitori per ceri 30/2", "colour")).rejects.toThrow("at least two products");
+  });
+});
+
+describe("one supplier, one day, two prices", () => {
+  it("are two products: the merge is refused, and one made before is found and taken back", async () => {
+    await product("lam", "LAMPADE Contenitori per ceri", ids.erre, "component", "pcs", [[1000, 0.1423]]);
+    await product("lamtr", "LAMPADE TR. Contenitori per ceri", ids.erre, "component", "pcs", [[1000, 0.1543]]);
+    await expect(mergeProducts(db, [ids.lam, ids.lamtr], "Contenitori per ceri LAMPADE")).rejects.toThrow("different products and cannot be merged");
+    expect((await row("lamtr")).mergedIntoId).toBeNull();
+
+    // A merge the invoices did not contradict when it was made: the same day, the same price.
+    await product("lc0", "ART. LX Contenitori per ceri", ids.erre, "component", "pcs", [[1000, 0.0752]]);
+    await product("lc1", "ART. LX TR Contenitori per ceri", ids.erre, "component", "pcs", [[1000, 0.0752]]);
+    await mergeProducts(db, [ids.lc0, ids.lc1], "Contenitori per ceri LX");
+    const before = (await readProductMerges(db)).find((m) => m.mergedId === ids.lc1)!;
+    expect(before.sameDay).toMatchObject({ different: false });
+    // A later invoice bills the two descriptions on one day at two prices: the merge is now contradicted.
+    await db.insert(schema.purchases).values([
+      { productId: ids.lc0, supplierId: ids.erre, date: "2026-09-30", quantity: "1000", unit: "pcs", unitPrice: "0.0760", totalAmount: "76", originalDescription: "ART. LX CONTENITORI PER CERI", source: "csv" },
+    ]);
+    await db.update(schema.purchases).set({ date: "2026-09-30", unitPrice: "0.0850" }).where(eq(schema.purchases.id, (await db.select().from(schema.productMerges).where(eq(schema.productMerges.mergedId, ids.lc1)))[0].moved.purchases[0]));
+    const wrong = (await readProductMerges(db)).filter((m) => m.sameDay?.different);
+    expect(wrong.map((m) => m.mergedId)).toEqual([ids.lc1]);
+    expect(wrong[0].sameDay).toMatchObject({ date: "2026-09-30", low: 0.076, high: 0.085 });
+    expect(await undoProductMerges(db, wrong.map((m) => m.id))).toEqual({ undone: 1 });
+    expect((await row("lc1")).mergedIntoId).toBeNull();
+    expect(await db.select().from(schema.purchases).where(eq(schema.purchases.productId, ids.lc1))).toHaveLength(1);
+    expect((await readProductMerges(db)).some((m) => m.mergedId === ids.lc1)).toBe(false);
   });
 });

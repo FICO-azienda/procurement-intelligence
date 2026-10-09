@@ -45,6 +45,7 @@ function toLines(items: Item[], supplierName: Map<string, string>): CatalogLine[
       unit: normalizeUnit(d.unit),
       unitPrice: d.unitPrice,
       amount: fx != null ? amount * fx : 0,
+      date: d.date,
     });
   }
   return lines;

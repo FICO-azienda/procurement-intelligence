@@ -17,6 +17,7 @@
 import { codeKey, tidy } from "../import/normalize/text";
 import { ratio } from "../import/match/similarity";
 import { en, type Msg, type Params, type T } from "../i18n";
+import { SAME_PRICE } from "./apart";
 import { cleanName } from "./clean";
 import { classify, dominantKind } from "./classify";
 import { KIND_GROUP_LABEL, isStrategic, type ProductKind } from "./kinds";
@@ -38,6 +39,8 @@ export interface CatalogLine {
   unitPrice: number | null;
   /** What the line cost, in EUR (0 when not known). */
   amount: number;
+  /** The day of the document: two descriptions billed on one day at two prices are two products. */
+  date?: string | null;
 }
 
 /** One description from one supplier, with every line that uses it. */
@@ -56,6 +59,8 @@ export interface Mention {
   unit: string | null;
   /** Typical unit price (median). */
   price: number | null;
+  /** Each day it was billed, and at what price. */
+  days: { date: string; price: number }[];
   lines: number;
   amount: number;
   itemIds: string[];
@@ -156,6 +161,7 @@ function buildMentions(lines: CatalogLine[]): Mention[] {
       eans: set((l) => l.ean),
       unit: mostCommon(ls.map((l) => l.unit).filter((u): u is string => !!u)),
       price: median(ls.map((l) => l.unitPrice).filter((p): p is number => p != null)),
+      days: ls.filter((l) => l.date && l.unitPrice != null && l.unitPrice > 0).map((l) => ({ date: l.date!, price: l.unitPrice! })),
       lines: ls.length,
       amount: ls.reduce((s, l) => s + l.amount, 0),
       itemIds: ls.map((l) => l.id),
@@ -308,6 +314,8 @@ export function proposeProducts(lines: CatalogLine[], options: ProposeOptions = 
         sure.join(a.key, b.key);
         why.set(sure.find(a.key), reason);
       };
+      // One supplier, one day, two prices: two products, whatever else they share. Neither joined nor asked about.
+      if (sameSupplier && a.days.some((x) => b.days.some((y) => x.date === y.date && Math.abs(x.price - y.price) > Math.min(x.price, y.price) * SAME_PRICE))) continue;
       if (sharedOwn) join("Same code of ours on the supplier's invoice");
       else if (sharedEan) join("Same barcode");
       else if (sharedCode && numbers) join("Same supplier code, same sizes");

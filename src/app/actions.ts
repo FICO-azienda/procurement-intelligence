@@ -44,7 +44,7 @@ import { isJudgementKey, isLevel } from "@/lib/negotiation/engine";
 import { keepEstimateHistory, saveJudgement } from "@/server/negotiation";
 import { SupplierMergeError, autoMergeSuppliers, canonicalSupplierId, keepSuppliersResolved, keepSuppliersSeparate, matchOf, mergeSuppliers, undoSupplierMerge } from "@/server/suppliers";
 import { isVariantBy } from "@/lib/catalog/macro";
-import { MapperError, confirmMappings, confirmVariants, keepSeparate, mergeProducts, saveMapping, undoProductMerge, type MappingEdit } from "@/server/mapper";
+import { MapperError, confirmMappings, confirmVariants, keepSeparate, mergeProducts, saveMapping, undoProductMerge, undoProductMerges, type MappingEdit } from "@/server/mapper";
 import {
   benchmarkInput,
   candidateInput,
@@ -974,6 +974,18 @@ export async function undoProductMergeAction(mergeId: string): Promise<SimpleRes
   const t = await getT();
   try {
     await undoProductMerge(await getDb(), mergeId, t);
+    refresh();
+    return { ok: true };
+  } catch (err) {
+    return mapperFailed(t, err);
+  }
+}
+
+/** Several merges taken back together: the ones the invoices say put two products in one. */
+export async function undoProductMergesAction(mergeIds: string[]): Promise<SimpleResult> {
+  const t = await getT();
+  try {
+    await undoProductMerges(await getDb(), mergeIds, t);
     refresh();
     return { ok: true };
   } catch (err) {

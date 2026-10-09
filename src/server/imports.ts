@@ -7,6 +7,7 @@
  * Functions take a `db` handle so they run the same in the app and in tests.
  * Server actions (app/import/actions.ts) are thin wrappers around these.
  */
+import { keepApart } from "@/lib/import/match/apart";
 import { createHash } from "node:crypto";
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import type { DB } from "@/db";
@@ -431,7 +432,7 @@ function matchItem(row: ItemState, ctx: MatchContext, docText?: string) {
 
 async function insertItems(db: DB, sessionId: string, recordType: RecordType, drafts: DraftItem[], doc?: DocumentExtraction) {
   const { ctx } = await matchContext(db);
-  const rows = drafts.map((draft, index) => {
+  const matched = drafts.map((draft, index) => {
     const data: CurrentData = { ...stripIssues(draft.extracted), corrected: [] };
     const state: ItemState = {
       id: "",
@@ -451,6 +452,8 @@ async function insertItems(db: DB, sessionId: string, recordType: RecordType, dr
     };
     return { ...state, ...matchItem(state, ctx, doc?.fullText), raw: draft.raw, index };
   });
+  // Two lines of one supplier on one day at two prices are two products: never matched to the same one unseen.
+  const rows = keepApart(matched);
   if (rows.length) {
     await db.insert(importItems).values(
       rows.map((r) => ({
@@ -508,7 +511,7 @@ export async function refreshSession(db: DB, sessionId: string, opts: { rematch?
   const all = await db.select().from(importItems).where(eq(importItems.sessionId, sessionId));
   const open = all.filter((r) => r.status === "ready" || r.status === "attention");
   let states = open.map(toState);
-  if (opts.rematch) states = states.map((s) => ({ ...s, ...matchItem(s, ctx) }));
+  if (opts.rematch) states = keepApart(states.map((s) => ({ ...s, ...matchItem(s, ctx) })));
   const results = evaluateItems(states, { data });
 
   const before = new Map(open.map((r) => [r.id, r]));

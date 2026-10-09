@@ -22,6 +22,7 @@
 import { basePrice, baseTotal, isPriced, windowStart, type Dataset } from "../analytics";
 import { codeKey, normalizeKey, productTokens } from "../import/normalize/text";
 import { en, type Msg, type T } from "../i18n";
+import { boughtSameDay } from "./apart";
 import { withoutPackNotes } from "./attributes";
 import { classify } from "./classify";
 import { cleanName } from "./clean";
@@ -57,6 +58,8 @@ export interface MapInput {
   spend: number;
   /** Current unit price, EUR. */
   price: number | null;
+  /** Every priced purchase: who, when and at what unit price. What was billed on the same day at two prices is two products. */
+  days?: { supplierId: string; date: string; price: number }[];
 }
 
 export interface Mapping {
@@ -200,6 +203,7 @@ export function toMapInput(
       aliases: aliases.filter((a) => a.productId === p.id).map((a) => ({ text: a.alias, supplierId: a.supplierId, supplierSku: a.supplierSku, ean: a.ean })),
       spend: own.filter((x) => x.date > start).reduce((s, x) => s + (isPriced(x) ? baseTotal(x) : 0), 0),
       price: last ? basePrice(last) : null,
+      days: own.filter(isPriced).map((x) => ({ supplierId: x.supplierId, date: x.date, price: basePrice(x) })),
     };
   });
 }
@@ -643,6 +647,8 @@ export function mapCatalogue(input: MapInput[], options: MapOptions = {}): MapAn
   for (const f of facts) for (const [supplierId, codes] of f.codes) for (const code of codes) codeUse.set(`${supplierId}|${code}`, (codeUse.get(`${supplierId}|${code}`) ?? 0) + 1);
   const specific = (f: (typeof facts)[number]) => new Set([...f.codes].flatMap(([supplierId, codes]) => [...codes].map((code) => `${supplierId}|${code}`)).filter((k) => (codeUse.get(k) ?? 0) <= 2));
 
+  // One supplier, one day, two prices: two products, however alike the names. Such a pair is never proposed as one.
+  const sameDay = boughtSameDay(readings.flatMap((r) => (r.p.days ?? []).map((d) => ({ productId: r.p.id, ...d }))));
   const sets = new Sets();
   const links: { a: string; level: "high" | "possible"; reason: string; suggestion: "merge" | null }[] = [];
   const link = (a: string, b: string, level: "high" | "possible", reason: string, suggestion: "merge" | null) => {
@@ -652,7 +658,7 @@ export function mapCatalogue(input: MapInput[], options: MapOptions = {}): MapAn
   for (let i = 0; i < facts.length; i++) {
     for (let j = i + 1; j < facts.length; j++) {
       const [a, b] = [facts[i], facts[j]];
-      if (a.r.p.unit !== b.r.p.unit || separated.has(pairKey(a.r.p.id, b.r.p.id))) continue;
+      if (a.r.p.unit !== b.r.p.unit || separated.has(pairKey(a.r.p.id, b.r.p.id)) || sameDay.get(pairKey(a.r.p.id, b.r.p.id))?.different) continue;
       const [ida, idb] = [a.r.p.id, b.r.p.id];
       const price = samePrice(a.r.p.price, b.r.p.price);
       if ([...a.eans].some((e) => b.eans.has(e))) {
@@ -785,7 +791,7 @@ export function mapCatalogue(input: MapInput[], options: MapOptions = {}): MapAn
         price: byId.get(m.productId)!.price,
         spend: m.spend,
       })),
-    { separated, t },
+    { separated, sameDay, t },
   );
 
   return {

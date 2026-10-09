@@ -74,6 +74,27 @@ export const identity = {
   "Different prices: not one article written in several ways. What changes is an abbreviation we cannot read.": "Prezzi diversi: non è un solo articolo scritto in più modi. Quello che cambia è un'abbreviazione che non possiamo leggere.",
   "The same words and sizes, in another order or abbreviated": "Stesse parole e misure, in un altro ordine o abbreviate",
 
+  // ---- One supplier, one day, two prices: two products
+  "They are the same article": "Sono lo stesso articolo",
+  "Merging is not offered: the supplier billed them on the same day at different prices, so they are different products.": "L'unione non è disponibile: il fornitore li ha fatturati lo stesso giorno a prezzi diversi, quindi sono prodotti diversi.",
+  "{n} product becomes one.": "{n} prodotto diventa uno.",
+  "{n} products become one: their purchases go under a single product and their prices are read as one price over time. Right only if they are the very same article written in several ways — not for colours, sizes or versions.": "{n} prodotti diventano uno: i loro acquisti vanno sotto un solo prodotto e i loro prezzi vengono letti come un unico prezzo nel tempo. Giusto solo se sono proprio lo stesso articolo scritto in più modi — non per colori, misure o versioni.",
+  "Merge into one product": "Unisci in un solo prodotto",
+  "Merge {n} products into one": "Unisci {n} prodotti in uno",
+  "{n} merge puts two different products in one": "{n} unione mette due prodotti diversi in uno",
+  "{n} merges put different products in one": "{n} unioni mettono prodotti diversi in uno",
+  "The same supplier billed them on the same day at different prices: they are different products, however alike their names. Merged, the difference between their prices reads as a price increase that never happened. Taking the merge back puts every purchase under the product it came from.": "Lo stesso fornitore li ha fatturati lo stesso giorno a prezzi diversi: sono prodotti diversi, per quanto i nomi si somiglino. Uniti, la differenza tra i loro prezzi viene letta come un aumento di prezzo che non c'è mai stato. Annullando l'unione, ogni acquisto torna sotto il prodotto da cui veniva.",
+  "merged into": "unito a",
+  "billed on {date} at {low} and {high}": "fatturati il {date} a {low} e {high}",
+  "Undoing…": "Annullamento…",
+  "Undo this merge": "Annulla questa unione",
+  "Undo these {n} merges": "Annulla queste {n} unioni",
+  "The supplier billed them as two separate lines on {date}, at the same price ({price}): check that they are one product.": "Il fornitore li ha fatturati come due righe separate il {date}, allo stesso prezzo ({price}): controlla che siano davvero un solo prodotto.",
+  "Billed by the supplier on the same day at different prices ({date}: {low} and {high}): different products, which can be versions of one but never the same one.": "Fatturati dal fornitore lo stesso giorno a prezzi diversi ({date}: {low} e {high}): prodotti diversi, che possono essere versioni di uno stesso prodotto ma mai lo stesso.",
+  "Billed by the supplier as separate lines on the same day ({date}), at one price: two articles for the supplier.": "Fatturati dal fornitore come righe separate lo stesso giorno ({date}), allo stesso prezzo: per il fornitore sono due articoli.",
+  "Another line of the same day, at a different price, is that product: two lines at two prices are two products": "Un'altra riga dello stesso giorno, a un prezzo diverso, è già quel prodotto: due righe a due prezzi sono due prodotti",
+  "“{a}” and “{b}” were billed by the same supplier on the same day at different prices ({date}): they are different products and cannot be merged. If they are versions of one product, file them as variants.": "“{a}” e “{b}” sono stati fatturati dallo stesso fornitore lo stesso giorno a prezzi diversi ({date}): sono prodotti diversi e non si possono unire. Se sono versioni di uno stesso prodotto, registrali come varianti.",
+
   // ---- Merges
   "Products you merged": "Prodotti che hai unito",
   "{n} merge, which can be taken back": "{n} unione, che si può annullare",

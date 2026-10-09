@@ -18,6 +18,8 @@ export interface MacroVM {
   suggestion: "variants" | "merge" | null;
   confidence: "high" | "medium" | "low";
   differs: VariantBy | null;
+  /** False when the invoices say these are different products: merging is not offered. */
+  mergeable: boolean;
   reason: string;
   members: { id: string; name: string; variant: string | null; price: number | null; spend: number; original: string | null }[];
   leftOut: { name: string; price: number | null }[];
@@ -58,6 +60,8 @@ function MacroCard({ m }: { m: MacroVM }) {
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState(m.name);
   const [asking, setAsking] = useState(m.suggestion === "variants");
+  // Merging turns several products into one: asked twice, and never offered where the invoices say they are different.
+  const [merging, setMerging] = useState(false);
   const ids = m.members.map((x) => x.id);
   const run = (fn: () => Promise<SimpleResult>) =>
     start(async () => {
@@ -108,14 +112,25 @@ function MacroCard({ m }: { m: MacroVM }) {
         <button type="button" className={buttonClass(m.suggestion === "variants" ? "primary" : "secondary", "sm")} disabled={pending} aria-expanded={asking} onClick={() => setAsking((x) => !x)}>
           {t("They are variants")}
         </button>
-        <button type="button" className={buttonClass(m.suggestion === "merge" ? "primary" : "secondary", "sm")} disabled={pending || !name.trim()} onClick={() => run(() => mergeProductsAction(ids, name))} title={t("One product written in several ways: the purchases go under one, and it can be undone.")}>
-          {t("Merge")}
-        </button>
+        {m.mergeable && (
+          <button type="button" className={buttonClass(m.suggestion === "merge" ? "primary" : "secondary", "sm")} disabled={pending || !name.trim()} aria-expanded={merging} onClick={() => setMerging((x) => !x)} title={t("One product written in several ways: the purchases go under one, and it can be undone.")}>
+            {t("They are the same article")}
+          </button>
+        )}
         <button type="button" className={buttonClass("secondary", "sm")} disabled={pending} onClick={() => run(() => keepSeparateAction(ids))} title={t("Different products: not proposed together again.")}>
           {t("Keep separate")}
         </button>
       </div>
+      {!m.mergeable && <p className="mt-2 text-[12px] text-ink-3">{t("Merging is not offered: the supplier billed them on the same day at different prices, so they are different products.")}</p>}
       {asking && <VariantsPanel ids={ids} name={name} differs={m.differs} pending={pending} run={run} />}
+      {merging && m.mergeable && (
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-md border border-caution/40 bg-caution-wash px-3 py-2.5 text-[13px]">
+          <span className="min-w-0 flex-1 text-ink-2">{t.n(ids.length, "{n} product becomes one.", "{n} products become one: their purchases go under a single product and their prices are read as one price over time. Right only if they are the very same article written in several ways — not for colours, sizes or versions.")}</span>
+          <button type="button" className={buttonClass("secondary", "sm")} disabled={pending || !name.trim()} onClick={() => run(() => mergeProductsAction(ids, name))}>
+            {t.n(ids.length, "Merge into one product", "Merge {n} products into one")}
+          </button>
+        </div>
+      )}
       {error && (
         <div role="alert" className="mt-2 text-[12.5px] text-up">
           {error}

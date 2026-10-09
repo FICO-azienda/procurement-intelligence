@@ -23,6 +23,7 @@
  *     answers — one product (merge), versions of one product (variants), or
  *     different products (keep separate).
  */
+import { apartAmong, type SameDay } from "./apart";
 import * as f from "../format";
 import { en, type Msg, type T } from "../i18n";
 import { normalizeKey } from "../import/normalize/text";
@@ -82,6 +83,13 @@ export interface MacroGroup {
   /** Every variant says it in full; false when it was read from some and guessed for the rest. */
   differsSure: boolean;
   samePrice: boolean;
+  /**
+   * Some of them were billed by the supplier on the same day. At different prices they are different products and can
+   * never be merged; at one price they are still two lines the supplier wrote apart.
+   */
+  sameDay: SameDay | null;
+  /** False when the invoices say they are different products: merging is not offered. */
+  mergeable: boolean;
   /** What the evidence leans to. Null: only the user can tell. */
   suggestion: "variants" | "merge" | null;
   confidence: "high" | "medium" | "low";
@@ -164,7 +172,7 @@ const median = (xs: number[]) => {
 const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 const SEP = "\u0001";
 
-export function macroGroups(items: MacroItem[], options: { separated?: Set<string>; t?: T; cfg?: MacroConfig } = {}): MacroGroup[] {
+export function macroGroups(items: MacroItem[], options: { separated?: Set<string>; sameDay?: Map<string, SameDay>; t?: T; cfg?: MacroConfig } = {}): MacroGroup[] {
   const t = options.t ?? en;
   const cfg = options.cfg ?? MACRO_CONFIG;
   const separated = options.separated ?? new Set<string>();
@@ -250,7 +258,8 @@ export function macroGroups(items: MacroItem[], options: { separated?: Set<strin
       const repeated = d.rows.filter((x) => x.middle.length).every((x) => (endingUse.get(`${x.r.item.supplierId}${SEP}${x.middle.map((m) => m.key).join(SEP)}`) ?? 0) >= 2);
       const example = members.find((m) => m.variant && kindOf(m.variant) === differs)?.variant ?? null;
       const endings = members.filter((m) => m.variant).map((m) => m.variant!);
-      const suggestion: MacroGroup["suggestion"] = differs || !samePrice || repeated ? "variants" : null;
+      const billed = options.sameDay ? (apartAmong(members.map((m) => m.productId), options.sameDay)?.evidence ?? null) : null;
+      const suggestion: MacroGroup["suggestion"] = differs || !samePrice || repeated || billed ? "variants" : null;
       const confidence: MacroGroup["confidence"] = differsSure ? "high" : suggestion ? "medium" : "low";
       const unit = item.unit;
       const reason = [
@@ -267,6 +276,11 @@ export function macroGroups(items: MacroItem[], options: { separated?: Set<strin
               : samePrice
                 ? t("At one price they may be the same article written in several ways, or versions sold at the same price: only you can tell.")
                 : t("Different prices: not one article written in several ways. What changes is an abbreviation we cannot read."),
+        ...(billed?.different
+          ? [t("Billed by the supplier on the same day at different prices ({date}: {low} and {high}): different products, which can be versions of one but never the same one.", { date: f.date(billed.date), low: `${f.price(billed.low)}/${unit}`, high: `${f.price(billed.high)}/${unit}` })]
+          : billed
+            ? [t("Billed by the supplier as separate lines on the same day ({date}), at one price: two articles for the supplier.", { date: f.date(billed.date) })]
+            : []),
       ].join(" ");
       return {
         key: `macro_${members.map((m) => m.productId).sort().join("_").slice(0, 80)}`,
@@ -278,6 +292,8 @@ export function macroGroups(items: MacroItem[], options: { separated?: Set<strin
         differs,
         differsSure,
         samePrice,
+        sameDay: billed,
+        mergeable: !billed?.different,
         suggestion,
         confidence,
         reason,
