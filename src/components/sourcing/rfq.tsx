@@ -17,6 +17,8 @@ import { buttonClass, cx } from "../ui";
 /** What every request says about who is asking. */
 export interface RfqContext {
   deliveryCountry: string | null;
+  /** The delivery town registered in Settings. Null: the request names only the country, and says the address comes on request. */
+  deliveryPlace?: string | null;
   companyName: string;
   userName: string | null;
 }
@@ -55,8 +57,11 @@ export function RfqPanel({ items, context, language, onClose, onSent }: { items:
         item.key,
         rfqText(
           {
-            lines: item.lines.map((l) => ({ productName: l.productName, specifications: Object.fromEntries(l.specifications.map((s) => [tt.any(s.label), s.value])), description: l.description, application: l.application, attachments: l.documents.map((d) => d.filename), unit: l.unit, annualQuantity: l.annualQuantity, typicalOrderQuantity: l.typicalOrderQuantity })),
+            lines: item.lines.map((l) => ({ productName: l.productName, specifications: Object.fromEntries(l.specifications.map((s) => [tt.any(s.label), s.value])), description: l.description, application: l.application, attachments: l.documents.map((d) => d.filename), unit: l.unit, annualQuantity: l.annualQuantity, annualConfirmed: l.annualConfirmed, typicalOrderQuantity: l.typicalOrderQuantity, tiers: l.tiers })),
             deliveryCountry: context.deliveryCountry,
+            deliveryPlace: context.deliveryPlace ?? null,
+            // The questions of a material are added when every product of the request is that material.
+            category: item.lines.length && item.lines.every((l) => l.category === item.lines[0].category) ? item.lines[0].category : null,
             companyName: context.companyName,
             userName: context.userName,
             supplierName: item.supplierName,

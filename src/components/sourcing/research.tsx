@@ -1,13 +1,14 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { Check, CircleAlert, Loader2, RefreshCw, Sparkles } from "lucide-react";
-import { importResearchAction, planResearchAction, runResearchAction, setCustomsCodeAction, setResearchClassAction } from "@/app/actions";
+import { importResearchAction, listResearchFilesAction, planResearchAction, readResearchFileAction, runResearchAction, setCustomsCodeAction, setResearchClassAction } from "@/app/actions";
 import * as f from "@/lib/format";
 import { useT } from "@/lib/i18n/client";
 import { CLASS_LABEL, PRODUCT_CLASSES, type ProductClass } from "@/lib/research/strategy";
 import type { ImportOutcome, PlanView, ResearchOutcome } from "@/server/research";
+import type { ResearchFileInfo } from "@/server/research-files";
 import { Input, Select, Textarea } from "../form-kit";
 import { buttonClass, cx } from "../ui";
 
@@ -217,6 +218,19 @@ export function ResearchImport() {
   const [raw, setRaw] = useState("");
   const [pending, start] = useTransition();
   const [state, setState] = useState<{ preview?: ImportOutcome; loaded?: ImportOutcome; error?: string }>({});
+  // Research saved on this computer by an earlier session: one click puts a file in the box, to check and load like any other.
+  const [files, setFiles] = useState<ResearchFileInfo[]>([]);
+  useEffect(() => {
+    listResearchFilesAction().then(setFiles, () => setFiles([]));
+  }, []);
+  const gaps = useMemo(() => {
+    try {
+      const g = (JSON.parse(raw) as { coverage?: { gaps?: unknown } }).coverage?.gaps;
+      return Array.isArray(g) ? g.filter((x): x is string => typeof x === "string") : [];
+    } catch {
+      return [];
+    }
+  }, [raw]);
   const send = (confirm: boolean) =>
     start(async () => {
       const res = await importResearchAction(raw, confirm);
@@ -249,6 +263,29 @@ export function ResearchImport() {
         />
         <span className="text-[12.5px] text-ink-3">{t("or paste its content below")}</span>
       </div>
+      {files.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 text-[12.5px]">
+          <span className="text-ink-3">{t("Saved on this computer:")}</span>
+          {files.map((file) => (
+            <button
+              key={file.name}
+              type="button"
+              className={buttonClass("ghost", "sm")}
+              disabled={pending}
+              onClick={() =>
+                start(async () => {
+                  const res = await readResearchFileAction(file.name);
+                  if (!res.ok || res.raw == null) return setState({ error: t("Something went wrong.") });
+                  setRaw(res.raw);
+                  setState({});
+                })
+              }
+            >
+              {file.name.replace(/\.json$/, "")}
+            </button>
+          ))}
+        </div>
+      )}
       <Textarea value={raw} onChange={(e) => (setRaw(e.target.value), setState({}))} rows={6} placeholder={EXAMPLE} className="w-full font-mono text-[12px]" aria-label={t("Research file content")} />
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" className={buttonClass("secondary")} disabled={pending || !raw.trim()} onClick={() => send(false)}>
@@ -266,6 +303,16 @@ export function ResearchImport() {
           </span>
         )}
       </div>
+      {gaps.length > 0 && (
+        <div className="rounded-lg border border-dashed border-rule-strong px-4 py-3 text-[12.5px] text-ink-2">
+          <div className="font-medium text-ink">{t("What this research did not cover")}</div>
+          <ul className="mt-1 list-disc pl-4">
+            {gaps.map((g) => (
+              <li key={g}>{g}</li>
+            ))}
+          </ul>
+        </div>
+      )}
       {o && (
         <div className="rounded-lg border border-rule px-4 py-3 text-[13px]">
           <div className="font-medium">

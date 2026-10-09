@@ -23,6 +23,9 @@ export function SettingsForm({ settings }: { settings: CompanySettings }) {
         <Field label={t("Country")}>
           <Input name="country" defaultValue={settings.country ?? ""} placeholder={t("Italy")} />
         </Field>
+        <Field label={t("Delivery town")} hint={t("Where goods are delivered: requests for quotation ask for prices delivered there")}>
+          <Input name="deliveryPlace" defaultValue={settings.deliveryPlace ?? ""} placeholder={t("Town and province")} />
+        </Field>
         <Field label={t("VAT number")} hint={t("On invoices it tells us which company is you")}>
           <Input name="vatNumber" defaultValue={settings.vatNumber ?? ""} placeholder="IT01234567890" />
         </Field>

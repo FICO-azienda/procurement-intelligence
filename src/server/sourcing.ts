@@ -14,8 +14,10 @@ import { documents, marketBenchmarks, productAliases, productDocuments, productF
 import { getStorage, storageKey } from "@/lib/storage";
 import { crossesCustoms } from "@/lib/sourcing/regions";
 import { rfqSpec, type RfqSpec } from "@/lib/sourcing/rfq-spec";
+import { rfqCategoryOf, type RfqCategory } from "@/lib/sourcing/rfq";
 import { quoteOpportunity, trueCost, type CostBasis, type QuoteOpportunity, type TrueCost } from "@/lib/sourcing/true-cost";
-import { todayISO, windowStart } from "@/lib/analytics";
+import { daysBetween, todayISO, windowStart } from "@/lib/analytics";
+import { DATASET_CONFIG } from "@/lib/dataset/fields";
 import { attributesOf } from "@/lib/catalog/attributes";
 import { catalogueOf } from "@/lib/catalog/spend";
 import { getIntel, getOverview, getSettings, getT, readDataset, readLearning, readOpportunityStates, readSettings } from "@/lib/data";
@@ -418,7 +420,13 @@ export interface RfqLineData {
   application: string | null;
   unit: string;
   annualQuantity: number | null;
+  /** The yearly figure was confirmed by the company; otherwise it is the sum of the invoices on file, said to be indicative. */
+  annualConfirmed: boolean;
   typicalOrderQuantity: number | null;
+  /** The quantities to ask every supplier for, from the orders really placed: the smallest, the usual one, the largest. */
+  tiers: { small: number | null; standard: number | null; large: number | null };
+  /** The material the request is about, from where the product is filed. */
+  category: RfqCategory | null;
   spec: RfqSpec;
   documents: { id: string; documentId: string; filename: string }[];
 }
@@ -434,6 +442,9 @@ export async function readRfqLines(db: DB, productIds: string[], t: T = en): Pro
     confirmedQuantities(db),
   ]);
   const start = windowStart(todayISO());
+  // How much history the company has on file: a year is said only from a year of invoices; from less it is scaled, and said to be an estimate (as the product dataset does).
+  const dates = bought.map((x) => x.date).sort();
+  const days = dates.length ? daysBetween(dates[0], dates[dates.length - 1]) + 1 : 0;
   const out = new Map<string, RfqLineData>();
   for (const id of productIds) {
     const product = rows.find((p) => p.id === id);
@@ -456,7 +467,15 @@ export async function readRfqLines(db: DB, productIds: string[], t: T = en): Pro
         companyName: company.companyName,
         unit: product.unit,
         // What the company confirmed in its product data comes first.
-        annualQuantity: confirmed.get(id)?.annual ?? (recent.length ? recent.reduce((sum, x) => sum + Number(x.quantity), 0) : null),
+        annualQuantity:
+          confirmed.get(id)?.annual ??
+          (days >= DATASET_CONFIG.fullYearDays
+            ? recent.length
+              ? recent.reduce((sum, x) => sum + Number(x.quantity), 0)
+              : null
+            : days >= DATASET_CONFIG.minDaysToAnnualize && sameUnit.length >= DATASET_CONFIG.minPurchasesToAnnualize
+              ? Math.round((sameUnit.reduce((sum, x) => sum + Number(x.quantity), 0) * 365) / days)
+              : null),
         typicalOrderQuantity: confirmed.get(id)?.typicalOrder ?? (quantities.length ? quantities[Math.floor(quantities.length / 2)] : null),
         deliveryCountry: company.country,
         documents: attached.length,
@@ -471,7 +490,15 @@ export async function readRfqLines(db: DB, productIds: string[], t: T = en): Pro
       application: spec.application,
       unit: product.unit,
       annualQuantity: spec.annualQuantity,
+      annualConfirmed: confirmed.get(id)?.annual != null,
       typicalOrderQuantity: spec.typicalOrderQuantity,
+      // Tiers come only from what was really ordered: with one order on file there is no smaller or larger one to quote.
+      tiers: {
+        small: quantities.length && spec.typicalOrderQuantity != null && quantities[0] < spec.typicalOrderQuantity ? quantities[0] : null,
+        standard: spec.typicalOrderQuantity,
+        large: quantities.length && spec.typicalOrderQuantity != null && quantities[quantities.length - 1] > spec.typicalOrderQuantity ? quantities[quantities.length - 1] : null,
+      },
+      category: rfqCategoryOf(product.subcategory),
       spec,
       documents: attached.map((d) => ({ id: d.id, documentId: d.documentId, filename: d.filename })),
     });

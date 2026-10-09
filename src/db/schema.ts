@@ -840,6 +840,8 @@ export const settings = pgTable("settings", {
   id: integer("id").primaryKey().default(1),
   companyName: text("company_name"),
   country: text("country"),
+  /** The town goods are delivered to: what a request for quotation names as the destination. Null: only the country is said. */
+  deliveryPlace: text("delivery_place"),
   /** Our own VAT number: on invoices it identifies the customer, never the supplier. */
   vatNumber: text("vat_number"),
   /** Who is at the keyboard — only used to say good morning. */

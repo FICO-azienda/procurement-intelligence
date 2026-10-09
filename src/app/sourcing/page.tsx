@@ -208,7 +208,7 @@ export default async function SourcingPage() {
             ? t("First round: the {products} products that weigh most. For them {suppliers} suppliers are recommended — {pairs} product requests in {suppliers} emails, because a supplier that covers several products gets one request. Nothing is sent from here.", { products: firstRound.length, suppliers: suppliers.length, pairs })
             : t("First round: the {products} products that weigh most. No supplier is recommended for them yet.", { products: firstRound.length })}
         </p>
-        <SupplierRfqBoard suppliers={suppliers} context={{ deliveryCountry: settings.country, companyName: settings.companyName, userName: settings.userName }} language={t.locale} />
+        <SupplierRfqBoard suppliers={suppliers} context={{ deliveryCountry: settings.country, deliveryPlace: settings.deliveryPlace, companyName: settings.companyName, userName: settings.userName }} language={t.locale} />
       </section>
 
       <div className="mb-4 flex flex-wrap items-center gap-1.5">

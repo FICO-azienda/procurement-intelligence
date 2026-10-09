@@ -37,6 +37,7 @@ import { parseNumber } from "@/lib/import/normalize/numbers";
 import { connectedProviders } from "@/server/providers";
 import { convertCandidate, importResearch, planResearch, runResearch, setCustomsCode, setResearchClass, type ImportOutcome, type PlanView, type ResearchOutcome } from "@/server/research";
 import { parseResearchFile } from "@/lib/research/file";
+import { listResearchFiles, readResearchFile, type ResearchFileInfo } from "@/server/research-files";
 import { isCandidateStatus, isTechnicalFit } from "@/lib/sourcing/types";
 import { DataFieldError, confirmDataField, linkProductDocument, saveDataField, uploadProductFile } from "@/server/product-data";
 import { isFieldKey } from "@/lib/dataset/fields";
@@ -419,7 +420,7 @@ export async function saveSettings(_: FormState, formData: FormData): Promise<Fo
     const n = text(k) ? parseNumber(text(k)) : null;
     return n && n.value != null && !n.ambiguous && n.value >= 0 && n.value <= 100 ? n.value : null;
   };
-  const values = { companyName, country: text("country"), vatNumber: text("vatNumber"), userName: text("userName"), financingRatePct: rate("financingRatePct"), holdingRatePct: rate("holdingRatePct"), updatedAt: new Date() };
+  const values = { companyName, country: text("country"), deliveryPlace: text("deliveryPlace"), vatNumber: text("vatNumber"), userName: text("userName"), financingRatePct: rate("financingRatePct"), holdingRatePct: rate("holdingRatePct"), updatedAt: new Date() };
   try {
     const db = await getDb();
     await db.insert(settings).values({ id: 1, ...values }).onConflictDoUpdate({ target: settings.id, set: values });
@@ -883,6 +884,16 @@ export async function importResearchAction(raw: string, confirm: boolean): Promi
   } catch (err) {
     return sourcingFailed(t, err);
   }
+}
+
+/** The research files kept on this computer, and the content of one: read only — loading goes through the same check and confirmation. */
+export async function listResearchFilesAction(): Promise<ResearchFileInfo[]> {
+  return listResearchFiles();
+}
+
+export async function readResearchFileAction(name: string): Promise<{ ok: boolean; raw?: string }> {
+  const raw = await readResearchFile(name);
+  return raw == null ? { ok: false } : { ok: true, raw };
 }
 
 /** A candidate becomes a supplier on file: the user's decision, never the research's. */

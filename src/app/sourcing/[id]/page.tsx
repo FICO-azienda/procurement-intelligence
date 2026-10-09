@@ -368,7 +368,7 @@ export default async function ProductSourcingPage({ params }: PageProps<"/sourci
             candidates={candidates}
             counts={v.screening.counts}
             line={line}
-            context={{ deliveryCountry: home, companyName: settings.companyName, userName: settings.userName }}
+            context={{ deliveryCountry: home, deliveryPlace: settings.deliveryPlace, companyName: settings.companyName, userName: settings.userName }}
             language={t.locale}
             firstRound={v.materiality === "focus"}
             readiness={spec.readiness}

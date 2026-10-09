@@ -113,6 +113,13 @@
       "when": 1791481030418,
       "tag": "0015_macro_products",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1791575593265,
+      "tag": "0016_delivery_place",
+      "breakpoints": true
     }
   ]
 }

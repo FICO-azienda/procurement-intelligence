@@ -136,7 +136,8 @@ describe("what the user adds and decides", () => {
     expect(candidates.find((c) => c.id === second.id)!.status).toBe("to_review");
     // The request names the product without the current supplier, and carries quantities — never a price.
     const line = (await readRfqLines(db, [productId])).get(productId)!;
-    expect(line).toMatchObject({ productName: "Paraffina 52/54", unit: "kg", annualQuantity: 64_000, typicalOrderQuantity: 20_000 });
+    // 64.000 kg in about two months of invoices: a year is said as an estimate scaled to twelve months, never as the sum on file.
+    expect(line).toMatchObject({ productName: "Paraffina 52/54", unit: "kg", annualQuantity: 370_794, annualConfirmed: false, typicalOrderQuantity: 20_000, category: "wax" });
     expect(JSON.stringify(line)).not.toMatch(/SER|1\.48/);
   });
 

@@ -15,7 +15,7 @@ import { crossesCustoms, regionOf } from "./regions";
 import { readReply, readReplyFor } from "./reply";
 import { rfqSpec } from "./rfq-spec";
 import { quoteOpportunity, trueCost, type TrueCost, type TrueCostInput } from "./true-cost";
-import { rfqDraft, rfqText } from "./rfq";
+import { rfqCategoryOf, rfqDraft, rfqText } from "./rfq";
 import { contactHistory, screenCandidates, supplierOpportunities, type ScreeningContext } from "./screening";
 import type { MarketBenchmark, SupplierCandidate } from "./types";
 
@@ -283,8 +283,22 @@ describe("searches and requests", () => {
   it("writes a request for quotation that asks what makes an offer comparable — and gives away neither price nor supplier", () => {
     const draft = rfqDraft({ productName: "Paraffina 52/54 (XXF)", specifications: { Size: "52/54" }, description: null, unit: "kg", annualQuantity: 80_000, typicalOrderQuantity: 20_000, deliveryCountry: "Italy", companyName: "Mock Candle Co.", userName: "Anna", supplierName: "Mock Wax GmbH" });
     expect(draft.subject).toBe("Request for quotation: Paraffina 52/54 (XXF)");
-    for (const line of ["Dear Mock Wax GmbH team,", "Annual requirement: about 80.000 kg", "Typical order: about 20.000 kg", "Delivery: Italy", "- minimum order quantity", "- lead time from order", "- payment terms", "- delivery terms (Incoterm) and whether transport is included", "- how long the offer is valid", "Anna", "Mock Candle Co."]) expect(draft.body).toContain(line);
+    for (const line of ["Dear Mock Wax GmbH team,", "Annual requirement: about 80.000 kg", "Typical order: about 20.000 kg", "Delivery: DAP our plant in Italy (Incoterms 2020); the exact address on request", "net prices, VAT excluded", "FCA price from your plant", "- minimum order quantity", "- lead time from order, and current availability", "- payment terms", "- delivery terms (Incoterm), the cost of transport, and packaging or pallet costs", "- country of origin of the product", "- technical data sheet"]) expect(draft.body).toContain(line);
     expect(draft.body).not.toMatch(/1[.,]48|Current Supplier/);
+    // By material: the questions that belong to it; the quantities every supplier prices are the orders really placed.
+    const wax = rfqText({ lines: [{ productName: "Paraffina 52/54", specifications: {}, description: null, unit: "kg", annualQuantity: 780_000, annualConfirmed: false, typicalOrderQuantity: 27_930, tiers: { small: 24_000, standard: 27_930, large: 29_500 } }], deliveryCountry: "Italy", deliveryPlace: "Mocktown (MK)", companyName: "Mock Candle Co.", userName: null, supplierName: "Mock Wax GmbH", category: "wax" });
+    for (const line of ["Annual requirement: about 780.000 kg (indicative estimate, not a commitment)", "Quantities to quote: 24.000 kg (smaller order) · 27.930 kg (usual order) · 29.500 kg (larger order)", "Delivery: DAP Mocktown (MK), Italy (Incoterms 2020)", "- the price revision formula, if the price follows an index", "- melting point, oil content"]) expect(wax.body).toContain(line);
+    expect(wax.body).not.toContain("Typical order");
+    // One order on file: no smaller or larger quantity is made up.
+    const one = rfqText({ lines: [{ productName: "Mock label 50x70", specifications: {}, description: null, unit: "pcs", annualQuantity: null, typicalOrderQuantity: 50_000, tiers: { small: null, standard: 50_000, large: null } }], deliveryCountry: "Italy", companyName: "Mock Candle Co.", userName: null, supplierName: "Mock Labels Srl", category: "labels" }, translator("it"));
+    expect(one.body).toContain("Ordine tipico: circa 50.000 pcs");
+    expect(one.body).not.toContain("Quantità da quotare");
+    expect(one.body).toContain("- costi di impianto stampa e fustella, indicati a parte rispetto al prezzo unitario");
+    expect(one.body).toContain("Consegna: DAP nostro stabilimento in Italia (Incoterms 2020); indirizzo esatto su richiesta");
+    expect(rfqCategoryOf("Paraffina")).toBe("wax");
+    expect(rfqCategoryOf("Candle containers")).toBe("containers");
+    expect(rfqCategoryOf("Fondelli e fermagli")).toBe("sustainers");
+    expect(rfqCategoryOf("Qualcos'altro")).toBeNull();
     expect(rfqDraft({ productName: "X", specifications: {}, description: null, unit: "kg", annualQuantity: null, typicalOrderQuantity: null, deliveryCountry: null, companyName: "Mock", userName: null, supplierName: "Mock" }, translator("it")).body).toContain("Vi chiediamo di indicare nell'offerta:");
   });
 });

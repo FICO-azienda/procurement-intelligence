@@ -275,6 +275,8 @@ export const getOverview = cache(async (): Promise<PurchasingOverview> => purcha
 export interface CompanySettings {
   companyName: string;
   country: string | null;
+  /** The town goods are delivered to: named in requests for quotation as the destination. */
+  deliveryPlace: string | null;
   vatNumber: string | null;
   userName: string | null;
   /** What money costs the company and what holding stock costs, % a year. Null: the app's starting assumptions are used. */
@@ -291,6 +293,7 @@ export async function readSettings(db: DB): Promise<CompanySettings> {
   return {
     companyName: row?.companyName?.trim() || COMPANY_NAME,
     country: row?.country ?? null,
+    deliveryPlace: row?.deliveryPlace?.trim() || null,
     vatNumber: row?.vatNumber ?? null,
     userName: row?.userName ?? null,
     financingRatePct: row?.financingRatePct ?? null,

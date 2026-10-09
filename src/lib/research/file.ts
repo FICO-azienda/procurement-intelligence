@@ -16,6 +16,8 @@ export const researchFile = z.object({
   /** How the research was done, in the researcher's words: "Web research". */
   source: text.default("Web research"),
   researchedAt: day,
+  /** What the research looked at and what it left out: the searches made, the sources read, and the gaps — so that nobody takes it for complete. */
+  coverage: z.object({ queries: z.array(text).default([]), sources: z.array(text).default([]), gaps: z.array(text).default([]) }).nullish(),
   candidates: z
     .array(
       z.object({
