@@ -462,6 +462,21 @@ I prodotti si trovano in tre passi: **categoria › sottocategoria › prodotto*
 
 Codice: `src/lib/catalog/tree.ts` (albero), `src/lib/catalog/find.ts` (ricerca), `src/server/categories.ts` (modifiche), `src/components/catalog/category-picker.tsx` (`ProductCategoryPicker`, riutilizzabile nelle altre pagine in cui si sceglie un prodotto).
 
+## Database fornitori di un mercato
+
+Pagina **Database fornitori** (`/sourcing/directory`, dal pulsante nella pagina Mercato): le aziende del mondo che producono un tipo di cosa, trovate con la ricerca. Il primo mercato è quello dei **contenitori plastici per candele** (ceri votivi, lumini cimiteriali, tealight).
+
+- **Una scheda per azienda**, con la pagina che la mostra: chi è, cosa produce (materiali, tecnologia, tipi di contenitore, misure), come contattarla, cosa non si sa ancora. Quello che il suo sito non dice è segnato **MISSING**: un'email, una misura o un materiale non vengono mai inventati.
+- **Non sono fornitori**: un'azienda del database diventa candidata per un tuo prodotto solo quando lo decidi tu dalla sua scheda, e non le viene inviato nulla. Un annuncio su un marketplace è una traccia, non una prova di produzione.
+- **Filtri**: continente e paese, produttore / su disegno / distributore, materiale, tipo di contenitore, tecnologia, stato della ricerca, presenza di un'email, possibile compatibilità con le tue referenze. Ricerca per nome e per prodotti; 25 aziende per pagina.
+- **Copertura dichiarata**: per ogni paese è scritto se è stato cercato a fondo, solo una prima volta, senza risultati, o se è ancora da cercare, con le ricerche fatte. La ricerca non viene mai chiamata completa.
+- **Le tue referenze**: i prodotti che il mercato serve, con quantità e prezzi dalle fatture e con le specifiche che mancano. Due contenitori non sono uguali perché si somigliano.
+- **Sicurezza**: un contenitore venduto per candele non è per questo sicuro con la tua cera. Senza documenti sull'uso previsto la scheda dice «validazione tecnica richiesta».
+- **Excel**: «Esporta in Excel» scarica il database in nove fogli (elenco completo, Italia, Europa, Cina e Asia, resto del mondo, shortlist, contatti, fonti e lacune, referenze).
+- I file di ricerca stanno in `.data/research/markets/` e si caricano dalla pagina, con controllo e conferma.
+
+Codice: `src/lib/markets/`, `src/server/markets.ts`, `src/app/sourcing/directory/`.
+
 ## Strategia di sourcing (Sourcing Mix)
 
 Pagina **Strategia** (`/strategy`): per i prodotti che pesano di più (Top 5, poi Top 18) mostra il portafoglio di oggi e, per ogni obiettivo, il mix di fornitori che farebbe meglio — costo più basso, bundle, specialisti, valore economico totale, qualità, consegna, rischio, liquidità, meno fornitori, bilanciato, pesi personalizzati.

@@ -45,6 +45,7 @@ import { isJudgementKey, isLevel } from "@/lib/negotiation/engine";
 import { keepEstimateHistory, saveJudgement } from "@/server/negotiation";
 import { SupplierMergeError, autoMergeSuppliers, canonicalSupplierId, keepSuppliersResolved, keepSuppliersSeparate, matchOf, mergeSuppliers, undoSupplierMerge } from "@/server/suppliers";
 import { isVariantBy } from "@/lib/catalog/macro";
+import { MarketError, importMarketFile, listMarketFiles, makeCandidate, readMarketFile, setMarketStatus, type MarketImport } from "@/server/markets";
 import { CategoryError, createCategory, deleteCategory, moveProducts, moveSubcategory, renameCategory, reorderCategory, type CategoryPlace } from "@/server/categories";
 import { MapperError, confirmMappings, confirmVariants, keepSeparate, mergeProducts, saveMapping, undoProductMerge, undoProductMerges, type MappingEdit } from "@/server/mapper";
 import {
@@ -1028,6 +1029,56 @@ export async function saveMappingAction(productId: string, edit: MappingEdit): P
     return { ok: true };
   } catch (err) {
     return mapperFailed(t, err);
+  }
+}
+
+// ---------------- Market directories ----------------
+
+const marketFailed = (t: T, err: unknown): SimpleResult => {
+  console.error("[market directory]", err);
+  return { ok: false, error: err instanceof MarketError ? err.message : t("Something went wrong.") };
+};
+
+/** The research files of the directories kept on this computer. */
+export async function listMarketFilesAction(): Promise<{ name: string; modified: string }[]> {
+  return listMarketFiles();
+}
+
+/** Checks one of them; with `confirm`, loads it. The check alone writes nothing. */
+export async function loadMarketFileAction(name: string, confirm: boolean): Promise<SimpleResult & { outcome?: MarketImport }> {
+  const t = await getT();
+  try {
+    const raw = await readMarketFile(name);
+    if (raw == null) return { ok: false, error: t("This file is no longer there.") };
+    const outcome = await importMarketFile(await getDb(), raw, { confirm, file: name }, t);
+    if (confirm) refresh();
+    return { ok: true, outcome };
+  } catch (err) {
+    return marketFailed(t, err);
+  }
+}
+
+/** How far along the user says a company of a directory is. */
+export async function setMarketStatusAction(id: string, status: string): Promise<SimpleResult> {
+  const t = await getT();
+  try {
+    await setMarketStatus(await getDb(), id, status);
+    refresh();
+    return { ok: true };
+  } catch (err) {
+    return marketFailed(t, err);
+  }
+}
+
+/** A company of a directory as a candidate for one of the buyer's products: on the user's click, to review like any other. */
+export async function makeCandidateAction(id: string, productId: string): Promise<SimpleResult> {
+  const t = await getT();
+  try {
+    await makeCandidate(await getDb(), id, productId, t);
+    refresh();
+    return { ok: true };
+  } catch (err) {
+    return marketFailed(t, err);
   }
 }
 

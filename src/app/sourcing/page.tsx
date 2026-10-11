@@ -104,6 +104,7 @@ export default async function SourcingPage() {
             <ButtonLink href="/strategy" variant="primary">
               {t("Optimize sourcing mix")}
             </ButtonLink>
+            <ButtonLink href="/sourcing/directory">{t("Supplier directory")}</ButtonLink>
             <ButtonLink href="/products/data">{t("Product data")}</ButtonLink>
           </>
         }

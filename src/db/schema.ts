@@ -878,6 +878,53 @@ export const settings = pgTable("settings", {
   ...timestamps,
 });
 
+/**
+ * A market directory (lib/markets/types.ts): the companies of the world that
+ * make one kind of thing, found by research — one row per company, with the
+ * page that shows it. Not suppliers and not candidates: nothing here is tied
+ * to the buyer's purchases, and no row becomes a supplier by itself.
+ */
+export const marketSuppliers = pgTable("market_suppliers", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  /** Which market it belongs to (MARKETS). */
+  market: text("market").notNull(),
+  name: text("name").notNull(),
+  tradeName: text("trade_name"),
+  country: text("country"),
+  city: text("city"),
+  website: text("website"),
+  /** A public commercial address read on its site. Null: none found — never made up. */
+  email: text("email"),
+  phone: text("phone"),
+  role: text("role").notNull().default("unknown"),
+  /** How far along it is (STATUSES): research sets the first steps, the user the others. */
+  status: text("status").notNull().default("discovered"),
+  materials: jsonb("materials").$type<string[]>().notNull().default([]),
+  technologies: jsonb("technologies").$type<string[]>().notNull().default([]),
+  productTypes: jsonb("product_types").$type<string[]>().notNull().default([]),
+  /** Everything else its pages say (MarketProfile). A field left out is missing. */
+  profile: jsonb("profile").$type<Record<string, unknown>>().notNull().default({}),
+  /** The exact page that shows it. */
+  evidenceUrl: text("evidence_url").notNull(),
+  sourceLevel: text("source_level").notNull().default("supplier_official"),
+  checkedAt: date("checked_at"),
+  /** The research file it was last loaded from. */
+  sourceFile: text("source_file"),
+  ...timestamps,
+});
+
+/** What each loaded research file covered: countries, depth, searches, gaps, names still to verify. A research is never called complete beyond this. */
+export const marketResearch = pgTable("market_research", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  market: text("market").notNull(),
+  file: text("file").notNull(),
+  researchedAt: date("researched_at").notNull(),
+  cycle: text("cycle"),
+  source: text("source"),
+  coverage: jsonb("coverage").$type<Record<string, unknown>>().notNull().default({}),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export type Supplier = typeof suppliers.$inferSelect;
 export type Product = typeof products.$inferSelect;
 export type ProductFamily = typeof productFamilies.$inferSelect;
