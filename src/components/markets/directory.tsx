@@ -190,9 +190,12 @@ export function DirectoryImport() {
               ))}
             </ul>
           )}
-          {!checked.outcome.loaded && checked.outcome.added.length + checked.outcome.updated.length > 0 && (
+          {/* A file may bring no company and still say something: which countries were searched, and what was not found there. */}
+          {!checked.outcome.loaded && checked.outcome.added.length + checked.outcome.updated.length + checked.outcome.countries + checked.outcome.leads > 0 && (
             <button type="button" className={cx(buttonClass("primary", "sm"), "mt-2.5")} disabled={busy} onClick={() => run(checked.name, true)}>
-              {t.n(checked.outcome.added.length + checked.outcome.updated.length, "Load {n} company into the directory", "Load {n} companies into the directory")}
+              {checked.outcome.added.length + checked.outcome.updated.length > 0
+                ? t.n(checked.outcome.added.length + checked.outcome.updated.length, "Load {n} company into the directory", "Load {n} companies into the directory")
+                : t("Load its coverage into the directory")}
             </button>
           )}
         </div>

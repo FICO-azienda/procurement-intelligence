@@ -137,6 +137,7 @@ export const markets = {
   "Not read: {name} ({reason})": "Non letta: {name} ({reason})",
   "Load {n} company into the directory": "Carica {n} azienda nel database",
   "Load {n} companies into the directory": "Carica {n} aziende nel database",
+  "Load its coverage into the directory": "Carica la sua copertura nel database",
   "This file is no longer there.": "Questo file non c'è più.",
   "This is not a research file: it cannot be read.": "Non è un file di ricerca: non si riesce a leggere.",
   "This research file cannot be read: {where}": "Questo file di ricerca non si riesce a leggere: {where}",
