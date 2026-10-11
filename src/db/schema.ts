@@ -95,6 +95,29 @@ export const productFamilies = pgTable("product_families", {
   ...timestamps,
 });
 
+/**
+ * The company's own categories, in two levels: a category (no parent) and its
+ * subcategories. A product is filed by the names it carries (`products.category`,
+ * `products.subcategory`): this table is what the company decided about the
+ * hierarchy itself — a name it changed, a subcategory it moved, the order, a
+ * category that has no product yet (lib/catalog/tree.ts, server/categories.ts).
+ * A category that only products name needs no row here.
+ */
+export const productCategories = pgTable("product_categories", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  /** Null: a category. Set: a subcategory of that category. */
+  parentId: uuid("parent_id").references((): AnyPgColumn => productCategories.id, { onDelete: "cascade" }),
+  /**
+   * The built-in category or subcategory it started as (lib/catalog/taxonomy.ts), kept when the company renames or
+   * moves it: what the rules read as "paraffin" is still filed where the company put its paraffin.
+   */
+  taxonomyKey: text("taxonomy_key"),
+  /** The company's own order. Null: after the ordered ones, the largest spend first. */
+  position: integer("position"),
+  ...timestamps,
+});
+
 export const products = pgTable("products", {
   id: uuid("id").primaryKey().defaultRandom(),
   sku: text("sku").notNull().unique(),

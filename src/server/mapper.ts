@@ -7,13 +7,14 @@
  */
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { DB } from "@/db";
-import { importItems, marketBenchmarks, productAliases, productDataFields, productDocuments, productFamilies, productMerges, productSeparations, products, purchases, quotes, researchEvidence, researchRuns, supplierCandidates, supplierProducts } from "@/db/schema";
+import { importItems, marketBenchmarks, productAliases, productCategories, productDataFields, productDocuments, productFamilies, productMerges, productSeparations, products, purchases, quotes, researchEvidence, researchRuns, supplierCandidates, supplierProducts } from "@/db/schema";
 import { todayISO } from "@/lib/analytics";
 import { isProductKind, isStrategic, type ProductKind } from "@/lib/catalog/kinds";
 import { apartAmong, boughtSameDay, pairKey, type SameDay } from "@/lib/catalog/apart";
 import { variantOf, type VariantBy } from "@/lib/catalog/macro";
 import { mapCatalogue, toMapInput, type MapAnalysis, type MapInput, type Mapping } from "@/lib/catalog/mapper";
 import { subByKey } from "@/lib/catalog/taxonomy";
+import { categoryNaming } from "@/lib/catalog/tree";
 import { readDataset, readLearning } from "@/lib/data";
 import * as f from "@/lib/format";
 import { en, type T } from "@/lib/i18n";
@@ -25,8 +26,8 @@ export async function readMapInput(db: DB, asOf = todayISO()): Promise<{ input: 
 }
 
 export async function analyzeCatalogue(db: DB, t: T = en, answers?: Map<string, string>): Promise<MapAnalysis> {
-  const { input, separated } = await readMapInput(db);
-  return mapCatalogue(input, { separated, answers, t });
+  const [{ input, separated }, rows] = await Promise.all([readMapInput(db), db.select().from(productCategories)]);
+  return mapCatalogue(input, { separated, answers, naming: categoryNaming(rows, t), t });
 }
 
 async function familyId(db: DB, m: Pick<Mapping, "family" | "category" | "subcategory">): Promise<string | null> {

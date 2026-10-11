@@ -197,6 +197,7 @@ export default async function ProductsPage({ searchParams }: PageProps<"/product
     <>
       <PageHeader title={t("Products")} meta={t("What you buy, what you pay for it, and whether it deserves a look.")} actions={
           <>
+            <ButtonLink href="/products/categories">{t("Categories")}</ButtonLink>
             <ButtonLink href="/products/data">{t("Product data")}</ButtonLink>
             <ExportLink href="/export/products" className="px-1" />
           </>

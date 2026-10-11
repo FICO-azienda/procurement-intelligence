@@ -449,6 +449,19 @@ Due descrizioni fatturate dallo stesso fornitore lo stesso giorno a prezzi diver
 
 Pagina **Pulizia prodotti** (`/products/review`). Codice: `src/lib/catalog/identity.ts`, `src/lib/catalog/mapper.ts`, `src/server/mapper.ts`.
 
+## Categorie e selettore prodotti
+
+I prodotti si trovano in tre passi: **categoria › sottocategoria › prodotto**. Non è obbligatorio arrivare al singolo prodotto: una categoria o una sottocategoria sono già un filtro.
+
+- **Acquisti**: al posto dell'elenco a tendina c'è «Categorie e prodotti». A sinistra le categorie con il numero di referenze, a destra le sottocategorie e i prodotti di quella scelta. La lista mostra otto prodotti e scorre al suo interno, quindi non si allunga mai fino in fondo alla pagina. Su telefono si apre dal basso, un livello alla volta.
+- **Ricerca**: la lente trova un prodotto per nome, codice del fornitore, codice interno e per come è scritto in fattura («wax» trova anche la miscela fatturata come «WAX …»). Maiuscole e accenti non contano; una lettera sbagliata viene perdonata solo se non si trova nulla scritto così, e i numeri non vengono mai letti con una cifra sbagliata («52» non è «53»).
+- **Filtri indipendenti**: scegliere una categoria non tocca fornitore e date; i filtri attivi compaiono come etichette da togliere una per una. Sopra la tabella le categorie principali sono a un clic.
+- **Categorie** (`/products/categories`, dal pulsante nella pagina Prodotti): nuova categoria o sottocategoria, rinomina, sposta una sottocategoria sotto un'altra categoria, sposta prodotti, cambia l'ordine. Una categoria con prodotti non si può eliminare, e nessun acquisto, prezzo o fattura viene toccato.
+- **Niente è assegnato d'ufficio**: un prodotto senza categoria resta in «Da classificare» finché non lo confermi (la Pulizia prodotti propone la categoria). Trasporti, servizi e utenze stanno a parte, sotto «Altre spese», divisi per tipo.
+- Le categorie arrivano dai dati dell'azienda: l'elenco iniziale del software è solo un punto di partenza. Se rinomini «Cere e paraffine» in «Cera», i prossimi prodotti letti come paraffina finiscono lì.
+
+Codice: `src/lib/catalog/tree.ts` (albero), `src/lib/catalog/find.ts` (ricerca), `src/server/categories.ts` (modifiche), `src/components/catalog/category-picker.tsx` (`ProductCategoryPicker`, riutilizzabile nelle altre pagine in cui si sceglie un prodotto).
+
 ## Strategia di sourcing (Sourcing Mix)
 
 Pagina **Strategia** (`/strategy`): per i prodotti che pesano di più (Top 5, poi Top 18) mostra il portafoglio di oggi e, per ogni obiettivo, il mix di fornitori che farebbe meglio — costo più basso, bundle, specialisti, valore economico totale, qualità, consegna, rischio, liquidità, meno fornitori, bilanciato, pesi personalizzati.

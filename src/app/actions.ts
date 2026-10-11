@@ -45,6 +45,7 @@ import { isJudgementKey, isLevel } from "@/lib/negotiation/engine";
 import { keepEstimateHistory, saveJudgement } from "@/server/negotiation";
 import { SupplierMergeError, autoMergeSuppliers, canonicalSupplierId, keepSuppliersResolved, keepSuppliersSeparate, matchOf, mergeSuppliers, undoSupplierMerge } from "@/server/suppliers";
 import { isVariantBy } from "@/lib/catalog/macro";
+import { CategoryError, createCategory, deleteCategory, moveProducts, moveSubcategory, renameCategory, reorderCategory, type CategoryPlace } from "@/server/categories";
 import { MapperError, confirmMappings, confirmVariants, keepSeparate, mergeProducts, saveMapping, undoProductMerge, undoProductMerges, type MappingEdit } from "@/server/mapper";
 import {
   benchmarkInput,
@@ -1028,6 +1029,54 @@ export async function saveMappingAction(productId: string, edit: MappingEdit): P
   } catch (err) {
     return mapperFailed(t, err);
   }
+}
+
+// ---------------- Categories ----------------
+
+const categoryFailed = (t: T, err: unknown): SimpleResult => {
+  console.error("[categories]", err);
+  return { ok: false, error: err instanceof CategoryError ? err.message : t("Something went wrong.") };
+};
+
+/** One change to the hierarchy, then every page reads it again. */
+async function arrange(change: (db: Awaited<ReturnType<typeof getDb>>, t: T) => Promise<unknown>): Promise<SimpleResult> {
+  const t = await getT();
+  try {
+    await change(await getDb(), t);
+    refresh();
+    return { ok: true };
+  } catch (err) {
+    return categoryFailed(t, err);
+  }
+}
+
+/** A new category, or a new subcategory of `parent`. */
+export async function createCategoryAction(name: string, parent: string | null = null): Promise<SimpleResult> {
+  return arrange((db, t) => createCategory(db, name, parent, t));
+}
+
+/** Another name for a category or a subcategory: its products follow. */
+export async function renameCategoryAction(place: CategoryPlace, name: string): Promise<SimpleResult> {
+  return arrange((db, t) => renameCategory(db, place, name, t));
+}
+
+/** A subcategory and its products under another category. */
+export async function moveSubcategoryAction(place: { category: string; subcategory: string }, toCategory: string): Promise<SimpleResult> {
+  return arrange((db, t) => moveSubcategory(db, place, toCategory, t));
+}
+
+/** Products filed in another place by the user; `null` puts them back among the ones to classify. */
+export async function moveProductsAction(productIds: string[], to: CategoryPlace | null): Promise<SimpleResult> {
+  return arrange((db, t) => moveProducts(db, productIds, to, t));
+}
+
+export async function reorderCategoryAction(place: CategoryPlace, direction: "up" | "down"): Promise<SimpleResult> {
+  return arrange((db, t) => reorderCategory(db, place, direction === "up" ? "up" : "down", t));
+}
+
+/** Takes an empty category or subcategory off the list. Products are never deleted from here. */
+export async function deleteCategoryAction(place: CategoryPlace): Promise<SimpleResult> {
+  return arrange((db, t) => deleteCategory(db, place, t));
 }
 
 /**

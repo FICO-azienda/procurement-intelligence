@@ -12,6 +12,7 @@ import {
   importSessions,
   opportunities,
   productAliases,
+  productCategories,
   products,
   purchases,
   quotes,
@@ -321,6 +322,8 @@ export async function clearAll(db: DB) {
     await tx.delete(supplierAliases);
     await tx.delete(supplierProducts);
     await tx.delete(products);
+    // The categories were arranged for those products: with none left, the next ones start from the built-in names.
+    await tx.delete(productCategories);
     await tx.delete(suppliers);
   });
   await getStorage().clear();

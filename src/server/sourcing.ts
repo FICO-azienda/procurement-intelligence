@@ -9,6 +9,7 @@ import { connection } from "next/server";
 import { cache } from "react";
 import type { z } from "zod";
 import { getDb, type DB } from "@/db";
+import { readNaming } from "@/server/categories";
 import { createHash } from "node:crypto";
 import { documents, marketBenchmarks, productAliases, productDocuments, productFamilies, products, purchases, quotes, rfqRequests, settings as settingsTable, supplierCandidates, suppliers, trueCostScenarios } from "@/db/schema";
 import { getStorage, storageKey } from "@/lib/storage";
@@ -350,7 +351,7 @@ export async function discoveryRequest(db: DB, productId: string, t: T = en): Pr
   const quantities = bought.filter((x) => x.unit === product.unit).map((x) => Number(x.quantity)).sort((a, b) => a - b);
   const supplierIds = new Set(bought.map((x) => x.supplierId));
   const known = (await db.select({ id: suppliers.id, name: suppliers.name }).from(suppliers)).filter((s) => supplierIds.has(s.id)).map((s) => s.name);
-  const query: QueryInput = { name: product.name, category: product.category, subcategory: product.subcategory, family: family[0]?.name ?? null, specifications, deliveryCountry: settings.country, knownSuppliers: known };
+  const query: QueryInput = { name: product.name, category: product.category, subcategory: product.subcategory, subcategoryKey: (await readNaming(db, t)).subKeyOf(product.category, product.subcategory), family: family[0]?.name ?? null, specifications, deliveryCountry: settings.country, knownSuppliers: known };
   return {
     query,
     request: {
@@ -441,6 +442,7 @@ export async function readRfqLines(db: DB, productIds: string[], t: T = en): Pro
     readSettings(db),
     confirmedQuantities(db),
   ]);
+  const naming = await readNaming(db, t);
   const start = windowStart(todayISO());
   // How much history the company has on file: a year is said only from a year of invoices; from less it is scaled, and said to be an estimate (as the product dataset does).
   const dates = bought.map((x) => x.date).sort();
@@ -498,7 +500,8 @@ export async function readRfqLines(db: DB, productIds: string[], t: T = en): Pro
         standard: spec.typicalOrderQuantity,
         large: quantities.length && spec.typicalOrderQuantity != null && quantities[quantities.length - 1] > spec.typicalOrderQuantity ? quantities[quantities.length - 1] : null,
       },
-      category: rfqCategoryOf(product.subcategory),
+      // Under the name the company gave it, a subcategory is still the material the rules know.
+      category: rfqCategoryOf(naming.subKeyOf(product.category, product.subcategory) ?? product.subcategory),
       spec,
       documents: attached.map((d) => ({ id: d.id, documentId: d.documentId, filename: d.filename })),
     });

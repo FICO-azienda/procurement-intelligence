@@ -120,6 +120,13 @@
       "when": 1791575593265,
       "tag": "0016_delivery_place",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1791744723828,
+      "tag": "0017_product_categories",
+      "breakpoints": true
     }
   ]
 }

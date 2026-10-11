@@ -25,7 +25,7 @@ import { basePrice, baseTotal, isPriced, normalizePurchases, type Dataset, type 
 import { ATTRIBUTE_LABEL, attributesOf } from "@/lib/catalog/attributes";
 import { KIND_LABEL, isProductKind, type ProductKind } from "@/lib/catalog/kinds";
 import { mappingOf } from "@/lib/catalog/mapper";
-import { TAXONOMY } from "@/lib/catalog/taxonomy";
+import { getCategoryRows, getCategoryTree, namesOnOffer } from "@/server/categories";
 import type { Learning } from "@/lib/data";
 import { getDataset, getFamilies, getIntel, getLearning, getMapAnalysis, getT } from "@/lib/data";
 import * as f from "@/lib/format";
@@ -84,6 +84,8 @@ export default async function ProductPage({ params, searchParams }: PageProps<"/
   const after = top.slice(top.findIndex((r) => r.intel.product.id === product.id) + 1).find((r) => r.profile.missing.length || r.profile.toConfirm.length);
 
   const l = lookups(data);
+  // The names to file it under: the company's own categories, as it calls them today.
+  const offer = namesOnOffer(await getCategoryTree(), await getCategoryRows(), t);
   const history = data.purchases.filter((p) => p.productId === product.id).sort((a, b) => (a.date < b.date ? -1 : 1));
   const productQuotes = data.quotes.filter((q) => q.productId === product.id);
   const { comparable } = normalizePurchases(product, history);
@@ -222,8 +224,8 @@ export default async function ProductPage({ params, searchParams }: PageProps<"/
           <MappingEditor
             productId={product.id}
             values={{ name: product.name, kind: kindOf(product), category: product.category ?? "", subcategory: product.subcategory ?? "", family: family?.name ?? "", variant: product.variant ?? "" }}
-            categories={[...new Set([...TAXONOMY.map((c) => t(c.label)), ...l.categories])]}
-            subcategories={TAXONOMY.flatMap((c) => c.subs.map((s) => t(s.label)))}
+            categories={offer.categories}
+            subcategories={offer.subcategories}
             families={[...families.values()].map((x) => x.name)}
           />
         </div>

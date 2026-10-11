@@ -167,3 +167,65 @@ tr.row-link a.stretched::after {
     break-inside: avoid;
   }
 }
+
+/* Popovers and the phone sheet of the category picker: a short, quiet entrance. */
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.985);
+  }
+}
+@keyframes sheet-up {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+.pop-in {
+  animation: pop-in 140ms var(--ease-out-quint);
+  transform-origin: top left;
+}
+.sheet-up {
+  animation: sheet-up 220ms var(--ease-out-quint);
+}
+.fade-in {
+  animation: fade-in 180ms ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pop-in,
+  .sheet-up,
+  .fade-in {
+    animation: none;
+  }
+}
+
+/* A list that scrolls inside its box: the bar is there, and stays out of the way. */
+.thin-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(17 17 19 / 0.18) transparent;
+}
+.thin-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.thin-scroll::-webkit-scrollbar-thumb {
+  background: rgb(17 17 19 / 0.16);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.thin-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgb(17 17 19 / 0.3);
+  background-clip: padding-box;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}

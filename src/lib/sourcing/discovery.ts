@@ -6,7 +6,7 @@
  * Nothing here finds a supplier by itself: providers do (providers.ts), or
  * the user does. This module never adds a fact that nobody sourced.
  */
-import { allSubs, categorize } from "../catalog/taxonomy";
+import { allSubs, categorize, subByKey } from "../catalog/taxonomy";
 import { withoutPackNotes } from "../catalog/attributes";
 import { separate } from "../catalog/identity";
 import { countryName } from "../countries";
@@ -23,6 +23,8 @@ export interface QueryInput {
   name: string;
   category: string | null;
   subcategory: string | null;
+  /** The built-in subcategory it stands for, when the company calls it by another name (lib/catalog/tree.ts). */
+  subcategoryKey?: string | null;
   family: string | null;
   specifications: Record<string, string>;
   deliveryCountry: string | null;
@@ -52,7 +54,7 @@ const numbersIn = (text: string) => (text.match(/\d+(?:[.,/x]\d+)*/g) ?? []).sli
 /** What the product is called in English, when its subcategory is one we know ("Paraffina" → "paraffin"). */
 function englishNoun(input: QueryInput, t: T): string | null {
   const key = normalizeKey(input.subcategory);
-  const ref = key ? allSubs().find((r) => normalizeKey(t(r.sub.label)) === key || normalizeKey(r.sub.label) === key) : undefined;
+  const ref = (input.subcategoryKey ? subByKey(input.subcategoryKey) : null) ?? (key ? allSubs().find((r) => normalizeKey(t(r.sub.label)) === key || normalizeKey(r.sub.label) === key) : undefined);
   // Not filed yet: the name itself may say what it is.
   return (ref ?? categorize(input.name))?.sub.noun.toLowerCase() ?? null;
 }

@@ -9,6 +9,8 @@ import { SourceTag } from "@/components/import/labels";
 import { getDataset, getT } from "@/lib/data";
 import * as f from "@/lib/format";
 import { lookups } from "@/lib/lookups";
+import { resolve } from "@/lib/catalog/tree";
+import { getCategoryTree } from "@/server/categories";
 
 export async function generateMetadata(): Promise<Metadata> {
   return { title: (await getT())("Purchases") };
@@ -19,17 +21,18 @@ const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) 
 export default async function PurchasesPage({ searchParams }: PageProps<"/purchases">) {
   const sp = await searchParams;
   const q = one(sp.q).toLowerCase();
-  const product = one(sp.product);
   const supplier = one(sp.supplier);
   const from = one(sp.from);
   const to = one(sp.to);
 
-  const [data, t] = await Promise.all([getDataset(), getT()]);
+  const [data, tree, t] = await Promise.all([getDataset(), getCategoryTree(), getT()]);
   const l = lookups(data);
+  // A category, one of its subcategories or a single product: each is a set of products, and a purchase is of one of them.
+  const { productIds } = resolve(tree, { category: one(sp.category) || null, subcategory: one(sp.subcategory) || null, product: one(sp.product) || null }, t);
 
   const rows = data.purchases
     .filter((p) => {
-      if (product && p.productId !== product) return false;
+      if (productIds && !productIds.has(p.productId)) return false;
       if (supplier && p.supplierId !== supplier) return false;
       if (from && p.date < from) return false;
       if (to && p.date > to) return false;
@@ -55,7 +58,7 @@ export default async function PurchasesPage({ searchParams }: PageProps<"/purcha
       />
 
       <Suspense>
-        <PurchaseFilters products={l.productOptions} suppliers={l.supplierOptions} />
+        <PurchaseFilters tree={tree} suppliers={l.supplierOptions} />
       </Suspense>
 
       <div className="rounded-lg border border-rule">

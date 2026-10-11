@@ -14,6 +14,7 @@ import {
   importSessions,
   opportunities,
   productAliases,
+  productCategories,
   productFamilies,
   productSeparations,
   products,
@@ -30,6 +31,7 @@ import { DEFAULT_LOCALE, en, isLocale, translator, type Locale, type T } from ".
 import { purchasingOverview, type PurchasingOverview } from "./intel/decision";
 import { analyze, type Intel, type OpportunityState } from "./intel/engine";
 import { mapCatalogue, toMapInput, type MapAnalysis } from "./catalog/mapper";
+import { categoryNaming } from "./catalog/tree";
 import { catalogueOf, companySpend, type CompanySpend } from "./catalog/spend";
 import { canonicalIds } from "./suppliers/resolve";
 
@@ -261,10 +263,11 @@ export const getFamilies = cache(async () => {
 /** The Product Mapper's reading of the catalogue: what each product is, families, possible duplicates, what to ask. */
 export const getMapAnalysis = cache(async (): Promise<MapAnalysis> => {
   const [data, learning, families, t] = await Promise.all([getDataset(), getLearning(), getFamilies(), getT()]);
-  const pairs = await (await getDb()).select().from(productSeparations);
+  const db = await getDb();
+  const [pairs, rows] = await Promise.all([db.select().from(productSeparations), db.select().from(productCategories)]);
   const names = new Map([...families.values()].map((f) => [f.id, f.name]));
   const macros = new Set([...families.values()].filter((f) => f.variantBy).map((f) => f.id));
-  return mapCatalogue(toMapInput(data, learning.productAliases, names, todayISO(), macros), { separated: pairs.map((x) => [x.productA, x.productB]), t });
+  return mapCatalogue(toMapInput(data, learning.productAliases, names, todayISO(), macros), { separated: pairs.map((x) => [x.productA, x.productB]), naming: categoryNaming(rows, t), t });
 });
 
 /** The Overview page's decision summaries: one pass over the intelligence, once per request. */

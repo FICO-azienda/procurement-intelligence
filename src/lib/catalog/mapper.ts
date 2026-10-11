@@ -32,6 +32,7 @@ import { macroGroups, type MacroGroup } from "./macro";
 import { differByOneWord } from "./propose";
 import { matchTokens, numbersOf, sameNumbers } from "./specs";
 import { allSubs, categorize, subByKey, type WordHit } from "./taxonomy";
+import type { CategoryNaming } from "./tree";
 
 export type Level = "high" | "medium" | "low";
 
@@ -169,6 +170,8 @@ export interface MapOptions {
   separated?: [string, string][];
   /** What the user said a product is: a subcategory key, or a kind when it is not a product to compare. */
   answers?: Map<string, string>;
+  /** How the company names and files the built-in categories it changed (lib/catalog/tree.ts). Absent: the built-in names. */
+  naming?: CategoryNaming;
   t?: T;
 }
 
@@ -472,7 +475,9 @@ export function mapCatalogue(input: MapInput[], options: MapOptions = {}): MapAn
   const labelToSub = new Map(allSubs().flatMap((ref) => [[normalizeKey(t(ref.sub.label)), ref] as const, [normalizeKey(ref.sub.label), ref] as const]));
   const classOf = (subKey: string): Class => {
     const ref = subByKey(subKey)!;
-    return { category: t(ref.category.label), subcategory: t(ref.sub.label), subKey };
+    // Where the company put this subcategory, if it renamed or moved it: a new product is filed with the others, not under the built-in names.
+    const own = options.naming?.of(subKey);
+    return { category: own?.category ?? t(ref.category.label), subcategory: own?.subcategory ?? t(ref.sub.label), subKey };
   };
   const supplierOf = (r: Reading) => r.p.suppliers[0] ?? null;
 
@@ -481,7 +486,7 @@ export function mapCatalogue(input: MapInput[], options: MapOptions = {}): MapAn
     const answer = options.answers?.get(r.p.id);
     if (r.p.mapped) {
       r.by = "stored";
-      r.cls = r.p.category ? { category: r.p.category, subcategory: r.p.subcategory, subKey: labelToSub.get(normalizeKey(r.p.subcategory))?.sub.key ?? null } : null;
+      r.cls = r.p.category ? { category: r.p.category, subcategory: r.p.subcategory, subKey: options.naming?.subKeyOf(r.p.category, r.p.subcategory) ?? labelToSub.get(normalizeKey(r.p.subcategory))?.sub.key ?? null } : null;
       r.family = r.p.family;
     } else if (answer && subByKey(answer)) {
       r.by = "user";
