@@ -26,7 +26,7 @@ import { en, type T } from "@/lib/i18n";
 import { normalizeKey } from "@/lib/import/normalize/text";
 import { NO_LINKS, isMatch, type Row, type SupplierLinks } from "@/lib/markets/filter";
 import {
-  CONTINENTS, CONTINENT_LABEL, DEPTH_LABEL, INTENDED_USE_LABEL, PRODUCT_TYPE_LABEL, ROLE_LABEL, SOURCE_LEVEL_LABEL, STATUS_LABEL, TECHNOLOGY_LABEL,
+  CONTINENTS, CONTINENT_LABEL, DEPTH_LABEL, INTENDED_USE_LABEL, PRODUCT_TYPE_LABEL, RELIABILITY_LABEL, ROLE_LABEL, SOURCE_LEVEL_LABEL, STATUS_LABEL, TECHNOLOGY_LABEL,
   continentOf, isMaker, isOem, isStatus, marketOf, parseMarketFile, profile as profileSchema, sameCompany, statusRank,
   type MarketCoverage, type MarketProfile, type MarketRole, type MarketStatus, type MarketSupplier, type SupplierInFile,
 } from "@/lib/markets/types";
@@ -318,7 +318,7 @@ export async function marketWorkbook(db: DB, market: string, t: T = en): Promise
     or(s.profile.products), or(s.profile.sizes), or(s.profile.colours), or(s.profile.catalogUrl), or(s.email), or(s.phone), or(s.profile.contactUrl), or(s.profile.languages), or(s.profile.moq), or(s.profile.samples), or(s.profile.customisation),
     s.profile.intendedUse ? t(INTENDED_USE_LABEL[s.profile.intendedUse]) : t("Technical validation required"), or(s.profile.safety),
     t(STATUS_LABEL[s.status]), t(RFQ_LABEL[s.links.rfq]), s.links.current ? t("Yes") : t("No"), or(s.links.candidateFor.map((c) => c.name)), or(s.profile.evidence), s.evidenceUrl,
-    t(SOURCE_LEVEL_LABEL[s.sourceLevel as keyof typeof SOURCE_LEVEL_LABEL] ?? "Another source"), or(s.profile.reliability), or(s.checkedAt), or(s.profile.doubts),
+    t(SOURCE_LEVEL_LABEL[s.sourceLevel as keyof typeof SOURCE_LEVEL_LABEL] ?? "Another source"), s.profile.reliability ? t(RELIABILITY_LABEL[s.profile.reliability]) : MISSING, or(s.checkedAt), or(s.profile.doubts),
   ];
   const sheet = (data: unknown[][], widths: number[]) => {
     const ws = XLSX.utils.aoa_to_sheet(data);

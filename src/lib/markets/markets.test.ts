@@ -3,6 +3,7 @@
  * duplicated, filters that add up. Generic companies: no buyer's data is assumed.
  */
 import { describe, expect, it } from "vitest";
+import { countryName } from "../countries";
 import { NO_LINKS, facets, filterSuppliers, isMatch, pageOf, type Row } from "./filter";
 import { continentOf, isOem, parseMarketFile, sameCompany, statusRank } from "./types";
 
@@ -130,6 +131,10 @@ describe("small things the directory relies on", () => {
     expect(continentOf("Italia")).toBe("Europe");
     expect(continentOf("China")).toBe("Asia");
     expect(continentOf("Stati Uniti")).toBe("Americas");
+    // A country named in Italian is the same place: every country a coverage lists has both names.
+    expect(continentOf("Messico")).toBe("Americas");
+    expect(continentOf("Giappone")).toBe("Asia");
+    expect(countryName("South Africa", "it")).toBe("Sudafrica");
     expect(continentOf("Atlantis")).toBeNull();
     expect(continentOf(null)).toBeNull();
   });

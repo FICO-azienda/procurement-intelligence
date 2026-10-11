@@ -55,6 +55,27 @@ const COUNTRIES: Country[] = [
   { iso: "CY", en: "Cyprus", it: "Cipro", flag: "🇨🇾" },
   { iso: "MT", en: "Malta", it: "Malta", flag: "🇲🇹" },
   { iso: "NO", en: "Norway", it: "Norvegia", flag: "🇳🇴" },
+  // Countries a market research names, so that its coverage reads in the reader's language.
+  { iso: "RS", en: "Serbia", it: "Serbia", flag: "🇷🇸" },
+  { iso: "JP", en: "Japan", it: "Giappone", flag: "🇯🇵" },
+  { iso: "KR", en: "South Korea", it: "Corea del Sud", flag: "🇰🇷" },
+  { iso: "TW", en: "Taiwan", it: "Taiwan", flag: "🇹🇼" },
+  { iso: "TH", en: "Thailand", it: "Thailandia", flag: "🇹🇭" },
+  { iso: "PK", en: "Pakistan", it: "Pakistan", flag: "🇵🇰" },
+  { iso: "BD", en: "Bangladesh", it: "Bangladesh", flag: "🇧🇩" },
+  { iso: "AE", en: "United Arab Emirates", it: "Emirati Arabi Uniti", flag: "🇦🇪", also: ["uae"] },
+  { iso: "SA", en: "Saudi Arabia", it: "Arabia Saudita", flag: "🇸🇦" },
+  { iso: "CA", en: "Canada", it: "Canada", flag: "🇨🇦" },
+  { iso: "MX", en: "Mexico", it: "Messico", flag: "🇲🇽" },
+  { iso: "BR", en: "Brazil", it: "Brasile", flag: "🇧🇷" },
+  { iso: "AR", en: "Argentina", it: "Argentina", flag: "🇦🇷" },
+  { iso: "CO", en: "Colombia", it: "Colombia", flag: "🇨🇴" },
+  { iso: "ZA", en: "South Africa", it: "Sudafrica", flag: "🇿🇦" },
+  { iso: "EG", en: "Egypt", it: "Egitto", flag: "🇪🇬" },
+  { iso: "MA", en: "Morocco", it: "Marocco", flag: "🇲🇦" },
+  { iso: "TN", en: "Tunisia", it: "Tunisia", flag: "🇹🇳" },
+  { iso: "AU", en: "Australia", it: "Australia", flag: "🇦🇺" },
+  { iso: "NZ", en: "New Zealand", it: "Nuova Zelanda", flag: "🇳🇿" },
 ];
 
 const clean = (s: string) => s.trim().toLowerCase();

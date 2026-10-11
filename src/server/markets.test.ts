@@ -18,7 +18,7 @@ let db: DB;
 const M = "plastic_candle_containers";
 const ids: Record<string, string> = {};
 const file = (suppliers: unknown[], coverage: unknown = undefined, researchedAt = "2026-10-11") => JSON.stringify({ kind: "market_suppliers", market: M, researchedAt, source: "test", cycle: "one", coverage, suppliers });
-const tubes = { name: "Tube Works sp. z o.o.", country: "Poland", city: "Lodz", role: "manufacturer", status: "technical_match_to_review", website: "https://tubeworks.example", email: "office@tubeworks.example", evidenceUrl: "https://tubeworks.example/tubes", evidence: "«producent tub»", materials: ["PP"], technologies: ["blow"], productTypes: ["votive_container"], doubts: "sizes to ask" };
+const tubes = { name: "Tube Works sp. z o.o.", country: "Poland", city: "Lodz", role: "manufacturer", status: "technical_match_to_review", website: "https://tubeworks.example", email: "office@tubeworks.example", evidenceUrl: "https://tubeworks.example/tubes", evidence: "«producent tub»", materials: ["PP"], technologies: ["blow"], productTypes: ["votive_container"], doubts: "sizes to ask", reliability: "high" };
 const moulder = { name: "Stampi Rossi S.r.l.", country: "Italy", role: "contract_moulder", status: "discovered", evidenceUrl: "https://stampirossi.example/", productTypes: ["custom"] };
 const incumbent = { name: "ACME PLAST SRL", country: "Italy", role: "manufacturer", status: "manufacturer_confirmed", evidenceUrl: "https://acmeplast.example/prodotti" };
 
@@ -126,6 +126,8 @@ describe("the workbook", () => {
     const moulderRow = rows("ITALY").find((r) => r.Company === "Stampi Rossi S.r.l.")!;
     expect(moulderRow).toMatchObject({ Email: "MISSING", Materials: "MISSING", "Intended use": "Technical validation required" });
     expect(rows("PRIORITY SHORTLIST").map((r) => r.Company)).toEqual(["Tube Works sp. z o.o."]);
+    expect(rows("PRIORITY SHORTLIST")[0]).toMatchObject({ Reliability: "High" });
+    expect(moulderRow).toMatchObject({ Reliability: "MISSING" });
     expect(rows("RFQ CONTACTS")).toMatchObject([{ Company: "Tube Works sp. z o.o.", Email: "office@tubeworks.example", "Product of interest": "Container LC" }]);
     expect(rows("SOURCES & GAPS").map((r) => r.Kind)).toEqual(expect.arrayContaining(["Country", "Gap", "Name still to verify", "Company to look into"]));
     expect(rows("REFERENCES")[0]).toMatchObject({ Product: "Container LC", Material: "MISSING", Diameter: "MISSING", "Last unit price": 0.075 });
