@@ -15,9 +15,12 @@ export interface SupplierLinks {
   current: boolean;
   /** The buyer's products it was made a candidate for. */
   candidateFor: { productId: string; name: string }[];
-  rfq: "none" | "candidate" | "contacted" | "quote_received";
+  /** answered: it replied to a request for quotation (its reply is on file, lib/replies/) — which is not yet a quote on a product. */
+  rfq: "none" | "candidate" | "contacted" | "answered" | "quote_received";
+  /** The company's page among the replies to requests, when it answered one. */
+  replyId: string | null;
 }
-export const NO_LINKS: SupplierLinks = { current: false, candidateFor: [], rfq: "none" };
+export const NO_LINKS: SupplierLinks = { current: false, candidateFor: [], rfq: "none", replyId: null };
 
 export interface MarketQuery {
   q?: string | null;

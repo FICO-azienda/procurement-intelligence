@@ -67,7 +67,7 @@ export interface SupplierMatch {
 }
 
 /** Mailboxes anyone can have: sharing one says nothing about being the same company. */
-const SHARED_DOMAINS = new Set(["gmail.com", "googlemail.com", "outlook.com", "outlook.it", "hotmail.com", "hotmail.it", "live.com", "live.it", "yahoo.com", "yahoo.it", "icloud.com", "libero.it", "virgilio.it", "alice.it", "tiscali.it", "tin.it", "fastwebnet.it", "aruba.it", "pec.it", "legalmail.it", "arubapec.it", "postecert.it", "pec.aruba.it", "gmx.de", "gmx.com", "web.de", "t-online.de", "orange.fr", "wanadoo.fr", "free.fr", "qq.com", "163.com", "126.com"]);
+const SHARED_DOMAINS = new Set(["gmail.com", "googlemail.com", "outlook.com", "outlook.it", "hotmail.com", "hotmail.it", "live.com", "live.it", "yahoo.com", "yahoo.it", "icloud.com", "libero.it", "virgilio.it", "alice.it", "tiscali.it", "tin.it", "fastwebnet.it", "aruba.it", "pec.it", "legalmail.it", "arubapec.it", "postecert.it", "pec.aruba.it", "gmx.de", "gmx.com", "web.de", "t-online.de", "orange.fr", "wanadoo.fr", "free.fr", "qq.com", "163.com", "126.com", "sina.com", "foxmail.com", "aliyun.com", "yeah.net", "wp.pl", "o2.pl", "onet.pl", "interia.pl", "vp.pl", "op.pl", "seznam.cz", "email.cz", "centrum.cz", "aol.com", "msn.com", "mail.com", "proton.me", "protonmail.com", "yandex.com", "mail.ru"]);
 
 /** The web domain a record declares: its site's, else its mailbox's when that is the company's own. */
 export function domainOf(s: Pick<SupplierRecord, "website" | "email">): string | null {

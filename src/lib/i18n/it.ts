@@ -11,6 +11,7 @@ import { engine } from "./it/engine";
 import { imports } from "./it/imports";
 import { mapper } from "./it/mapper";
 import { markets } from "./it/markets";
+import { replies } from "./it/replies";
 import { identity } from "./it/identity";
 import { negotiation } from "./it/negotiation";
 import { portfolio } from "./it/portfolio";
@@ -20,6 +21,6 @@ import { sourcing } from "./it/sourcing";
 import { suppliers } from "./it/suppliers";
 import { ui } from "./it/ui";
 
-export const PARTS = { engine, imports, ui, catalog, mapper, sourcing, research, dataset, negotiation, suppliers, portfolio, identity, rfq, categories, markets };
+export const PARTS = { engine, imports, ui, catalog, mapper, sourcing, research, dataset, negotiation, suppliers, portfolio, identity, rfq, categories, markets, replies };
 
-export const it = { ...engine, ...imports, ...ui, ...catalog, ...mapper, ...sourcing, ...research, ...dataset, ...negotiation, ...suppliers, ...portfolio, ...identity, ...rfq, ...categories, ...markets };
+export const it = { ...engine, ...imports, ...ui, ...catalog, ...mapper, ...sourcing, ...research, ...dataset, ...negotiation, ...suppliers, ...portfolio, ...identity, ...rfq, ...categories, ...markets, ...replies };

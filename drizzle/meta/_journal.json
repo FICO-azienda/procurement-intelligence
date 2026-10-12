@@ -134,6 +134,13 @@
       "when": 1791748768827,
       "tag": "0018_market_directory",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1791835460319,
+      "tag": "0019_rfq_replies",
+      "breakpoints": true
     }
   ]
 }

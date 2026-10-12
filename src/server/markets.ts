@@ -17,7 +17,7 @@ import path from "node:path";
 import { and, asc, eq } from "drizzle-orm";
 import * as XLSX from "xlsx";
 import type { DB } from "@/db";
-import { marketResearch, marketSuppliers, rfqRequests, supplierCandidates, suppliers } from "@/db/schema";
+import { marketResearch, marketSuppliers, rfqRequests, rfqSuppliers, supplierCandidates, suppliers } from "@/db/schema";
 import { basePrice, baseTotal, isPriced, todayISO } from "@/lib/analytics";
 import { isStrategic } from "@/lib/catalog/kinds";
 import { countryName } from "@/lib/countries";
@@ -230,13 +230,20 @@ export async function readReferences(db: DB, market: string, t: T = en): Promise
 
 /** What the buyer's own records say of each company: a supplier already, a candidate for some products, asked, answered. */
 export async function readLinks(db: DB, list: MarketSupplier[]): Promise<Map<string, SupplierLinks>> {
-  const [data, candidates, requests, own] = await Promise.all([readDataset(db), db.select().from(supplierCandidates), db.select().from(rfqRequests), db.select({ name: suppliers.name, website: suppliers.website }).from(suppliers)]);
+  const [data, candidates, requests, own, replied] = await Promise.all([
+    readDataset(db),
+    db.select().from(supplierCandidates),
+    db.select().from(rfqRequests),
+    db.select({ name: suppliers.name, website: suppliers.website }).from(suppliers),
+    db.select({ id: rfqSuppliers.id, name: rfqSuppliers.name, website: rfqSuppliers.website }).from(rfqSuppliers),
+  ]);
   const productName = new Map(data.products.map((p) => [p.id, p.name]));
   const asked = new Set(requests.flatMap((r) => (r.candidateIds as string[] | null) ?? []));
   const out = new Map<string, SupplierLinks>();
   for (const s of list) {
     const mine = candidates.filter((c) => sameCompany(c, s));
-    if (!mine.length && !own.some((o) => sameCompany(o, s))) {
+    const reply = replied.find((r) => sameCompany(r, s)) ?? null;
+    if (!mine.length && !reply && !own.some((o) => sameCompany(o, s))) {
       out.set(s.id, NO_LINKS);
       continue;
     }
@@ -245,7 +252,8 @@ export async function readLinks(db: DB, list: MarketSupplier[]): Promise<Map<str
     out.set(s.id, {
       current: own.some((o) => sameCompany(o, s)),
       candidateFor: [...new Map(mine.filter((c) => productName.has(c.productId)).map((c) => [c.productId, { productId: c.productId, name: productName.get(c.productId)! }])).values()],
-      rfq: quoted ? "quote_received" : contacted ? "contacted" : mine.length ? "candidate" : "none",
+      rfq: quoted ? "quote_received" : reply ? "answered" : contacted ? "contacted" : mine.length ? "candidate" : "none",
+      replyId: reply?.id ?? null,
     });
   }
   return out;
@@ -387,7 +395,7 @@ export async function marketWorkbook(db: DB, market: string, t: T = en): Promise
   return new Uint8Array(XLSX.write(book, { type: "array", bookType: "xlsx" }) as ArrayBuffer);
 }
 
-export const RFQ_LABEL = { none: "Not a candidate yet", candidate: "Candidate, not asked", contacted: "Contacted", quote_received: "Quote received" } as const;
+export const RFQ_LABEL = { none: "Not a candidate yet", candidate: "Candidate, not asked", contacted: "Contacted", answered: "Answered a request", quote_received: "Quote received" } as const;
 
 /** The directory in figures: what was found, by what it is and where. */
 export function summary(rows: Row[]) {

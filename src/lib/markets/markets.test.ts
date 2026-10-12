@@ -60,7 +60,7 @@ const ROWS: Row[] = [
   s("Beta Mould", { country: "Italy", role: "contract_moulder", technologies: ["injection"], productTypes: ["custom"], status: "discovered" }),
   s("Gamma Cups", { country: "Germany", materials: ["PC"], productTypes: ["tealight_cup"], status: "manufacturer_confirmed", email: "g@gamma.example", profile: { oem: true, products: "tealight cups" } }),
   s("Delta Trade", { country: "China", role: "distributor", status: "evidence_found", productTypes: ["tealight_cup"] }),
-  s("Epsilon Wax", { role: "candle_maker", status: "evidence_found", links: { current: true, candidateFor: [], rfq: "contacted" } }),
+  s("Epsilon Wax", { role: "candle_maker", status: "evidence_found", links: { current: true, candidateFor: [], rfq: "contacted", replyId: null } }),
 ];
 const names = (q: Parameters<typeof filterSuppliers>[1]) => filterSuppliers(ROWS, q).map((x) => x.name);
 

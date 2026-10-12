@@ -45,6 +45,9 @@ import { isJudgementKey, isLevel } from "@/lib/negotiation/engine";
 import { keepEstimateHistory, saveJudgement } from "@/server/negotiation";
 import { SupplierMergeError, autoMergeSuppliers, canonicalSupplierId, keepSuppliersResolved, keepSuppliersSeparate, matchOf, mergeSuppliers, undoSupplierMerge } from "@/server/suppliers";
 import { isVariantBy } from "@/lib/catalog/macro";
+import { ReplyError, checkReplies, importReplies, keepReplyFile, listReplyFiles, readReplyFile, setOfferValidation, updateReplyCompany, updateReplyThread, type ThreadUpdate } from "@/server/replies";
+import { summarise, type PlanSummary } from "@/lib/replies/plan";
+import { isValidation, type CompanyField } from "@/lib/replies/types";
 import { MarketError, importMarketFile, listMarketFiles, makeCandidate, readMarketFile, setMarketStatus, type MarketImport } from "@/server/markets";
 import { CategoryError, createCategory, deleteCategory, moveProducts, moveSubcategory, renameCategory, reorderCategory, type CategoryPlace } from "@/server/categories";
 import { MapperError, confirmMappings, confirmVariants, keepSeparate, mergeProducts, saveMapping, undoProductMerge, undoProductMerges, type MappingEdit } from "@/server/mapper";
@@ -1223,5 +1226,74 @@ export async function reviewPrice(purchaseId: string, decision: "confirmed" | "e
   } catch (err) {
     console.error("[price review]", err);
     return { ok: false, error: (await getT())("Could not save. Please try again.") };
+  }
+}
+
+// ---------------- Replies to requests for quotation ----------------
+
+const replyFailed = (t: T, err: unknown): SimpleResult => {
+  console.error("[replies]", err);
+  return { ok: false, error: err instanceof ReplyError ? err.message : t("Something went wrong.") };
+};
+
+/** The files of replies kept on this computer. */
+export async function listReplyFilesAction(): Promise<{ name: string; modified: string }[]> {
+  return listReplyFiles();
+}
+
+/**
+ * Checks a file of replies — one kept on this computer, or one chosen by hand — and, with `confirm`, loads it.
+ * The check alone writes nothing: it says what the load would do.
+ */
+export async function loadReplyFileAction(source: { name: string; raw?: string }, confirm: boolean): Promise<SimpleResult & { outcome?: PlanSummary; loaded?: boolean }> {
+  const t = await getT();
+  try {
+    const raw = source.raw ?? (await readReplyFile(source.name));
+    if (raw == null) return { ok: false, error: t("This file is no longer there.") };
+    const db = await getDb();
+    if (!confirm) return { ok: true, outcome: summarise((await checkReplies(db, raw, t)).plan), loaded: false };
+    const file = source.raw != null ? await keepReplyFile(source.name, raw) : source.name;
+    const done = await importReplies(db, raw, { file }, t);
+    revalidatePath("/", "layout");
+    return { ok: true, outcome: summarise(done.plan), loaded: true };
+  } catch (err) {
+    return replyFailed(t, err);
+  }
+}
+
+/** A person corrects who a company is. */
+export async function updateReplyCompanyAction(id: string, patch: Partial<Record<CompanyField, string | null>>): Promise<SimpleResult> {
+  const t = await getT();
+  try {
+    await updateReplyCompany(await getDb(), id, patch, t);
+    revalidatePath("/", "layout");
+    return { ok: true };
+  } catch (err) {
+    return replyFailed(t, err);
+  }
+}
+
+/** A person says what happened in a conversation, and where it stands now. */
+export async function updateReplyThreadAction(threadId: string, update: ThreadUpdate): Promise<SimpleResult> {
+  const t = await getT();
+  try {
+    await updateReplyThread(await getDb(), threadId, update, t);
+    revalidatePath("/", "layout");
+    return { ok: true };
+  } catch (err) {
+    return replyFailed(t, err);
+  }
+}
+
+/** A person says whether an offer is for the product they buy. */
+export async function setOfferValidationAction(offerId: string, validation: string): Promise<SimpleResult> {
+  const t = await getT();
+  try {
+    if (!isValidation(validation)) return { ok: false, error: t("Something went wrong.") };
+    await setOfferValidation(await getDb(), offerId, validation, t);
+    revalidatePath("/", "layout");
+    return { ok: true };
+  } catch (err) {
+    return replyFailed(t, err);
   }
 }

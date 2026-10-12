@@ -129,7 +129,16 @@ export default async function DirectorySupplierPage({ params }: PageProps<"/sour
 
       <Section className="mt-4" title={t("In your records")}>
         <dl className="mb-4">
-          {row2(t("Request status"), t(RFQ_LABEL[s.links.rfq]))}
+          {row2(
+            t("Request status"),
+            s.links.replyId ? (
+              <Link href={`/sourcing/replies/${s.links.replyId}`} className="text-ledger hover:underline">
+                {t(RFQ_LABEL[s.links.rfq])} — {t("see what it wrote")}
+              </Link>
+            ) : (
+              t(RFQ_LABEL[s.links.rfq])
+            ),
+          )}
           {row2(
             t("Candidate for"),
             s.links.candidateFor.length ? (

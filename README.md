@@ -477,6 +477,20 @@ Pagina **Database fornitori** (`/sourcing/directory`, dal pulsante nella pagina 
 
 Codice: `src/lib/markets/`, `src/server/markets.ts`, `src/app/sourcing/directory/`.
 
+## Risposte ai preventivi
+
+Pagina **Risposte ai preventivi** (`/sourcing/replies`, dal pulsante nella pagina Mercato): le aziende che hanno risposto a una richiesta di preventivo, con quello che ciascuna ha scritto.
+
+- **Una scheda per azienda**: anagrafica e contatti, prodotti dichiarati, prezzi comunicati, stato commerciale, dati mancanti, prossima azione e storico delle comunicazioni (data, tipo, link al messaggio).
+- **Non sono fornitori né candidati**: caricare le risposte non scrive nulla tra i fornitori, i candidati, le offerte dei prodotti o il database fornitori. Se la stessa azienda è già altrove in archivio, la scheda lo segnala con un link; una semplice somiglianza di nome è detta «forse» e non decide nulla.
+- **Cinque stati**: prezzo ricevuto, servono informazioni, in attesa di risposta, validazione tecnica richiesta, non adatto. Lo stato è letto dalle parole del file e resta scritto accanto com'era. Un prezzo ricevuto non è un preventivo definitivo: finché nessuno verifica il prodotto, ogni offerta resta «validazione tecnica richiesta».
+- **Un'offerta per ogni prodotto quotato**, come l'ha scritta l'azienda: il suo prodotto, la sua valuta, la sua resa, la destinazione, il pagamento, la validità, le specifiche. Niente viene convertito in un'altra valuta o in un prezzo consegnato, e non si fanno medie né classifiche tra gradi, rese o valute diverse. La scheda dice a parole cosa comprende il prezzo (per esempio: nolo fino al porto incluso, consegna da lì esclusa).
+- **Prima il controllo, poi il caricamento**: un file viene controllato e mostra aziende nuove, aziende già in archivio e cosa cambierebbe, offerte da aggiungere, record illeggibili (con il motivo) e conflitti. Si carica solo con la conferma, tutto o niente. Ricaricare lo stesso file non crea doppioni.
+- **Quello che scrivi tu resta**: uno stato, una prossima azione, un contatto corretti a mano non vengono più cambiati da un file. Un valore in archivio non viene mai svuotato da un file che lo omette, né sostituito da un file più vecchio.
+- I file stanno in `.data/research/replies/` (oppure si scelgono a mano dalla pagina) e restano sul computer. Non viene inviato nulla a nessuno.
+
+Codice: `src/lib/replies/`, `src/server/replies.ts`, `src/app/sourcing/replies/`.
+
 ## Strategia di sourcing (Sourcing Mix)
 
 Pagina **Strategia** (`/strategy`): per i prodotti che pesano di più (Top 5, poi Top 18) mostra il portafoglio di oggi e, per ogni obiettivo, il mix di fornitori che farebbe meglio — costo più basso, bundle, specialisti, valore economico totale, qualità, consegna, rischio, liquidità, meno fornitori, bilanciato, pesi personalizzati.

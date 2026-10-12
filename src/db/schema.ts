@@ -925,6 +925,150 @@ export const marketResearch = pgTable("market_research", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// ---------------- Replies to requests for quotation ----------------
+
+/**
+ * A company that answered a request for quotation: who it is and how to reach
+ * it (lib/replies/, server/replies.ts). It is not a `suppliers` row — nothing
+ * was bought from it — and not a candidate for a product: what it could supply
+ * is still to be verified. What the buyer's other records say of the same
+ * company (a supplier already, a candidate, a company of a market directory)
+ * is derived each time, never stored here.
+ */
+export const rfqSuppliers = pgTable("rfq_suppliers", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  country: text("country"),
+  address: text("address"),
+  website: text("website"),
+  email: text("email"),
+  phone: text("phone"),
+  contactName: text("contact_name"),
+  vatNumber: text("vat_number"),
+  taxCode: text("tax_code"),
+  /** What the company says it is, as written ("declared manufacturer", "reseller"): a statement, not a verification. */
+  companyType: text("company_type"),
+  /** The fields a person wrote by hand: a file never changes them. */
+  confirmed: jsonb("confirmed").$type<string[]>().notNull().default([]),
+  /** The date its data was last checked, and the file that brought it. */
+  checkedAt: date("checked_at"),
+  sourceFile: text("source_file"),
+  ...timestamps,
+});
+
+/**
+ * One request to one company, and where it stands. A company asked about two
+ * things has two: each with its own status, its offers and its history.
+ */
+export const rfqThreads = pgTable(
+  "rfq_threads",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    supplierId: uuid("supplier_id")
+      .notNull()
+      .references(() => rfqSuppliers.id, { onDelete: "cascade" }),
+    /** The request's own reference in the source ("RFQ-WAX-001"): the same reference is the same conversation, read again. */
+    reference: text("reference"),
+    /** What was asked about, in the buyer's own words: a company can be in several. */
+    categories: jsonb("categories").$type<string[]>().notNull().default([]),
+    /** REPLY_STATUSES (lib/replies/types.ts), and the status as the source wrote it. */
+    status: text("status").notNull(),
+    statusText: text("status_text"),
+    /** What the company says it makes or sells, the terms it stated — each as written, never completed. */
+    products: text("products"),
+    offerSummary: text("offer_summary"),
+    moq: text("moq"),
+    paymentTerms: text("payment_terms"),
+    leadTime: text("lead_time"),
+    samples: text("samples"),
+    /** What is still needed for a quotation, and what to ask or check next. */
+    missing: text("missing"),
+    nextAction: text("next_action"),
+    priority: text("priority"),
+    notes: text("notes"),
+    /** The record as the source gave it, untouched: nothing of it is lost in the reading. */
+    original: jsonb("original").$type<Record<string, unknown>>(),
+    confirmed: jsonb("confirmed").$type<string[]>().notNull().default([]),
+    checkedAt: date("checked_at"),
+    sourceFile: text("source_file"),
+    ...timestamps,
+  },
+  (t) => [index("rfq_threads_supplier_idx").on(t.supplierId)],
+);
+
+/**
+ * One product a company quoted, as it quoted it: its own product, its price in
+ * its currency, on its delivery terms. It is not a `quotes` row: it is tied to
+ * none of the buyer's products until someone has verified that it is the same
+ * thing, and it enters no comparison, range or average before then.
+ */
+export const rfqOffers = pgTable(
+  "rfq_offers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    threadId: uuid("thread_id")
+      .notNull()
+      .references(() => rfqThreads.id, { onDelete: "cascade" }),
+    /** The line's identity inside its conversation (lib/replies/read.ts): the same line read again is not a second offer. */
+    key: text("key").notNull(),
+    productName: text("product_name").notNull(),
+    productCode: text("product_code"),
+    grade: text("grade"),
+    category: text("category"),
+    unitPrice: money("unit_price").notNull(),
+    currency: text("currency").notNull(),
+    unit: text("unit").notNull(),
+    quantity: qty("quantity"),
+    moq: qty("moq"),
+    incoterm: text("incoterm"),
+    destination: text("destination"),
+    paymentTerms: text("payment_terms"),
+    /** When the offer was made, when the source says it. */
+    offeredOn: date("offered_on"),
+    /** Until when it holds: the date when it can be read, and the words as written. */
+    validUntil: date("valid_until"),
+    validity: text("validity"),
+    specs: jsonb("specs").$type<Record<string, string>>().notNull().default({}),
+    /** required | validated | not_equivalent — and what the source says of it, as written. */
+    validation: text("validation").notNull().default("required"),
+    technicalStatus: text("technical_status"),
+    missing: text("missing"),
+    sourceUrl: text("source_url"),
+    sourceDocument: text("source_document"),
+    original: jsonb("original").$type<Record<string, unknown>>(),
+    sourceFile: text("source_file"),
+    ...timestamps,
+  },
+  (t) => [uniqueIndex("rfq_offers_line_idx").on(t.threadId, t.key)],
+);
+
+/** The history of a conversation: what was received or sent, when, and the message that says so. */
+export const rfqMessages = pgTable(
+  "rfq_messages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    threadId: uuid("thread_id")
+      .notNull()
+      .references(() => rfqThreads.id, { onDelete: "cascade" }),
+    /** Its identity inside the conversation: the same message read again is one message. */
+    key: text("key").notNull(),
+    date: date("date").notNull(),
+    /** reply | sent | note */
+    kind: text("kind").notNull().default("reply"),
+    /** The status the conversation was left in. */
+    status: text("status"),
+    summary: text("summary"),
+    /** Where the message is: a link to the email, a ticket. */
+    reference: text("reference"),
+    attachments: text("attachments"),
+    /** file | manual */
+    source: text("source").notNull().default("file"),
+    sourceFile: text("source_file"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("rfq_messages_line_idx").on(t.threadId, t.key)],
+);
+
 export type Supplier = typeof suppliers.$inferSelect;
 export type Product = typeof products.$inferSelect;
 export type ProductFamily = typeof productFamilies.$inferSelect;
