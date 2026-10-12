@@ -141,6 +141,20 @@
       "when": 1791835460319,
       "tag": "0019_rfq_replies",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1791838023901,
+      "tag": "0020_offers_and_products",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1791838024582,
+      "tag": "0021_offer_validation_moved",
+      "breakpoints": true
     }
   ]
 }

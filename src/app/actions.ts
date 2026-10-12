@@ -9,6 +9,7 @@
  */
 import { and, count, eq, ne } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { getDb } from "@/db";
 import { clearAll, seedDemo } from "@/db/seed";
@@ -26,7 +27,7 @@ import {
 import { computeTotal, todayISO } from "@/lib/analytics";
 import { isProductKind, type ProductKind } from "@/lib/catalog/kinds";
 import { catalogueOf } from "@/lib/catalog/spend";
-import { getT, readDataset, readLearning, readOpportunityStates } from "@/lib/data";
+import { getT, readDataset, readLearning, readOpportunityStates, getSettings } from "@/lib/data";
 import { isLocale, type Msg, type T } from "@/lib/i18n";
 import { matchProduct, matchSupplier, type MatchContext } from "@/lib/import/match";
 import { analyze } from "@/lib/intel/engine";
@@ -45,9 +46,14 @@ import { isJudgementKey, isLevel } from "@/lib/negotiation/engine";
 import { keepEstimateHistory, saveJudgement } from "@/server/negotiation";
 import { SupplierMergeError, autoMergeSuppliers, canonicalSupplierId, keepSuppliersResolved, keepSuppliersSeparate, matchOf, mergeSuppliers, undoSupplierMerge } from "@/server/suppliers";
 import { isVariantBy } from "@/lib/catalog/macro";
-import { ReplyError, checkReplies, importReplies, keepReplyFile, listReplyFiles, readReplyFile, setOfferValidation, updateReplyCompany, updateReplyThread, type ThreadUpdate } from "@/server/replies";
+import {
+  ReplyError, addReplyDocument, checkReplies, decideCompanyLink, decideOffer, declineSuggestion, importReplies, keepReplyFile, linkOffer, listReplyFiles, readReplyFile, removeReplyDocument, saveLanded,
+  setOfferCompatibility, unlinkOffer, updateReplyCompany, updateReplyThread, type ThreadUpdate,
+} from "@/server/replies";
+import { AuditError, correctAttribution } from "@/server/audit";
+import { DestinationError, removeDestination, saveDestination, type DestinationField } from "@/server/destinations";
 import { summarise, type PlanSummary } from "@/lib/replies/plan";
-import { isValidation, type CompanyField } from "@/lib/replies/types";
+import { isActorType, isCompatibility, isDocumentKind, type Actor, type CompanyField } from "@/lib/replies/types";
 import { MarketError, importMarketFile, listMarketFiles, makeCandidate, readMarketFile, setMarketStatus, type MarketImport } from "@/server/markets";
 import { CategoryError, createCategory, deleteCategory, moveProducts, moveSubcategory, renameCategory, reorderCategory, type CategoryPlace } from "@/server/categories";
 import { MapperError, confirmMappings, confirmVariants, keepSeparate, mergeProducts, saveMapping, undoProductMerge, undoProductMerges, type MappingEdit } from "@/server/mapper";
@@ -425,7 +431,7 @@ export async function saveSettings(_: FormState, formData: FormData): Promise<Fo
     const n = text(k) ? parseNumber(text(k)) : null;
     return n && n.value != null && !n.ambiguous && n.value >= 0 && n.value <= 100 ? n.value : null;
   };
-  const values = { companyName, country: text("country"), deliveryPlace: text("deliveryPlace"), vatNumber: text("vatNumber"), userName: text("userName"), financingRatePct: rate("financingRatePct"), holdingRatePct: rate("holdingRatePct"), updatedAt: new Date() };
+  const values = { companyName, country: text("country"), vatNumber: text("vatNumber"), userName: text("userName"), financingRatePct: rate("financingRatePct"), holdingRatePct: rate("holdingRatePct"), updatedAt: new Date() };
   try {
     const db = await getDb();
     await db.insert(settings).values({ id: 1, ...values }).onConflictDoUpdate({ target: settings.id, set: values });
@@ -1261,39 +1267,110 @@ export async function loadReplyFileAction(source: { name: string; raw?: string }
   }
 }
 
-/** A person corrects who a company is. */
+/**
+ * Who is acting. A person at the keyboard — or an assistant operating the app for them, which says so itself by
+ * setting the `pi_actor` cookie in its own browser before it touches anything: what it does is then recorded as the
+ * assistant's, never as the person's.
+ */
+async function actorOf(): Promise<Actor> {
+  if ((await cookies()).get("pi_actor")?.value === "assistant") return { type: "ai", id: "assistant" };
+  return { type: "user", id: (await getSettings()).userName };
+}
+
+type ReplyDone = SimpleResult;
+async function reply(run: (db: Awaited<ReturnType<typeof getDb>>, actor: Actor, t: T) => Promise<unknown>): Promise<ReplyDone> {
+  const t = await getT();
+  try {
+    await run(await getDb(), await actorOf(), t);
+    revalidatePath("/", "layout");
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof DestinationError) return { ok: false, error: err.message };
+    if (err instanceof AuditError) return { ok: false, error: err.message === "evidence" ? t("Say what shows who did it: an attribution is not changed without evidence.") : t("Something went wrong.") };
+    return replyFailed(t, err);
+  }
+}
+
+/** Someone corrects who a company is. */
 export async function updateReplyCompanyAction(id: string, patch: Partial<Record<CompanyField, string | null>>): Promise<SimpleResult> {
-  const t = await getT();
-  try {
-    await updateReplyCompany(await getDb(), id, patch, t);
-    revalidatePath("/", "layout");
-    return { ok: true };
-  } catch (err) {
-    return replyFailed(t, err);
-  }
+  return reply((db, actor, t) => updateReplyCompany(db, id, patch, actor, t));
 }
 
-/** A person says what happened in a conversation, and where it stands now. */
+/** Someone says what happened in a conversation, and where it stands now. */
 export async function updateReplyThreadAction(threadId: string, update: ThreadUpdate): Promise<SimpleResult> {
-  const t = await getT();
-  try {
-    await updateReplyThread(await getDb(), threadId, update, t);
-    revalidatePath("/", "layout");
-    return { ok: true };
-  } catch (err) {
-    return replyFailed(t, err);
-  }
+  return reply((db, actor, t) => updateReplyThread(db, threadId, update, actor, t));
 }
 
-/** A person says whether an offer is for the product they buy. */
-export async function setOfferValidationAction(offerId: string, validation: string): Promise<SimpleResult> {
-  const t = await getT();
-  try {
-    if (!isValidation(validation)) return { ok: false, error: t("Something went wrong.") };
-    await setOfferValidation(await getDb(), offerId, validation, t);
-    revalidatePath("/", "layout");
-    return { ok: true };
-  } catch (err) {
-    return replyFailed(t, err);
-  }
+/** An offer is tied to one of the buyer's products as an alternative to verify — never as an equivalent. */
+export async function linkOfferAction(offerId: string, productId: string, v: { compatibility?: string; note?: string | null } = {}): Promise<SimpleResult> {
+  return reply((db, actor, t) => linkOffer(db, offerId, productId, { compatibility: isCompatibility(v.compatibility) ? v.compatibility : undefined, note: v.note }, actor, t));
+}
+
+export async function unlinkOfferAction(offerId: string): Promise<SimpleResult> {
+  return reply((db, actor, t) => unlinkOffer(db, offerId, actor, t));
+}
+
+/** "It is not for this product": the app stops proposing the two together. */
+export async function declineSuggestionAction(offerId: string, productId: string): Promise<SimpleResult> {
+  return reply((db, actor, t) => declineSuggestion(db, offerId, productId, actor, t));
+}
+
+/** How far an offer is the product bought, with the reason. */
+export async function setOfferCompatibilityAction(offerId: string, compatibility: string, note: string | null): Promise<SimpleResult> {
+  return reply(async (db, actor, t) => {
+    if (!isCompatibility(compatibility)) throw new ReplyError(t("Something went wrong."));
+    await setOfferCompatibility(db, offerId, { compatibility, note }, actor, t);
+  });
+}
+
+/** An offer is turned down, or taken up again. */
+export async function decideOfferAction(offerId: string, rejected: boolean, note: string | null): Promise<SimpleResult> {
+  return reply((db, actor, t) => decideOffer(db, offerId, { rejected, note }, actor, t));
+}
+
+/** What it costs to bring the goods to the plant, as stated. */
+export async function saveLandedAction(offerId: string, input: unknown, destinationId: string | null): Promise<SimpleResult> {
+  return reply((db, actor, t) => saveLanded(db, offerId, { input, destinationId }, actor, t));
+}
+
+/** A document of a conversation: named, linked, or uploaded — only an upload is a copy on file. */
+export async function addReplyDocumentAction(form: FormData): Promise<SimpleResult> {
+  return reply(async (db, actor, t) => {
+    const threadId = String(form.get("threadId") ?? "");
+    const kind = String(form.get("kind") ?? "other");
+    const file = form.get("file");
+    const upload = file instanceof File && file.size > 0 ? { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()), mimeType: file.type || null } : null;
+    if (upload && upload.bytes.length > 20 * 1024 * 1024) throw new ReplyError(t("The file is larger than 20 MB."));
+    await addReplyDocument(db, threadId, { offerId: String(form.get("offerId") ?? "") || null, kind: isDocumentKind(kind) ? kind : "other", name: String(form.get("name") ?? ""), url: String(form.get("url") ?? "") || null, note: String(form.get("note") ?? "") || null, file: upload }, actor, t);
+  });
+}
+
+export async function removeReplyDocumentAction(id: string): Promise<SimpleResult> {
+  return reply((db, actor) => removeReplyDocument(db, id, actor));
+}
+
+/** What a record of another part of the app is to this company: the same, of the same group, another — or undecided again. */
+export async function decideCompanyLinkAction(replyId: string, where: string, id: string, relation: string | null): Promise<SimpleResult> {
+  return reply(async (db, actor, t) => {
+    if (where !== "supplier" && where !== "candidate" && where !== "directory") throw new ReplyError(t("Something went wrong."));
+    if (relation !== null && relation !== "same" && relation !== "group" && relation !== "different") throw new ReplyError(t("Something went wrong."));
+    await decideCompanyLink(db, replyId, { where, id }, relation, actor, t);
+  });
+}
+
+/** An event was attributed to the wrong actor: attributed again, with the evidence. */
+export async function correctAttributionAction(eventId: string, actorType: string, evidence: string): Promise<SimpleResult> {
+  return reply(async (db, actor, t) => {
+    if (!isActorType(actorType)) throw new ReplyError(t("Something went wrong."));
+    await correctAttribution(db, eventId, actorType, evidence, actor);
+  });
+}
+
+/** A delivery destination: a new one, or the fields of one on file. */
+export async function saveDestinationAction(v: Partial<Record<DestinationField, string | null>> & { id?: string | null; isDefault?: boolean; confirmed?: boolean }): Promise<SimpleResult> {
+  return reply((db, actor, t) => saveDestination(db, v, actor, t));
+}
+
+export async function removeDestinationAction(id: string): Promise<SimpleResult> {
+  return reply((db, actor) => removeDestination(db, id, actor));
 }

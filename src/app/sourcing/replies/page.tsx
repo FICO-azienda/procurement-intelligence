@@ -5,6 +5,7 @@ import { ReplyStatusPills } from "@/components/replies/pills";
 import { ReplyImportPanel } from "@/components/replies/replies";
 import { Crumbs, Empty, PageHeader, Table, Td, Th, cx, rowClass } from "@/components/ui";
 import { getDb } from "@/db";
+import { todayISO } from "@/lib/analytics";
 import { countryName, flagOf } from "@/lib/countries";
 import { getT } from "@/lib/data";
 import * as f from "@/lib/format";
@@ -32,6 +33,7 @@ export default async function RepliesPage({ searchParams }: PageProps<"/sourcing
   const sp = await searchParams;
   const [db, t] = await Promise.all([getDb(), getT()]);
   const companies = await readReplies(db, t);
+  const today = todayISO();
   const rows = companies.flatMap((c) => c.threads.map((thread) => ({ company: c, thread, statuses: statusesOf(thread) })));
   const status = isReplyStatus(one(sp.status)) ? one(sp.status) : "";
   const category = one(sp.category);
@@ -40,7 +42,7 @@ export default async function RepliesPage({ searchParams }: PageProps<"/sourcing
     .sort((a, b) => REPLY_STATUSES.indexOf(a.thread.status) - REPLY_STATUSES.indexOf(b.thread.status) || priorityRank(a.thread.priority) - priorityRank(b.thread.priority) || a.company.name.localeCompare(b.company.name));
   const categories = [...new Set(rows.flatMap((r) => r.thread.categories))].sort((a, b) => a.localeCompare(b));
   const offers = rows.reduce((n, r) => n + r.thread.offers.length, 0);
-  const validated = rows.reduce((n, r) => n + r.thread.offers.filter((o) => o.validation === "validated").length, 0);
+  const validated = rows.reduce((n, r) => n + r.thread.offers.filter((o) => o.compatibility === "validated").length, 0);
   const href = (next: { status?: string; category?: string }) => {
     const q = new URLSearchParams(Object.entries({ status, category, ...next }).filter(([, v]) => v) as [string, string][]).toString();
     return q ? `/sourcing/replies?${q}` : "/sourcing/replies";
@@ -120,6 +122,7 @@ export default async function RepliesPage({ searchParams }: PageProps<"/sourcing
                         <ReplyStatusPills statuses={statuses} t={t} />
                         {/* On a narrow page the column of the next action is not shown: it is said here instead. */}
                         {thread.nextAction && <div className="mt-1 max-w-[420px] text-[12.5px] text-ink-2 @4xl:hidden">{thread.nextAction}</div>}
+                        {thread.followUpOn && <div className={cx("mt-0.5 text-[12px]", thread.followUpOn < today ? "font-medium text-up" : "text-ink-3")}>{thread.followUpOn < today ? t("To follow up since {date}", { date: f.date(thread.followUpOn) }) : t("To follow up by {date}", { date: f.date(thread.followUpOn) })}</div>}
                       </Td>
                       <Td align="right" className="num hidden @2xl:table-cell">
                         {thread.offers.length || "—"}

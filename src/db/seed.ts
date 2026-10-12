@@ -18,8 +18,7 @@ import {
   quotes,
   supplierAliases,
   supplierProducts,
-  suppliers,
-} from "./schema";
+  suppliers, auditEvents, companyLinks, rfqSuppliers } from "./schema";
 
 type SupplierKey =
   | "abc"
@@ -313,6 +312,10 @@ export async function seedDemo(db: DB) {
 export async function clearAll(db: DB) {
   await db.transaction(async (tx) => {
     await tx.delete(opportunities);
+    // The replies to requests are purchasing data too — and private: none survives a clean start. Their companies take conversations, offers, messages and documents with them.
+    await tx.delete(rfqSuppliers);
+    await tx.delete(companyLinks);
+    await tx.delete(auditEvents);
     await tx.delete(purchases);
     await tx.delete(quotes);
     await tx.delete(importItems);

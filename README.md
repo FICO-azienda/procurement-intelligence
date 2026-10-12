@@ -491,6 +491,24 @@ Pagina **Risposte ai preventivi** (`/sourcing/replies`, dal pulsante nella pagin
 
 Codice: `src/lib/replies/`, `src/server/replies.ts`, `src/app/sourcing/replies/`.
 
+## Preventivi e alternative (offerte collegate ai prodotti)
+
+Nella **scheda prodotto** c'è la sezione **Preventivi e alternative**: l'acquisto attuale (fornitore, ultimo prezzo, media, quantità e spesa degli ultimi 12 mesi, dalle fatture) e quello che i fornitori interpellati hanno risposto su quel prodotto.
+
+- **Tre gruppi**: *offerte confrontabili* (equivalenza tecnica validata, validità non scaduta, costo a destino completo), *offerte da verificare* (con scritto cosa manca per diventare confrontabili) e *fornitori senza prezzo* (hanno risposto sulla categoria e chiedono altro). A parte, chiusi: gli *altri gradi e le offerte non equivalenti*, mai messi in classifica, e le *versioni precedenti e le offerte scartate*.
+- **Collegare non è equiparare**: l'app propone a quale tuo prodotto un'offerta può fare da alternativa (stesso tipo di prodotto, stessa unità; se entrambi hanno un grado scritto come intervallo, dice come stanno). La proposta diventa un collegamento solo quando la confermi, e nasce sempre «da verificare». La **compatibilità tecnica** ha sei stati (non analizzato, possibile compatibilità, in attesa di specifiche, campione da testare, equivalenza validata, non equivalente) e richiede una motivazione.
+- **Pagina dell'offerta** (`/sourcing/replies/offers/<id>`): l'offerta come scritta, il prodotto a cui è collegata, il costo a destino voce per voce, i documenti, le versioni, la decisione (scartata / ripresa) e il registro delle modifiche.
+- **True Landed Cost**: prezzo della merce, cambio (solo se indicato con data e fonte), trasporto internazionale, assicurazione, dazio, sdoganamento, trasporto fino allo stabilimento. La resa dice cosa è già nel prezzo, e ciò che è incluso non viene aggiunto due volte. Ogni voce è *confermata*, *stimata* o *mancante*; se ne manca una il costo è «incompleto» e non ha totale. L'IVA resta fuori.
+- **Risparmio potenziale**: calcolato solo per le offerte confrontabili, sul volume realmente acquistato; se l'ordine minimo supera il volume di un anno, è detto.
+- **Stessa azienda in più sezioni**: la scheda di chi ha risposto mostra dove altro compare (fornitori, candidati, database fornitori). Le corrispondenze certe sono collegate; quelle che si somigliano soltanto sono una proposta da decidere: stessa azienda, stesso gruppo, aziende diverse.
+- **Documenti**: citati, con link, oppure caricati. Solo un file caricato è una copia in archivio; la pagina lo dice.
+- **Registro delle modifiche**: ogni scrittura registra chi (tu, un file caricato, le regole dell'app, l'assistente AI, il fornitore), cosa, quando, valore vecchio e nuovo. Un'attribuzione sbagliata si corregge solo con un'evidenza.
+- **Destinazioni di consegna** (Impostazioni): comune, indirizzo, CAP, provincia, paese, istruzioni di scarico, restrizioni. Si scrivono e si confermano a mano; nessun indirizzo viene preso da un'offerta.
+
+L'app non ha ancora utenti e organizzazioni: i dati stanno sul computer di chi la usa e non esiste un controllo d'accesso tra aziende diverse.
+
+Codice: `src/lib/replies/` (`match.ts`, `offers.ts`, `landed.ts`, `rows.ts`), `src/server/replies.ts`, `src/server/audit.ts`, `src/server/destinations.ts`.
+
 ## Strategia di sourcing (Sourcing Mix)
 
 Pagina **Strategia** (`/strategy`): per i prodotti che pesano di più (Top 5, poi Top 18) mostra il portafoglio di oggi e, per ogni obiettivo, il mix di fornitori che farebbe meglio — costo più basso, bundle, specialisti, valore economico totale, qualità, consegna, rischio, liquidità, meno fornitori, bilanciato, pesi personalizzati.

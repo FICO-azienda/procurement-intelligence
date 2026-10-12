@@ -17,7 +17,7 @@ import path from "node:path";
 import { and, asc, eq } from "drizzle-orm";
 import * as XLSX from "xlsx";
 import type { DB } from "@/db";
-import { marketResearch, marketSuppliers, rfqRequests, rfqSuppliers, supplierCandidates, suppliers } from "@/db/schema";
+import { companyLinks, marketResearch, marketSuppliers, rfqRequests, rfqSuppliers, supplierCandidates, suppliers } from "@/db/schema";
 import { basePrice, baseTotal, isPriced, todayISO } from "@/lib/analytics";
 import { isStrategic } from "@/lib/catalog/kinds";
 import { countryName } from "@/lib/countries";
@@ -237,12 +237,15 @@ export async function readLinks(db: DB, list: MarketSupplier[]): Promise<Map<str
     db.select({ name: suppliers.name, website: suppliers.website }).from(suppliers),
     db.select({ id: rfqSuppliers.id, name: rfqSuppliers.name, website: rfqSuppliers.website }).from(rfqSuppliers),
   ]);
+  // What a person said of a reply and a company of a directory: the same company, although nothing written ties them — or not the same, although something does.
+  const decided = (await db.select().from(companyLinks)).filter((l) => l.aKind === "reply" && l.bKind === "directory");
   const productName = new Map(data.products.map((p) => [p.id, p.name]));
   const asked = new Set(requests.flatMap((r) => (r.candidateIds as string[] | null) ?? []));
   const out = new Map<string, SupplierLinks>();
   for (const s of list) {
     const mine = candidates.filter((c) => sameCompany(c, s));
-    const reply = replied.find((r) => sameCompany(r, s)) ?? null;
+    const said = (replyId: string) => decided.find((l) => l.aId === replyId && l.bId === s.id)?.relation ?? null;
+    const reply = replied.find((r) => said(r.id) === "same") ?? replied.find((r) => sameCompany(r, s) && said(r.id) == null) ?? null;
     if (!mine.length && !reply && !own.some((o) => sameCompany(o, s))) {
       out.set(s.id, NO_LINKS);
       continue;

@@ -73,6 +73,15 @@ export interface Elsewhere {
   why: string;
   products: { id: string; name: string }[];
   market: string | null;
+  /** What a person decided about the two: one company, two companies of one group, or two companies. Null: nobody said. */
+  decided: "same" | "group" | "different" | null;
+}
+
+/** A person's decision about a record of another part of the app and this company. */
+export interface CompanyDecision {
+  where: Elsewhere["where"];
+  id: string;
+  relation: "same" | "group" | "different";
 }
 
 export interface FieldChange {
@@ -168,12 +177,15 @@ export function sameCompanyAs(a: Known, b: Known, t: T = en): { certain: boolean
 }
 
 /** Where else the buyer's records know this company. Nothing there is changed: it is pointed out. */
-export function elsewhereOf(company: Known, records: Pick<Records, "suppliers" | "candidates" | "directory">, t: T = en): Elsewhere[] {
+export function elsewhereOf(company: Known, records: Pick<Records, "suppliers" | "candidates" | "directory">, t: T = en, decisions: CompanyDecision[] = []): Elsewhere[] {
   const out: Elsewhere[] = [];
   const look = <R extends Known>(where: Elsewhere["where"], list: R[], more: (r: R) => Pick<Elsewhere, "products" | "market">) => {
     for (const r of list) {
+      // What a person said about the two comes first: it makes a resemblance sure, or sets it aside for good.
+      const decided = decisions.find((d) => d.where === where && d.id === r.id)?.relation ?? null;
       const same = sameCompanyAs(company, r, t);
-      if (same) out.push({ where, id: r.id, name: r.name, ...same, ...more(r) });
+      if (decided) out.push({ where, id: r.id, name: r.name, certain: decided === "same", why: same?.why ?? "", decided, ...more(r) });
+      else if (same) out.push({ where, id: r.id, name: r.name, ...same, decided: null, ...more(r) });
     }
   };
   look("supplier", records.suppliers, () => ({ products: [], market: null }));

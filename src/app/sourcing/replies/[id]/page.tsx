@@ -3,17 +3,19 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { connection } from "next/server";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { ReplyStatusPills } from "@/components/replies/pills";
-import { CompanyEdit, OfferValidation, ThreadUpdate } from "@/components/replies/replies";
+import { AttributionFix, CompanyLinkDecision, DocumentForm, RemoveDocument } from "@/components/replies/offer-controls";
+import { CompanyEdit, ThreadUpdate } from "@/components/replies/replies";
 import { Crumbs, Disclosure, PageHeader, Section } from "@/components/ui";
 import { getDb } from "@/db";
-import { rfqSuppliers } from "@/db/schema";
+import { products, rfqSuppliers } from "@/db/schema";
 import { todayISO } from "@/lib/analytics";
 import { countryName, flagOf } from "@/lib/countries";
 import { getT } from "@/lib/data";
 import * as f from "@/lib/format";
-import { MESSAGE_KIND_LABEL, REPLY_STATUS_LABEL, SPEC_LABEL, deliveryOf, statusesOf, validityOf } from "@/lib/replies/types";
+import { ACTOR_LABEL, AUDIT_ACTION_LABEL, COMPATIBILITY_LABEL, COMPATIBILITY_MEANING, DOCUMENT_KIND_LABEL, MESSAGE_KIND_LABEL, REPLY_STATUS_LABEL, SPEC_LABEL, availabilityOf, deliveryOf, specsOf, statusesOf, validityOf } from "@/lib/replies/types";
+import { readAudit } from "@/server/audit";
 import { readReplies } from "@/server/replies";
 
 export async function generateMetadata({ params }: PageProps<"/sourcing/replies/[id]">): Promise<Metadata> {
@@ -22,12 +24,8 @@ export async function generateMetadata({ params }: PageProps<"/sourcing/replies/
   return { title: row?.name ?? (await getT())("Replies to requests for quotation") };
 }
 
-/** The specifications in one order everywhere: the ones the app knows first, the others as the source named them. */
-const specsOf = (specs: Record<string, string>) => {
-  const known = Object.keys(SPEC_LABEL);
-  const rank = (k: string) => (known.includes(k) ? known.indexOf(k) : known.length);
-  return Object.entries(specs).sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b));
-};
+const AVAILABILITY = { stored: "A copy is on file", link: "Link only: not a copy", named: "Named only: not on file" } as const;
+const ATTRIBUTION = { recorded: null, reconstructed: "rebuilt from the rows: recorded before the log existed", uncertain: "who did it was not recorded", corrected: "attribution corrected" } as const;
 const days = (from: string, to: string) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
 
 /**
@@ -43,6 +41,13 @@ export default async function ReplyCompanyPage({ params }: PageProps<"/sourcing/
   const c = (await readReplies(db, t)).find((x) => x.id === id);
   if (!c) notFound();
   const today = todayISO();
+  const offerIds = c.threads.flatMap((th) => th.offers.map((o) => o.id));
+  const linked = [...new Set(c.threads.flatMap((th) => th.offers.map((o) => o.productId)).filter((x): x is string => !!x))];
+  const [events, names] = await Promise.all([
+    readAudit(db, [{ entity: "rfq_supplier", ids: [c.id] }, { entity: "rfq_thread", ids: c.threads.map((th) => th.id) }, { entity: "rfq_offer", ids: offerIds }]),
+    linked.length ? db.select({ id: products.id, name: products.name }).from(products).where(inArray(products.id, linked)) : Promise.resolve([]),
+  ]);
+  const productName = new Map(names.map((p) => [p.id, p.name]));
   const none = <span className="text-ink-4">{t("Not stated")}</span>;
   const link = (url: string | null, label?: string) =>
     url ? (
@@ -130,6 +135,7 @@ export default async function ReplyCompanyPage({ params }: PageProps<"/sourcing/
                   {th.priority && <p className="mt-1 text-[12.5px] text-ink-3">{t("Priority: {priority}", { priority: th.priority })}</p>}
                 </div>
                 {block(t("Next action"), th.nextAction)}
+                {th.followUpOn && <p className={`-mt-2 text-[12.5px] ${th.followUpOn < today ? "font-medium text-up" : "text-ink-3"}`}>{th.followUpOn < today ? t("To follow up since {date}", { date: f.date(th.followUpOn) }) : t("To follow up by {date}", { date: f.date(th.followUpOn) })}</p>}
                 {block(t("Still missing"), th.missing, "text-caution")}
               </div>
               <div className="flex flex-col gap-4">
@@ -197,9 +203,24 @@ export default async function ReplyCompanyPage({ params }: PageProps<"/sourcing/
                           ))}
                         </dl>
                         <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-rule pt-3">
-                          <OfferValidation offerId={o.id} validation={o.validation} />
-                          {o.technicalStatus && <span className="text-[12.5px] text-caution">{o.technicalStatus}</span>}
+                          <span title={t(COMPATIBILITY_MEANING[o.compatibility])} className="inline-flex h-[22px] items-center rounded-full bg-caution-wash px-2 text-[12px] font-medium text-caution">
+                            {t(COMPATIBILITY_LABEL[o.compatibility])}
+                          </span>
+                          {o.productId && productName.get(o.productId) ? (
+                            <span className="text-[12.5px] text-ink-2">
+                              {t("for")}{" "}
+                              <Link href={`/products/${o.productId}`} className="text-ledger hover:underline">
+                                {productName.get(o.productId)}
+                              </Link>
+                            </span>
+                          ) : (
+                            <span className="text-[12.5px] text-ink-3">{t("Not linked to one of your products yet")}</span>
+                          )}
+                          <Link href={`/sourcing/replies/offers/${o.id}`} className="text-[12.5px] font-medium text-ledger hover:underline">
+                            {t("Open the offer")}
+                          </Link>
                         </div>
+                        {o.technicalStatus && <p className="mt-2 text-[12.5px] text-caution">{o.technicalStatus}</p>}
                         {o.missing && <p className="mt-2 text-[12.5px] text-ink-2">{t("Missing: {what}", { what: o.missing })}</p>}
                         {(source || o.sourceDocument) && (
                           <p className="mt-1 text-[12.5px] text-ink-3">
@@ -229,6 +250,7 @@ export default async function ReplyCompanyPage({ params }: PageProps<"/sourcing/
                       <span className="font-medium">{t(MESSAGE_KIND_LABEL[m.kind])}</span>
                       {m.status && <span className="text-ink-3"> · {t(REPLY_STATUS_LABEL[m.status])}</span>}
                       {m.source === "manual" && <span className="text-ink-3"> · {t("written by you")}</span>}
+                      {m.source === "assistant" && <span className="text-ink-3"> · {t("written by the AI assistant")}</span>}
                     </div>
                     {m.summary && <div className="text-ink-2">{m.summary}</div>}
                     {m.attachments && <div className="text-[12.5px] text-ink-3">{t("Attached: {files}", { files: m.attachments })}</div>}
@@ -239,20 +261,56 @@ export default async function ReplyCompanyPage({ params }: PageProps<"/sourcing/
             </ul>
           </Section>
 
+          <Section title={t("Documents")} description={t("A link to a message is not a copy: only a file uploaded here stays")}>
+            {th.messages.some((m) => m.attachments) && (
+              <p className="mb-3 text-[13px] text-ink-2">
+                {t("Named in the answers, not on file")}: {th.messages.map((m) => m.attachments).filter(Boolean).join(" · ")}
+              </p>
+            )}
+            {th.documents.length === 0 ? (
+              <p className="mb-3 text-[13.5px] text-ink-3">{t("No document was added to this conversation.")}</p>
+            ) : (
+              <ul className="mb-3 flex flex-col divide-y divide-rule">
+                {th.documents.map((d) => {
+                  const availability = availabilityOf(d);
+                  return (
+                    <li key={d.id} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 py-2 text-[13.5px]">
+                      <div className="min-w-0">
+                        {d.documentId ? <a href={`/documents/${d.documentId}`} target="_blank" rel="noreferrer" className="font-medium text-ledger hover:underline">{d.name}</a> : d.url ? <a href={d.url} target="_blank" rel="noreferrer" className="font-medium text-ledger hover:underline">{d.name}</a> : <span className="font-medium">{d.name}</span>}
+                        <span className="ml-2 text-[12px] text-ink-3">{t(DOCUMENT_KIND_LABEL[d.kind])}</span>
+                        <div className={`text-[12px] ${availability === "stored" ? "text-down" : "text-caution"}`}>{t(AVAILABILITY[availability])}</div>
+                      </div>
+                      <RemoveDocument id={d.id} />
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            <Disclosure title={t("Add a document")}>
+              <DocumentForm threadId={th.id} />
+            </Disclosure>
+          </Section>
+
           <Disclosure title={t("Update this conversation")} description={t("An answer received, a message you sent, a note: it goes in the history")}>
-            <ThreadUpdate threadId={th.id} status={th.status} nextAction={th.nextAction} missing={th.missing} categories={th.categories} today={today} />
+            <ThreadUpdate threadId={th.id} status={th.status} nextAction={th.nextAction} followUpOn={th.followUpOn} missing={th.missing} categories={th.categories} today={today} />
           </Disclosure>
         </div>
       ))}
 
-      <Section className="mt-4" title={t("In your records")}>
+      <Section className="mt-4" title={t("In your records")} description={t("The same company in the other parts of the app: suppliers, candidates, the supplier directory")}>
         {c.elsewhere.length === 0 ? (
           <p className="text-[13.5px] text-ink-3">{t("Nowhere else on file: it is not among your suppliers, your candidates or the supplier directory.")}</p>
         ) : (
-          <ul className="flex flex-col gap-2 text-[13.5px]">
+          <ul className="flex flex-col gap-3 text-[13.5px]">
             {c.elsewhere.map((e) => (
               <li key={`${e.where}|${e.id}`}>
-                {!e.certain && <span className="font-medium text-caution">{t("Possibly the same company")}: </span>}
+                {e.decided === "different" ? (
+                  <span className="text-ink-3">{t("Kept apart by you")}: </span>
+                ) : e.decided === "group" ? (
+                  <span className="font-medium text-ink-2">{t("Same group, another company")}: </span>
+                ) : !e.certain ? (
+                  <span className="font-medium text-caution">{t("Possibly the same company")}: </span>
+                ) : null}
                 {e.where === "supplier" ? (
                   <>
                     <Link href={`/suppliers/${e.id}`} className="font-medium text-ledger hover:underline">{e.name}</Link> — {t("one of your suppliers")}
@@ -272,13 +330,36 @@ export default async function ReplyCompanyPage({ params }: PageProps<"/sourcing/
                     ))}
                   </>
                 )}
-                {!e.certain && <span className="text-ink-3"> ({e.why})</span>}
+                {e.decided === "same" && <span className="text-ink-3"> · {t("confirmed by a person")}</span>}
+                {!e.certain && !e.decided && e.why && <span className="text-ink-3"> ({e.why})</span>}
+                {(e.decided || !e.certain) && <CompanyLinkDecision replyId={c.id} where={e.where} id={e.id} decided={e.decided} />}
               </li>
             ))}
           </ul>
         )}
+        <p className="mt-3 text-[13.5px] text-ink-2">
+          {c.requests.length === 0
+            ? t("No request for quotation is recorded as sent to it from the app.")
+            : t.n(c.requests.length, "{n} request recorded as sent: {dates}", "{n} requests recorded as sent: {dates}", { dates: c.requests.map((r) => f.date(r.sentAt)).join(", ") })}
+        </p>
         <p className="mt-3 text-[12.5px] text-ink-3">{t("These records are only pointed out: loading replies changes none of them, and no company becomes a supplier by answering.")}</p>
       </Section>
+
+      <Disclosure className="mt-3" title={t("Change log")} description={t.n(events.length, "{n} event: who did what, and when", "{n} events: who did what, and when")}>
+        <ul className="flex flex-col divide-y divide-rule text-[13px]">
+          {events.map((e) => (
+            <li key={e.id} className="py-2">
+              <span className="num text-ink-3">{f.date(e.at.slice(0, 10))}</span> · <span className="font-medium">{t(ACTOR_LABEL[e.actorType])}</span>
+              {e.actorId && e.actorType !== "user" && <span className="text-ink-3"> ({e.actorId})</span>} · {AUDIT_ACTION_LABEL[e.action] ? t(AUDIT_ACTION_LABEL[e.action]) : e.action}
+              {e.field && ` · ${e.field}`}
+              {(e.oldValue || e.newValue) && <span className="text-ink-2">: {e.oldValue ?? "—"} → {e.newValue ?? "—"}</span>}
+              {ATTRIBUTION[e.attribution] && <span className="text-caution"> · {t(ATTRIBUTION[e.attribution]!)}</span>}
+              {e.note && <div className="text-[12.5px] text-ink-3">{e.note}</div>}
+              {e.attribution !== "corrected" && e.actorType !== "import" && e.action !== "attribution_corrected" && <div><AttributionFix eventId={e.id} actor={e.actorType} /></div>}
+            </li>
+          ))}
+        </ul>
+      </Disclosure>
 
       <Disclosure className="mt-3" title={t("Correct the company's details")} description={t("A name written wrong, a contact that changed")}>
         <CompanyEdit company={c} />

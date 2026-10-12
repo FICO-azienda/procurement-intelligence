@@ -23,8 +23,7 @@ import {
   settings,
   supplierAliases,
   supplierProducts,
-  suppliers,
-} from "@/db/schema";
+  suppliers, deliveryDestinations } from "@/db/schema";
 import { supplierMetrics, todayISO, type Dataset, type SourceDoc } from "./analytics";
 import { COMPANY_NAME, OWN_COMPANY_NAMES, OWN_VAT_NUMBERS } from "./config";
 import { DEFAULT_LOCALE, en, isLocale, translator, type Locale, type T } from "./i18n";
@@ -292,11 +291,13 @@ export interface CompanySettings {
 }
 
 export async function readSettings(db: DB): Promise<CompanySettings> {
-  const [row] = await db.select().from(settings).limit(1);
+  const [[row], destinations] = await Promise.all([db.select().from(settings).limit(1), db.select().from(deliveryDestinations)]);
+  // The destination requests name: the default one of the delivery destinations, else the town written before they existed.
+  const destination = destinations.find((d) => d.isDefault) ?? (destinations.length === 1 ? destinations[0] : null);
   return {
     companyName: row?.companyName?.trim() || COMPANY_NAME,
     country: row?.country ?? null,
-    deliveryPlace: row?.deliveryPlace?.trim() || null,
+    deliveryPlace: (destination ? (destination.province ? `${destination.city} (${destination.province})` : destination.city) : row?.deliveryPlace?.trim()) || null,
     vatNumber: row?.vatNumber ?? null,
     userName: row?.userName ?? null,
     financingRatePct: row?.financingRatePct ?? null,

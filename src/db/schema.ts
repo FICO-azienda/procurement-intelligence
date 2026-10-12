@@ -984,6 +984,8 @@ export const rfqThreads = pgTable(
     /** What is still needed for a quotation, and what to ask or check next. */
     missing: text("missing"),
     nextAction: text("next_action"),
+    /** When to come back to it, if the next action has a day. */
+    followUpOn: date("follow_up_on"),
     priority: text("priority"),
     notes: text("notes"),
     /** The record as the source gave it, untouched: nothing of it is lost in the reading. */
@@ -1029,8 +1031,23 @@ export const rfqOffers = pgTable(
     validUntil: date("valid_until"),
     validity: text("validity"),
     specs: jsonb("specs").$type<Record<string, string>>().notNull().default({}),
-    /** required | validated | not_equivalent — and what the source says of it, as written. */
-    validation: text("validation").notNull().default("required"),
+    /**
+     * The buyer's product this offer is looked at as an alternative for. A link is not an equivalence: how far the
+     * two are the same thing is `compatibility` (lib/replies/types.ts: COMPATIBILITIES), with the reason in words.
+     * Null: tied to no product — the app may still propose one (lib/replies/match.ts), and proposes nothing for the
+     * products a person said it is not for.
+     */
+    productId: uuid("product_id").references(() => products.id, { onDelete: "set null" }),
+    compatibility: text("compatibility").notNull().default("not_analyzed"),
+    compatibilityNote: text("compatibility_note"),
+    declinedProductIds: jsonb("declined_product_ids").$type<string[]>().notNull().default([]),
+    /** rejected: a person turned the offer down, with the reason. Null: no decision. */
+    decision: text("decision"),
+    decisionNote: text("decision_note"),
+    /** What it costs to bring the goods to the plant, as far as someone stated it (lib/replies/landed.ts): inputs only, the cost is worked out. */
+    landed: jsonb("landed").$type<Record<string, unknown>>().notNull().default({}),
+    /** Where the goods would go. Null: the company's default destination. */
+    destinationId: uuid("destination_id").references((): AnyPgColumn => deliveryDestinations.id, { onDelete: "set null" }),
     technicalStatus: text("technical_status"),
     missing: text("missing"),
     sourceUrl: text("source_url"),
@@ -1067,6 +1084,94 @@ export const rfqMessages = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("rfq_messages_line_idx").on(t.threadId, t.key)],
+);
+
+/** A document of a conversation: the email, an offer in PDF, a data sheet, a certificate. */
+export const rfqDocuments = pgTable(
+  "rfq_documents",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    threadId: uuid("thread_id")
+      .notNull()
+      .references(() => rfqThreads.id, { onDelete: "cascade" }),
+    offerId: uuid("offer_id").references(() => rfqOffers.id, { onDelete: "set null" }),
+    /** DOCUMENT_KINDS (lib/replies/types.ts). */
+    kind: text("kind").notNull().default("other"),
+    name: text("name").notNull(),
+    /** Where it can be read: a link is not a copy — the message can be deleted, the link can stop working. */
+    url: text("url"),
+    /** The copy kept on file, when someone uploaded one. Only this is a permanent copy. */
+    documentId: uuid("document_id").references(() => documents.id, { onDelete: "set null" }),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("rfq_documents_thread_idx").on(t.threadId)],
+);
+
+/**
+ * What a person decided about two records of different parts of the app that may be the same company: a reply, a
+ * supplier, a candidate, a company of a market directory. The records stay as they are — this is a pointer between
+ * them, never a merge: `same` (one company), `group` (two legal entities of one group), `different`.
+ * Sure matches (a VAT number, a domain with the name) need no row: they are read each time.
+ */
+export const companyLinks = pgTable(
+  "company_links",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** reply | supplier | candidate | directory — and the record's id (a candidate company's key). */
+    aKind: text("a_kind").notNull(),
+    aId: text("a_id").notNull(),
+    bKind: text("b_kind").notNull(),
+    bId: text("b_id").notNull(),
+    relation: text("relation").notNull(),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("company_links_pair_idx").on(t.aKind, t.aId, t.bKind, t.bId)],
+);
+
+/** Where goods are delivered: what a request names as the destination and what a delivered cost is worked out to. */
+export const deliveryDestinations = pgTable("delivery_destinations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  recipient: text("recipient"),
+  address: text("address"),
+  postalCode: text("postal_code"),
+  city: text("city").notNull(),
+  province: text("province"),
+  country: text("country"),
+  unloading: text("unloading"),
+  restrictions: text("restrictions"),
+  isDefault: boolean("is_default").notNull().default(false),
+  /** When a person confirmed the address is right. Null: written down, not confirmed yet. */
+  confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+  ...timestamps,
+});
+
+/**
+ * Who changed what, and when (server/audit.ts). The actor is said as it was: a person at the keyboard, the app's
+ * own rules, a file being loaded, an assistant operating the app, a supplier. An event recorded before this table
+ * existed is `reconstructed` from the rows, or `uncertain` when who did it was not kept; a wrong attribution is
+ * `corrected` with the evidence, and what it said before stays in `original_actor_type`.
+ */
+export const auditEvents = pgTable(
+  "audit_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+    actorType: text("actor_type").notNull(),
+    actorId: text("actor_id"),
+    action: text("action").notNull(),
+    entity: text("entity").notNull(),
+    entityId: text("entity_id").notNull(),
+    field: text("field"),
+    oldValue: text("old_value"),
+    newValue: text("new_value"),
+    source: text("source"),
+    note: text("note"),
+    attribution: text("attribution").notNull().default("recorded"),
+    originalActorType: text("original_actor_type"),
+  },
+  (t) => [index("audit_events_entity_idx").on(t.entity, t.entityId)],
 );
 
 export type Supplier = typeof suppliers.$inferSelect;

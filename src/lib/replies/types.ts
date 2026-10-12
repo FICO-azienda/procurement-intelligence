@@ -32,15 +32,68 @@ export const REPLY_STATUS_MEANING: Record<ReplyStatus, Msg> = {
   not_suitable: "It said it cannot supply the product, or not on the conditions asked.",
 };
 
-/** Whether someone verified that the product offered is the buyer's. A file never says "validated" by itself. */
-export const VALIDATIONS = ["required", "validated", "not_equivalent"] as const;
-export type Validation = (typeof VALIDATIONS)[number];
-export const isValidation = (v: unknown): v is Validation => typeof v === "string" && (VALIDATIONS as readonly string[]).includes(v);
-export const VALIDATION_LABEL: Record<Validation, Msg> = {
-  required: "Technical validation required",
-  validated: "Technically validated",
-  not_equivalent: "Not the same product",
+/**
+ * How far an offer is the product the buyer buys — kept apart from where the conversation stands. Only a person
+ * moves it: a file, or the app's own reading of a name, never says "validated".
+ */
+export const COMPATIBILITIES = ["not_analyzed", "possible", "awaiting_specs", "sample_to_test", "validated", "not_equivalent"] as const;
+export type Compatibility = (typeof COMPATIBILITIES)[number];
+export const isCompatibility = (v: unknown): v is Compatibility => typeof v === "string" && (COMPATIBILITIES as readonly string[]).includes(v);
+export const COMPATIBILITY_LABEL: Record<Compatibility, Msg> = {
+  not_analyzed: "Not analysed",
+  possible: "Possibly compatible",
+  awaiting_specs: "Awaiting specifications",
+  sample_to_test: "Sample to test",
+  validated: "Technical equivalence validated",
+  not_equivalent: "Not equivalent",
 };
+export const COMPATIBILITY_MEANING: Record<Compatibility, Msg> = {
+  not_analyzed: "Nobody has looked yet at whether it is the product you buy.",
+  possible: "What it declares fits what you buy, as far as it goes: to verify on its data sheet and on a sample.",
+  awaiting_specs: "Its documents are missing or contradict each other: nothing can be said until the supplier sends the right ones.",
+  sample_to_test: "On paper it fits: a sample has to be tested in your production.",
+  validated: "You verified that it is technically the same product.",
+  not_equivalent: "Another grade or another product: it is not compared with what you buy.",
+};
+
+/** Who did something (server/audit.ts). */
+export const ACTORS = ["user", "system", "import", "ai", "supplier"] as const;
+export type ActorType = (typeof ACTORS)[number];
+export const isActorType = (v: unknown): v is ActorType => typeof v === "string" && (ACTORS as readonly string[]).includes(v);
+export const ACTOR_LABEL: Record<ActorType, Msg> = { user: "You", system: "The app's rules", import: "A file loaded", ai: "AI assistant", supplier: "The supplier" };
+export interface Actor {
+  type: ActorType;
+  id: string | null;
+}
+
+export const DOCUMENT_KINDS = ["email", "offer", "tds", "sds", "catalogue", "certificate", "sample", "other"] as const;
+export type DocumentKind = (typeof DOCUMENT_KINDS)[number];
+export const isDocumentKind = (v: unknown): v is DocumentKind => typeof v === "string" && (DOCUMENT_KINDS as readonly string[]).includes(v);
+export const DOCUMENT_KIND_LABEL: Record<DocumentKind, Msg> = {
+  email: "Email",
+  offer: "Offer or proforma",
+  tds: "Technical data sheet",
+  sds: "Safety data sheet",
+  catalogue: "Catalogue",
+  certificate: "Certificate of analysis",
+  sample: "Sample request",
+  other: "Other document",
+};
+
+export interface ReplyDocument {
+  id: string;
+  threadId: string;
+  offerId: string | null;
+  kind: DocumentKind;
+  name: string;
+  url: string | null;
+  /** The copy on file. Null: only a name or a link — which is not a copy. */
+  documentId: string | null;
+  note: string | null;
+}
+
+/** Whether the document itself is on file, only reachable through a link, or only named. */
+export const availabilityOf = (d: Pick<ReplyDocument, "documentId" | "url">): "stored" | "link" | "named" => (d.documentId ? "stored" : d.url ? "link" : "named");
 
 export const MESSAGE_KINDS = ["reply", "sent", "note"] as const;
 export type MessageKind = (typeof MESSAGE_KINDS)[number];
@@ -87,7 +140,15 @@ export interface ReplyOffer {
   validUntil: string | null;
   validity: string | null;
   specs: Record<string, string>;
-  validation: Validation;
+  productId: string | null;
+  compatibility: Compatibility;
+  compatibilityNote: string | null;
+  declinedProductIds: string[];
+  decision: "rejected" | null;
+  decisionNote: string | null;
+  landed: Record<string, unknown>;
+  destinationId: string | null;
+  createdAt: string;
   technicalStatus: string | null;
   missing: string | null;
   sourceUrl: string | null;
@@ -104,7 +165,8 @@ export interface ReplyMessage {
   summary: string | null;
   reference: string | null;
   attachments: string | null;
-  source: "file" | "manual";
+  /** file: read from a file · manual: written by a person · assistant: written by an assistant operating the app. */
+  source: "file" | "manual" | "assistant";
 }
 
 export interface ReplyThread {
@@ -122,6 +184,7 @@ export interface ReplyThread {
   samples: string | null;
   missing: string | null;
   nextAction: string | null;
+  followUpOn: string | null;
   priority: string | null;
   notes: string | null;
   confirmed: string[];
@@ -129,6 +192,7 @@ export interface ReplyThread {
   sourceFile: string | null;
   offers: ReplyOffer[];
   messages: ReplyMessage[];
+  documents: ReplyDocument[];
 }
 
 /** The fields of a company and of a conversation a file may fill in, and a person may correct. */
@@ -165,7 +229,7 @@ export const FIELD_LABEL: Record<CompanyField | ThreadField | "categories", Msg>
 
 /** The statuses a conversation's offers add to its own: a price received whose product nobody verified is both. */
 export function statusesOf(thread: Pick<ReplyThread, "status" | "offers">): ReplyStatus[] {
-  const pending = thread.offers.some((o) => o.validation === "required");
+  const pending = thread.offers.some((o) => o.compatibility !== "validated" && o.compatibility !== "not_equivalent");
   return pending && thread.status !== "technical_validation_required" ? [thread.status, "technical_validation_required"] : [thread.status];
 }
 
@@ -219,3 +283,31 @@ export function priorityRank(priority: string | null): number {
   if (/\b(bassa|low)\b/.test(p)) return 3;
   return 4;
 }
+
+/** The specifications in one order everywhere: the ones the app knows first, the others as the source named them. */
+export function specsOf(specs: Record<string, string>): [string, string][] {
+  const known = Object.keys(SPEC_LABEL);
+  const rank = (k: string) => (known.includes(k) ? known.indexOf(k) : known.length);
+  return Object.entries(specs).sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b));
+}
+
+/** What an event of the log did, in words. An action with no word here is shown as recorded. */
+export const AUDIT_ACTION_LABEL: Record<string, Msg> = {
+  create: "Created|log",
+  update: "Changed|log",
+  note: "Note|history",
+  link: "Linked to a product",
+  unlink: "Link removed",
+  decline_link: "Said not to be for a product",
+  reject: "Offer turned down",
+  reopen: "Offer taken up again",
+  add_document: "Document added",
+  remove_document: "Document removed",
+  company_link: "Decision on the same company",
+  attribution_corrected: "Attribution corrected",
+  confirm: "Address confirmed",
+  unconfirm: "Address no longer confirmed",
+  set_default: "Made the default",
+  unset_default: "No longer the default",
+  delete: "Removed|log",
+};

@@ -3,14 +3,14 @@
 import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
 import { ChevronRight } from "lucide-react";
-import { listReplyFilesAction, loadReplyFileAction, setOfferValidationAction, updateReplyCompanyAction, updateReplyThreadAction } from "@/app/actions";
+import { listReplyFilesAction, loadReplyFileAction, updateReplyCompanyAction, updateReplyThreadAction } from "@/app/actions";
 import { countryName } from "@/lib/countries";
 import * as f from "@/lib/format";
 import { useT } from "@/lib/i18n/client";
 import type { Elsewhere, PlanSummary } from "@/lib/replies/plan";
 import {
-  FIELD_LABEL, MESSAGE_KINDS, MESSAGE_KIND_LABEL, REPLY_STATUSES, REPLY_STATUS_LABEL, VALIDATIONS, VALIDATION_LABEL,
-  type CompanyField, type MessageKind, type ReplyCompany, type ReplyStatus, type Validation,
+  FIELD_LABEL, MESSAGE_KINDS, MESSAGE_KIND_LABEL, REPLY_STATUSES, REPLY_STATUS_LABEL,
+  type CompanyField, type MessageKind, type ReplyCompany, type ReplyStatus,
 } from "@/lib/replies/types";
 import { Field, Input, Select, Textarea } from "../form-kit";
 import { buttonClass, cx } from "../ui";
@@ -220,13 +220,13 @@ export function ReplyImportPanel({ startOpen }: { startOpen: boolean }) {
 }
 
 /** A person says what happened in a conversation and where it stands: it goes in the history, and is theirs from then on. */
-export function ThreadUpdate({ threadId, status, nextAction, missing, categories, today }: { threadId: string; status: ReplyStatus; nextAction: string | null; missing: string | null; categories: string[]; today: string }) {
+export function ThreadUpdate({ threadId, status, nextAction, followUpOn, missing, categories, today }: { threadId: string; status: ReplyStatus; nextAction: string | null; followUpOn: string | null; missing: string | null; categories: string[]; today: string }) {
   const t = useT();
   const router = useRouter();
   const [busy, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
-  const [v, setV] = useState({ kind: "note" as MessageKind, date: today, summary: "", reference: "", status, nextAction: nextAction ?? "", missing: missing ?? "", categories: categories.join(", ") });
+  const [v, setV] = useState({ kind: "note" as MessageKind, date: today, summary: "", reference: "", status, nextAction: nextAction ?? "", followUpOn: followUpOn ?? "", missing: missing ?? "", categories: categories.join(", ") });
   const set = <K extends keyof typeof v>(key: K, value: (typeof v)[K]) => {
     setDone(false);
     setV((old) => ({ ...old, [key]: value }));
@@ -242,6 +242,7 @@ export function ThreadUpdate({ threadId, status, nextAction, missing, categories
         reference: v.reference,
         status: v.status,
         nextAction: v.nextAction,
+        followUpOn: v.followUpOn,
         missing: v.missing,
         categories: v.categories.split(",").map((c) => c.trim()).filter(Boolean),
       });
@@ -280,8 +281,11 @@ export function ThreadUpdate({ threadId, status, nextAction, missing, categories
       <Field label={t("Link to the message")} hint={t("Optional")}>
         <Input value={v.reference} onChange={(e) => set("reference", e.target.value)} placeholder="https://" />
       </Field>
-      <Field label={t("Next action")} className="@2xl:col-span-2">
+      <Field label={t("Next action")}>
         <Textarea rows={2} value={v.nextAction} onChange={(e) => set("nextAction", e.target.value)} />
+      </Field>
+      <Field label={t("Follow up by")} hint={t("The day to come back to it. Leave it empty for none.")}>
+        <Input type="date" value={v.followUpOn} onChange={(e) => set("followUpOn", e.target.value)} />
       </Field>
       <Field label={t("Still missing")} className="@2xl:col-span-2">
         <Textarea rows={2} value={v.missing} onChange={(e) => set("missing", e.target.value)} />
@@ -351,32 +355,5 @@ export function CompanyEdit({ company }: { company: ReplyCompany }) {
         <span className="text-[12px] text-ink-3">{t("What you write here is yours: a file loaded later does not change it.")}</span>
       </div>
     </div>
-  );
-}
-
-/** Whether an offer is for the product the buyer buys: only a person says so. */
-export function OfferValidation({ offerId, validation }: { offerId: string; validation: Validation }) {
-  const t = useT();
-  const router = useRouter();
-  const [busy, start] = useTransition();
-  return (
-    <Select
-      aria-label={t("Technical validation")}
-      className="h-8! w-auto! min-w-[200px] text-[12.5px]!"
-      value={validation}
-      disabled={busy}
-      onChange={(e) =>
-        start(async () => {
-          await setOfferValidationAction(offerId, e.target.value);
-          router.refresh();
-        })
-      }
-    >
-      {VALIDATIONS.map((x) => (
-        <option key={x} value={x}>
-          {t(VALIDATION_LABEL[x])}
-        </option>
-      ))}
-    </Select>
   );
 }

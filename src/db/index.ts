@@ -48,8 +48,17 @@ export function getDb(): Promise<DB> {
     const stamp = migrationsStamp();
     if (stamp !== globalForDb.__migrations) {
       globalForDb.__migrations = stamp;
-      globalForDb.__db = globalForDb.__db.then(async (db) => {
-        await migratePglite(db, { migrationsFolder });
+      const opened = globalForDb.__db;
+      globalForDb.__db = opened.then(async (db) => {
+        try {
+          await migratePglite(db, { migrationsFolder });
+        } catch (err) {
+          // A migration that cannot be applied now — its file still being written, the list half-edited — must not
+          // take the connection down with it: the connection stays as it was, and the next request tries again.
+          globalForDb.__migrations = undefined;
+          globalForDb.__db = opened;
+          throw err;
+        }
         return db;
       });
     }

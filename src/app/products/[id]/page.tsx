@@ -21,7 +21,7 @@ import { getDb } from "@/db";
 import { mergedInto } from "@/server/mapper";
 import { documentsOnFile, getPriorityDataset, getProfiles, linkedProductDocuments } from "@/server/product-data";
 import { ButtonLink, Crumbs, Delta, Disclosure, Empty, ExportLink, Label, PageHeader, Section, Sku, Table, Td, Th, cx, rowClass } from "@/components/ui";
-import { basePrice, baseTotal, isPriced, normalizePurchases, type Dataset, type ProductData } from "@/lib/analytics";
+import { basePrice, baseTotal, isPriced, normalizePurchases, todayISO, type Dataset, type ProductData } from "@/lib/analytics";
 import { ATTRIBUTE_LABEL, attributesOf } from "@/lib/catalog/attributes";
 import { KIND_LABEL, isProductKind, type ProductKind } from "@/lib/catalog/kinds";
 import { mappingOf } from "@/lib/catalog/mapper";
@@ -39,6 +39,9 @@ import { CONFIDENCE_WORD } from "@/lib/intel/summary";
 import { lookups } from "@/lib/lookups";
 import { getNegotiations, keepEstimateHistory, readEstimateHistory } from "@/server/negotiation";
 import { getResearch } from "@/server/research";
+import { ProductOffersPanel } from "@/components/replies/product-offers";
+import { awaitingRow, offerRow } from "@/lib/replies/rows";
+import { readProductOffers, type OfferView } from "@/server/replies";
 
 export async function generateMetadata({ params }: PageProps<"/products/[id]">): Promise<Metadata> {
   const { id } = await params;
@@ -77,6 +80,9 @@ export default async function ProductPage({ params, searchParams }: PageProps<"/
     readEstimateHistory(db, product.id),
   ]);
   const negotiation = negotiations.get(product.id) ?? null;
+  // What the companies asked for a quotation answered about this product (server/replies.ts).
+  const replies = await readProductOffers(db, product.id, t);
+  const toRow = (v: OfferView) => offerRow(v, { id: product.id, unit: product.unit }, { price: price.current?.price ?? null, annualQuantity: pi.metrics.annualQuantity || null }, todayISO(), t);
   // What is shown now joins the history once the page is out, if it differs from the last estimate kept.
   keepEstimateHistory([product.id]);
   // Reviewing the Top 5: the next of them that still has something missing or to confirm.
@@ -273,6 +279,39 @@ export default async function ProductPage({ params, searchParams }: PageProps<"/
       )}
 
       <div className="mt-6 space-y-3">
+        {replies && (replies.comparable.length + replies.toVerify.length + replies.otherGrades.length + replies.history.length + replies.awaitingPrice.length > 0 || replies.notSuitable > 0) && (
+          <Section
+            flush
+            title={t("Quotes and alternatives")}
+            description={t("What the suppliers you asked answered about this product: what can be compared, what is still to verify, who has not quoted yet")}
+            actions={<ButtonLink href="/sourcing/replies">{t("All the replies")}</ButtonLink>}
+          >
+            <dl className="grid gap-x-6 gap-y-2 border-b border-rule px-5 py-3 text-[13px] @xl:grid-cols-2 @4xl:grid-cols-5">
+              {(
+                [
+                  [t("Current supplier"), price.current ? (data.suppliers.find((x) => x.id === price.current!.supplierId)?.name ?? "—") : "—"],
+                  [t("Last price paid"), price.current ? `${f.price(price.current.price)}/${product.unit} · ${f.date(price.current.date)}` : "—"],
+                  [t("Average price paid"), price.weightedAveragePrice != null ? `${f.price(price.weightedAveragePrice)}/${product.unit}` : "—"],
+                  [t("Bought in the last 12 months"), f.quantity(pi.metrics.annualQuantity, product.unit)],
+                  [t("Spend in the last 12 months"), f.money(Math.round(pi.metrics.annualSpend))],
+                ] as [string, string][]
+              ).map(([label, value]) => (
+                <div key={label} className="min-w-0">
+                  <dt className="text-[12px] text-ink-3">{label}</dt>
+                  <dd className="num font-medium">{value}</dd>
+                </div>
+              ))}
+            </dl>
+            <ProductOffersPanel
+              comparable={replies.comparable.map(toRow)}
+              toVerify={replies.toVerify.map(toRow)}
+              otherGrades={replies.otherGrades.map(toRow)}
+              history={replies.history.map(toRow)}
+              awaiting={replies.awaitingPrice.map((a) => awaitingRow(a, t))}
+              notSuitable={replies.notSuitable}
+            />
+          </Section>
+        )}
         <Section title={t("Price history")} description={t("What you paid per {unit}, purchase by purchase", { unit: product.unit })} actions={<ExportLink href={`/export/price-history?product=${product.id}`} />}>
           <PriceChart
             asOf={intel.asOf}

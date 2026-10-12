@@ -247,9 +247,10 @@ describe("the plan", () => {
 });
 
 describe("a conversation's statuses", () => {
-  const offer = (validation: ReplyOffer["validation"]) => ({ validation }) as ReplyOffer;
+  const offer = (compatibility: ReplyOffer["compatibility"]) => ({ compatibility }) as ReplyOffer;
   it("says a price received is still to validate until someone verified the product", () => {
-    expect(statusesOf({ status: "quote_received", offers: [offer("required")] })).toEqual(["quote_received", "technical_validation_required"]);
+    expect(statusesOf({ status: "quote_received", offers: [offer("not_analyzed")] })).toEqual(["quote_received", "technical_validation_required"]);
+    expect(statusesOf({ status: "quote_received", offers: [offer("possible")] })).toEqual(["quote_received", "technical_validation_required"]);
     expect(statusesOf({ status: "quote_received", offers: [offer("validated"), offer("not_equivalent")] })).toEqual(["quote_received"]);
     expect(statusesOf({ status: "needs_information", offers: [] })).toEqual(["needs_information"]);
   });
