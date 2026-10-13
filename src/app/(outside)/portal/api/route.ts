@@ -18,7 +18,7 @@ import { AuthError, endSession, signIn, startSession } from "@/server/auth";
 import { mailerFromEnv } from "@/server/mail";
 import { OrderError, saveOrderProduct, saveTerms, setAudience, setCustomerOrdering, setProductOrders, withdrawReserved, type ProductInput } from "@/server/order-catalog";
 import { acceptOrder, markNotificationsRead, proposeChanges, rejectOrder } from "@/server/orders";
-import { OrgError, acceptConditions, acceptInvite, addUser, saveCompany, sendEmailCode, setUserDisabled, verifyEmailCode, type CompanyField, type Registration } from "@/server/orgs";
+import { OrgError, acceptConditions, acceptInvite, addUser, changePassword, saveCompany, sendEmailCode, setUserDisabled, verifyEmailCode, type CompanyField, type Registration } from "@/server/orgs";
 import { directOrderOn, getOutsideT, supplierPrincipal } from "@/server/session";
 
 type Args = Record<string, unknown>;
@@ -93,6 +93,10 @@ export async function POST(request: NextRequest) {
       return session(NextResponse.json({ ok: true }), started.token, started.expiresAt);
     }
     if (!who) return fail(t("Sign in first."), 401);
+    if (op === "changePassword") {
+      await changePassword(db, who, text(args.current), text(args.next), request.cookies.get(PORTAL_COOKIE)?.value ?? null, t);
+      return NextResponse.json({ ok: true });
+    }
     const run = OPS[op];
     if (!run) return fail(t("Something went wrong."), 400);
     return NextResponse.json({ ok: true, ...((await run(db, who, args, t)) ?? {}) });

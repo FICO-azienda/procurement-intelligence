@@ -8,7 +8,9 @@
  * here: it has its own entry (`/portal/api`).
  */
 import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
 import { getDb, type DB } from "@/db";
+import { WORKSPACE_COOKIE, authSecret, unseal } from "@/lib/auth/cookie";
 import { settings } from "@/db/schema";
 import { todayISO } from "@/lib/analytics";
 import { getT } from "@/lib/data";
@@ -17,7 +19,7 @@ import type { OrderStatus, Principal } from "@/lib/orders/types";
 import { AuthError } from "@/server/auth";
 import { OrderError, askConditions, tieListing } from "@/server/order-catalog";
 import { cancelOrder, completeOrder, createOrder, decideProposal, markNotificationsRead, sendDraft } from "@/server/orders";
-import { OrgError, addUser, inviteCompany, revokeInvite, setUserDisabled, type RecordRef } from "@/server/orgs";
+import { OrgError, addUser, changePassword, inviteCompany, revokeInvite, setUserDisabled, type RecordRef } from "@/server/orgs";
 import { directOrderOn, workspacePrincipal } from "@/server/session";
 
 export type OrderResult<R = unknown> = ({ ok: true } & R) | { ok: false; error: string };
@@ -107,4 +109,13 @@ export async function addWorkspaceUserAction(v: { name: string; email: string; p
 
 export async function setWorkspaceUserDisabledAction(userId: string, disabled: boolean): Promise<OrderResult> {
   return run((db, who, t) => setUserDisabled(db, who, userId, disabled, t), false);
+}
+
+/** The signed-in person changes their own password; every other browser signed in with the account is signed out. */
+export async function changePasswordAction(current: string, next: string): Promise<OrderResult> {
+  return run(async (db, who, t) => {
+    const secret = authSecret();
+    const token = secret ? unseal((await cookies()).get(WORKSPACE_COOKIE)?.value, secret) : null;
+    await changePassword(db, who, String(current ?? ""), String(next ?? ""), token, t);
+  }, false);
 }

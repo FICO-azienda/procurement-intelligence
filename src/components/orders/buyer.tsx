@@ -11,7 +11,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition, type ReactNode } from "react";
 import {
-  addWorkspaceUserAction, askConditionsAction, cancelOrderAction, completeOrderAction, decideProposalAction, inviteCompanyAction, markOrdersReadAction, requestOrderAction, revokeInviteAction, sendDraftAction,
+  addWorkspaceUserAction, askConditionsAction, cancelOrderAction, changePasswordAction, completeOrderAction, decideProposalAction, inviteCompanyAction, markOrdersReadAction, requestOrderAction, revokeInviteAction, sendDraftAction,
   setDirectOrderAction, setWorkspaceUserDisabledAction, tieListingAction, type OrderResult,
 } from "@/app/order-actions";
 import type { CategoryTree, Selection } from "@/lib/catalog/tree";
@@ -27,7 +27,7 @@ import type { RecordRef } from "@/server/orgs";
 import { ProductCategoryPicker } from "../catalog/category-picker";
 import { Field, FormError, Input, Select, Sheet, Textarea, useSheet } from "../form-kit";
 import { buttonClass, cx, type Variant } from "../ui";
-import { AmountLines, Facts, TermsFacts } from "./shared";
+import { AmountLines, Facts, PasswordForm, TermsFacts } from "./shared";
 
 /** Runs an action, says what went wrong, and shows the page as it is afterwards. */
 function useRun() {
@@ -493,4 +493,9 @@ export function WorkspaceUserToggle({ userId, disabled }: { userId: string; disa
       {problem}
     </span>
   );
+}
+
+/** The signed-in person of the workspace changes their own password. */
+export function WorkspacePassword() {
+  return <PasswordForm submit={(current, next) => changePasswordAction(current, next)} />;
 }

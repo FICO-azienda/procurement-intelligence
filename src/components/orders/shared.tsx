@@ -5,7 +5,7 @@
  * of an order, the six conditions, what an order is worth, its history. The
  * buttons differ by side and live elsewhere (buyer.tsx, portal.tsx).
  */
-import type { ReactNode } from "react";
+import { useState, useTransition, type ReactNode } from "react";
 import * as f from "@/lib/format";
 import { useT } from "@/lib/i18n/client";
 import { destinationLine, termsLines } from "@/lib/orders/flow";
@@ -15,7 +15,8 @@ import {
 } from "@/lib/orders/types";
 import type { NotificationView, OrderView } from "@/server/orders";
 import { changedFields } from "@/lib/orders/flow";
-import { cx } from "../ui";
+import { Field, Input } from "../form-kit";
+import { buttonClass, cx } from "../ui";
 
 const pill = "inline-flex h-[22px] items-center rounded-full px-2 text-[12px] font-medium whitespace-nowrap";
 
@@ -215,4 +216,45 @@ export function OrderTimeline({ order }: { order: OrderView }) {
 export function NotificationLine({ n }: { n: NotificationView }) {
   const t = useT();
   return <>{t(NOTIFICATION_TEXT[n.kind], n.params)}</>;
+}
+
+/** Changing one's own password: the one in use is asked first. Where it is sent is the caller's — the workspace's action, or the portal's entry. */
+export function PasswordForm({ submit }: { submit: (current: string, next: string) => Promise<{ ok: boolean; error?: string }> }) {
+  const t = useT();
+  const [busy, start] = useTransition();
+  const [v, setV] = useState({ current: "", next: "" });
+  const [state, setState] = useState<{ ok: boolean; text: string } | null>(null);
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label={t("The password you have now")}>
+          <Input type="password" autoComplete="current-password" value={v.current} onChange={(e) => setV({ ...v, current: e.target.value })} />
+        </Field>
+        <Field label={t("The new password")} hint={t("At least 10 characters. It is kept only as a hash.")}>
+          <Input type="password" autoComplete="new-password" value={v.next} onChange={(e) => setV({ ...v, next: e.target.value })} />
+        </Field>
+      </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          className={buttonClass("secondary")}
+          disabled={busy || !v.current || !v.next}
+          onClick={() =>
+            start(async () => {
+              const res = await submit(v.current, v.next);
+              setState(res.ok ? { ok: true, text: t("Password changed. Every other browser signed in with this account was signed out.") } : { ok: false, text: res.error || t("Something went wrong.") });
+              if (res.ok) setV({ current: "", next: "" });
+            })
+          }
+        >
+          {t("Change password")}
+        </button>
+        {state && (
+          <span role={state.ok ? undefined : "alert"} className={cx("text-[12.5px]", state.ok ? "text-down" : "text-up")}>
+            {state.text}
+          </span>
+        )}
+      </div>
+    </div>
+  );
 }

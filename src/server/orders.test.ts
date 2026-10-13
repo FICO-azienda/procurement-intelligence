@@ -20,7 +20,7 @@ import { AuthError, principalOf, signIn, startSession } from "./auth";
 import type { Mail, Mailer } from "./mail";
 import { askConditions, catalogProposals, readListings, readPortal, saveOrderProduct, saveTerms, setAudience, setCustomerOrdering, setProductOrders, termsProposals, tieListing, withdrawReserved } from "./order-catalog";
 import { acceptOrder, cancelOrder, completeOrder, createOrder, decideProposal, expireDue, markNotificationsRead, pendingCount, proposeChanges, readNotifications, readOrder, readOrders, rejectOrder, sendDraft } from "./orders";
-import { OrgError, acceptConditions, acceptInvite, addUser, ensureWorkspaceOrg, inviteCompany, readInvite, readOrg, sendEmailCode, verifyEmailCode } from "./orgs";
+import { OrgError, acceptConditions, acceptInvite, addUser, changePassword, ensureWorkspaceOrg, inviteCompany, readInvite, readOrg, sendEmailCode, verifyEmailCode } from "./orgs";
 
 let db: DB;
 const TODAY = "2026-10-12";
@@ -574,6 +574,25 @@ describe("what belongs to another company", () => {
     expect(await principalOf(db, last.token, "supplier")).not.toBeNull();
     await expect(signIn(db, "clerk@mockwax.example", PASSWORD, "supplier", undefined, seller.orgId)).resolves.toMatchObject({ orgId: rival.orgId });
     await expect(setUserDisabled(db, seller, seller.userId!, true)).rejects.toThrow(/your own account/);
+  });
+});
+
+describe("one's own password", () => {
+  it("is changed only by who knows the one in use, and signs every other browser out", async () => {
+    const here = await signIn(db, "sales@mockwax.example", PASSWORD, "supplier");
+    const elsewhere = await signIn(db, "sales@mockwax.example", PASSWORD, "supplier");
+    const me = (await principalOf(db, here.token, "supplier"))!;
+    await expect(changePassword(db, me, "not-the-password", "a-new-mock-password", here.token)).rejects.toThrow(/not right/);
+    await expect(changePassword(db, me, PASSWORD, "short", here.token)).rejects.toThrow(/at least/);
+    await expect(changePassword(db, me, PASSWORD, PASSWORD, here.token)).rejects.toThrow(/the one you have/);
+    await changePassword(db, me, PASSWORD, "a-new-mock-password", here.token);
+    expect(await principalOf(db, here.token, "supplier")).not.toBeNull();
+    expect(await principalOf(db, elsewhere.token, "supplier")).toBeNull();
+    await expect(signIn(db, "sales@mockwax.example", PASSWORD, "supplier")).rejects.toThrow(/not right/);
+    await expect(signIn(db, "sales@mockwax.example", "a-new-mock-password", "supplier")).resolves.toMatchObject({ orgId: seller.orgId });
+    // The workspace used on the company's own computer has nobody signed in: there is no password to change.
+    await expect(changePassword(db, buyer, "x", "a-new-mock-password", null)).rejects.toThrow(/Sign in first/);
+    await changePassword(db, me, "a-new-mock-password", PASSWORD, here.token);
   });
 });
 

@@ -559,6 +559,34 @@ Le condizioni del servizio (`src/lib/orders/conditions.ts`) sono una **bozza per
 
 Codice: `src/lib/orders/` (regole pure e test), `src/server/order-catalog.ts`, `src/server/orders.ts`, `src/app/order-actions.ts`, `src/app/(outside)/portal/`, `src/components/orders/`.
 
+## Lavorare in due sugli stessi dati
+
+**Dove stanno i dati.** Su GitHub c'è soltanto il codice. I dati reali stanno sul computer di chi usa l'app, nella cartella `.data/` (esclusa da git): il database (`.data/pglite`), i documenti caricati (`.data/files`), i file di ricerca (`.data/research`). La demo pubblica usa dati di esempio. Fare `git pull` non porta quindi alcuna fattura.
+
+**Un solo database per tutti (la soluzione vera).** L'app gira su un server raggiungibile da entrambi, con un database unico, e ciascuno entra con il proprio utente:
+
+1. creare le persone in Impostazioni → «Persone della tua azienda» (almeno un amministratore);
+2. avviare l'app sul server con `WORKSPACE_ACCESS=login` e `AUTH_SECRET` (una stringa casuale di almeno 32 caratteri), su HTTPS;
+3. per il database: lasciare quello incorporato sul disco del server, oppure indicare un Postgres con `DATABASE_URL` (stesso schema, stesse migrazioni); con un Postgres condiviso i documenti vanno in un archivio file condiviso (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`).
+
+Senza accesso, nessuna pagina, esportazione o azione risponde. Il percorso `DATABASE_URL` esiste nel codice ma **non è stato provato su un Postgres reale** in questa fase.
+
+**Portare i dati su un altro computer (trasferimento verificato).** Sul computer che ha i dati, con l'app accesa:
+
+```bash
+npm run data:export
+```
+
+crea `.data/exports/<giorno>/` con tutte le tabelle, i documenti e i file di ricerca. Sull'altro computer, dopo `git pull` e `npm install`, **con l'app spenta** e un database vuoto:
+
+```bash
+npm run data:import -- percorso/della/cartella
+```
+
+Il caricamento è tutto o niente e viene controllato all'arrivo: righe per tabella e totale degli acquisti al centesimo; se non corrispondono, non resta nulla. Viaggiano anche gli account (con le impronte delle password); non viaggiano le sessioni. **Attenzione: così i database sono due e da quel momento divergono** — va bene per consultare o per passare a un server, non per lavorare in due. La cartella contiene dati riservati: si consegna in privato e non va mai in un repository pubblico.
+
+Codice: `src/server/transfer.ts`, `scripts/data.ts`, `src/app/export/data/route.ts`.
+
 ## Migrazioni sicure
 
 Su un computer con dati reali una modifica allo schema si fa con:

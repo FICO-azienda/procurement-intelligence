@@ -25,7 +25,7 @@ import type { OrderView } from "@/server/orders";
 import type { InviteView, OrgView } from "@/server/orgs";
 import { Field, FormError, Input, Select, Sheet, Textarea, toInput, useSheet } from "../form-kit";
 import { buttonClass, cx } from "../ui";
-import { OrderFacts, TermsFacts } from "./shared";
+import { OrderFacts, PasswordForm, TermsFacts } from "./shared";
 
 type Called<R> = ({ ok: true } & R) | { ok: false; error: string };
 
@@ -1033,3 +1033,8 @@ export function TermsRead({ view, unit }: { view: TermsView; unit: string }) {
   );
 }
 
+
+/** The signed-in person of a supplier changes their own password. */
+export function PortalPassword() {
+  return <PasswordForm submit={(current, next) => portalCall("changePassword", { current, next })} />;
+}

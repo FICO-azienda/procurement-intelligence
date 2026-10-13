@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { CompanyForm, ConditionsAccept, EmailVerify, UserForm, UserToggle } from "@/components/orders/portal";
+import { CompanyForm, ConditionsAccept, EmailVerify, PortalPassword, UserForm, UserToggle } from "@/components/orders/portal";
 import { Disclosure, Section } from "@/components/ui";
 import * as f from "@/lib/format";
 import { ORG_REQUIREMENTS, ORG_REQUIREMENT_LABEL } from "@/lib/orders/ready";
@@ -93,6 +93,9 @@ export default async function PortalCompany() {
             <UserForm />
           </Disclosure>
         )}
+        <Disclosure title={t("Change your password")} className="mt-3">
+          <PortalPassword />
+        </Disclosure>
       </Section>
     </div>
   );

@@ -7,7 +7,7 @@ import { getDb } from "@/db";
 import { placeOf, readDestinations } from "@/server/destinations";
 import { BASE_CURRENCY } from "@/lib/config";
 import { getDataset, getSettings, getT } from "@/lib/data";
-import { DirectOrderSwitch, WorkspaceUserForm, WorkspaceUserToggle } from "@/components/orders/buyer";
+import { DirectOrderSwitch, WorkspacePassword, WorkspaceUserForm, WorkspaceUserToggle } from "@/components/orders/buyer";
 import { workspaceAccess } from "@/lib/auth/cookie";
 import { PERMISSION_LABEL, ROLE_LABEL } from "@/lib/orders/types";
 import { readOrg } from "@/server/orgs";
@@ -87,9 +87,16 @@ export default async function SettingsPage() {
                 ))}
               </ul>
             )}
-            <Disclosure title={t("Add a person")}>
-              <WorkspaceUserForm />
-            </Disclosure>
+            <div className="flex flex-col gap-3">
+              <Disclosure title={t("Add a person")}>
+                <WorkspaceUserForm />
+              </Disclosure>
+              {who?.userId && (
+                <Disclosure title={t("Change your password")}>
+                  <WorkspacePassword />
+                </Disclosure>
+              )}
+            </div>
           </Section>
         )}
 

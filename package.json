@@ -11,7 +11,9 @@
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",
     "db:reset": "tsx scripts/db.ts reset",
-    "db:clear": "tsx scripts/db.ts clear"
+    "db:clear": "tsx scripts/db.ts clear",
+    "data:export": "tsx scripts/data.ts export",
+    "data:import": "tsx scripts/data.ts import"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",

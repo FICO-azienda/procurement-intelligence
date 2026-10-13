@@ -18,16 +18,16 @@
  *    way to send email switched on, no address is verified, and it is said.
  */
 import { randomInt } from "node:crypto";
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull, ne } from "drizzle-orm";
 import type { DB } from "@/db";
-import { notifications, orgInvites, orgMembers, organizations, rfqSuppliers, settings, suppliers, tradeRelationships, users } from "@/db/schema";
+import { authSessions, notifications, orgInvites, orgMembers, organizations, rfqSuppliers, settings, suppliers, tradeRelationships, users } from "@/db/schema";
 import { COMPANY_NAME } from "@/lib/config";
 import { en, type T } from "@/lib/i18n";
 import { orgGaps, type OrgFacts, type OrgRequirement } from "@/lib/orders/ready";
 import { ORDER_CONFIG, ORDER_TERMS_VERSION, PERMISSIONS, permissionsOf, type Permission, type Principal, type Role } from "@/lib/orders/types";
 import type { Actor } from "@/lib/replies/types";
 import { logEvents } from "./audit";
-import { emailKey, hashPassword, isEmail, newToken, passwordProblem, tokenHash } from "./auth";
+import { checkPassword, emailKey, hashPassword, isEmail, newToken, passwordProblem, tokenHash } from "./auth";
 import type { Mailer } from "./mail";
 
 export class OrgError extends Error {}
@@ -198,6 +198,27 @@ export async function setUserDisabled(db: DB, who: Principal, userId: string, di
   await db.transaction(async (tx) => {
     await tx.update(orgMembers).set({ disabledAt: disabled ? new Date() : null, updatedAt: new Date() }).where(eq(orgMembers.id, row.member.id));
     await logEvents(tx as unknown as DB, actorOf(who), [{ action: disabled ? "disable_user" : "enable_user", entity: "organization", entityId: who.orgId, newValue: row.user.email, source: who.side === "supplier" ? "portal" : "ui" }]);
+  });
+}
+
+/**
+ * A person changes their own password: the one they have is asked first, and
+ * every other browser signed in with the account is signed out — the one they
+ * are using stays. An account is one person's across the companies they
+ * belong to: so is its password.
+ */
+export async function changePassword(db: DB, who: Principal, current: string, next: string, keepToken: string | null, t: T = en): Promise<void> {
+  if (!who.userId) throw new OrgError(t("Sign in first."));
+  const [user] = await db.select().from(users).where(eq(users.id, who.userId));
+  if (!user || !(await checkPassword(current, user.passwordHash))) throw new OrgError(t("The password you have now is not right."));
+  const weak = passwordProblem(next, t);
+  if (weak) throw new OrgError(weak);
+  if (next === current) throw new OrgError(t("The new password is the one you have."));
+  const passwordHash = await hashPassword(next);
+  await db.transaction(async (tx) => {
+    await tx.update(users).set({ passwordHash, updatedAt: new Date() }).where(eq(users.id, user.id));
+    await tx.update(authSessions).set({ revokedAt: new Date() }).where(and(eq(authSessions.userId, user.id), isNull(authSessions.revokedAt), keepToken ? ne(authSessions.tokenHash, tokenHash(keepToken)) : undefined));
+    await logEvents(tx as unknown as DB, actorOf(who), [{ action: "change_password", entity: "organization", entityId: who.orgId, newValue: user.email, source: who.side === "supplier" ? "portal" : "ui" }]);
   });
 }
 

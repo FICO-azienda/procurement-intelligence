@@ -570,4 +570,12 @@ export const orders = {
   "No payment passes through the platform, and the order service is free during the pilot.": "Nessun pagamento passa dalla piattaforma, e il servizio ordini è gratuito durante il pilota.",
   "These conditions are a pilot draft: they have not been reviewed by a lawyer yet, and will be before the service is offered beyond the pilot.":
     "Queste condizioni sono una bozza per il pilota: non sono ancora state riviste da un legale, e lo saranno prima che il servizio venga offerto oltre il pilota.",
+  // ---- One's own password
+  "The password you have now is not right.": "La password attuale non è corretta.",
+  "The new password is the one you have.": "La nuova password è uguale a quella attuale.",
+  "The password you have now": "La password attuale",
+  "The new password": "La nuova password",
+  "Password changed. Every other browser signed in with this account was signed out.": "Password cambiata. Ogni altro browser collegato con questo account è stato disconnesso.",
+  "Change password": "Cambia password",
+  "Change your password": "Cambia la tua password",
 } as const;
