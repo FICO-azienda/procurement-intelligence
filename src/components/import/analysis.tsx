@@ -8,7 +8,7 @@ import {
   answerSameAction,
   confirmProductsAction,
   type ActionResult,
-} from "@/app/import/actions";
+} from "@/app/(workspace)/import/actions";
 import {
   KIND_LABEL,
   PRODUCT_KINDS,

@@ -155,6 +155,20 @@
       "when": 1791838024582,
       "tag": "0021_offer_validation_moved",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1791841074373,
+      "tag": "0022_direct_order",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1791869762685,
+      "tag": "0023_people_and_memberships",
+      "breakpoints": true
     }
   ]
 }

@@ -18,8 +18,8 @@ const BASE = process.env.NEXT_BASE_PATH ?? "";
 const ORIGIN = process.env.SNAPSHOT_ORIGIN ?? "http://localhost:3100";
 const OUT = path.resolve(process.env.SNAPSHOT_OUT ?? "out");
 const MAX_PAGES = Number(process.env.SNAPSHOT_MAX_PAGES ?? 1000);
-// Route handlers and data endpoints: not pages.
-const SKIP = [/^\/export\//, /^\/documents\//, /^\/search(\/|$)/, /^\/_next\//];
+// Route handlers and data endpoints: not pages. The supplier portal and the sign-in page need a server: not in the demo.
+const SKIP = [/^\/export\//, /^\/documents\//, /^\/search(\/|$)/, /^\/_next\//, /^\/portal(\/|$)/, /^\/login(\/|$)/];
 
 async function waitForServer() {
   for (let i = 0; i < 120; i++) {
@@ -56,7 +56,9 @@ await mkdir(OUT, { recursive: true });
 // Start from every page without parameters, then follow links to the others.
 const pages = (await readdir("src/app", { recursive: true }))
   .filter((f) => path.basename(f) === "page.tsx" && !f.includes("["))
-  .map((f) => "/" + path.dirname(f).split(path.sep).join("/").replace(/^\.$/, ""));
+  // A folder in brackets groups routes and is no part of the address: "(workspace)/products" is "/products".
+  .map((f) => "/" + path.dirname(f).split(path.sep).filter((part) => part !== "." && !/^\(.*\)$/.test(part)).join("/"))
+  .filter((route) => !SKIP.some((re) => re.test(route)));
 const seen = new Set(pages);
 const queue = [...seen];
 let saved = 0;

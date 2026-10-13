@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { ArrowRight, ClipboardPaste, UploadCloud } from "lucide-react";
 import { interpretPurchase } from "@/app/actions";
-import { uploadFiles } from "@/app/import/actions";
+import { uploadFiles } from "@/app/(workspace)/import/actions";
 import { leftOutNotes, openArchive, type LeftOut } from "@/lib/import/archive";
 import { ACCEPT, isArchive } from "@/lib/import/files";
 import { useT } from "@/lib/i18n/client";

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { ArrowLeftRight, Boxes, Building2, ChevronDown, ClipboardCheck, Globe, Home, Lightbulb, ReceiptText, Scale, Settings, Upload, type LucideIcon } from "lucide-react";
+import { ArrowLeftRight, Boxes, Building2, ChevronDown, ClipboardCheck, Globe, Home, Lightbulb, PackageCheck, ReceiptText, Scale, Settings, Upload, type LucideIcon } from "lucide-react";
 import { APP_SHORT_NAME } from "@/lib/config";
 import type { Msg } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/client";
@@ -26,6 +26,9 @@ const NAV: NavItem[] = [
   { href: "/import", label: "Import|nav", icon: Upload, also: ["/review"] },
   { href: "/opportunities", label: "Opportunities", icon: Lightbulb },
 ];
+
+/** Direct Order: listed only while it is switched on for the workspace. */
+const ORDERS: NavItem = { href: "/orders", label: "Orders", icon: PackageCheck };
 
 /** Used less often: one click further away. */
 const MORE: NavItem[] = [
@@ -63,7 +66,7 @@ function NavLink({ item, badge }: { item: NavItem; badge?: number }) {
   );
 }
 
-export function Sidebar({ reviewCount = 0, company }: { reviewCount?: number; company: string }) {
+export function Sidebar({ reviewCount = 0, company, orders = null }: { reviewCount?: number; company: string; orders?: { pending: number } | null }) {
   const pathname = usePathname();
   const t = useT();
   const inMore = MORE.some((m) => isActive(pathname, m));
@@ -83,8 +86,8 @@ export function Sidebar({ reviewCount = 0, company }: { reviewCount?: number; co
         </Link>
 
         <nav aria-label={t("Main")} className="flex gap-1 overflow-x-auto px-3 pb-3 [scrollbar-width:none] md:flex-1 md:flex-col md:overflow-visible md:px-0 md:pb-0">
-          {NAV.map((item) => (
-            <NavLink key={item.href} item={item} badge={item.href === "/import" ? reviewCount : undefined} />
+          {NAV.flatMap((item) => (item.href === "/suppliers" && orders ? [item, ORDERS] : [item])).map((item) => (
+            <NavLink key={item.href} item={item} badge={item.href === "/import" ? reviewCount : item.href === "/orders" ? orders?.pending : undefined} />
           ))}
           <button
             type="button"

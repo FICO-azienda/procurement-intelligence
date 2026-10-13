@@ -17,7 +17,7 @@ import {
   saveSupplier,
   type FormState,
 } from "@/app/actions";
-import { uploadPasted } from "@/app/import/actions";
+import { uploadPasted } from "@/app/(workspace)/import/actions";
 import type { ProductData, PurchaseData, QuoteData, SupplierData } from "@/lib/analytics";
 import { todayISO } from "@/lib/analytics";
 import { countrySuggestions } from "@/lib/countries";

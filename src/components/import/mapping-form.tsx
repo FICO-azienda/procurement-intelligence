@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { ArrowRight } from "lucide-react";
-import { saveMapping } from "@/app/import/actions";
+import { saveMapping } from "@/app/(workspace)/import/actions";
 import { useT } from "@/lib/i18n/client";
 import { FIELDS, missingRequired, type ColumnMapping, type FieldKey } from "@/lib/import/fields";
 import { SUPPORTED_CURRENCIES } from "@/lib/import/normalize/currency";

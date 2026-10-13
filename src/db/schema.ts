@@ -875,6 +875,8 @@ export const settings = pgTable("settings", {
   holdingRatePct: real("holding_rate_pct"),
   /** Language of the interface: "en" or "it". */
   language: text("language").notNull().default("en"),
+  /** Direct Order (the channel for orders between this company and its suppliers) is switched on for this workspace. */
+  directOrder: boolean("direct_order").notNull().default(false),
   ...timestamps,
 });
 
@@ -1172,6 +1174,361 @@ export const auditEvents = pgTable(
     originalActorType: text("original_actor_type"),
   },
   (t) => [index("audit_events_entity_idx").on(t.entity, t.entityId)],
+);
+
+// ---------------- Direct Order: companies, people, the channel between a buyer and a supplier ----------------
+
+/**
+ * A company with an account: the buyer this installation is the workspace of, and the suppliers that registered to
+ * receive its orders (lib/orders/, server/orgs.ts). It is not a `suppliers` row — that is what the buyer knows of a
+ * company from its invoices — and no row of the buyer's records becomes one by itself: a supplier's organisation is
+ * born when a person of that company accepts an invitation. What the company states here is its own.
+ */
+export const organizations = pgTable("organizations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  /** buyer | supplier */
+  kind: text("kind").notNull(),
+  /** The company whose workspace this installation is: its name, country and VAT number are those of `settings`, kept the same here. */
+  isWorkspace: boolean("is_workspace").notNull().default(false),
+  name: text("name").notNull(),
+  vatNumber: text("vat_number"),
+  taxCode: text("tax_code"),
+  country: text("country"),
+  /** Where the company works from: asked once, for every product. */
+  address: text("address"),
+  postalCode: text("postal_code"),
+  city: text("city"),
+  province: text("province"),
+  /** The conditions of the order service: the version accepted, by whom and when. */
+  orderTermsVersion: text("order_terms_version"),
+  orderTermsAcceptedAt: timestamp("order_terms_accepted_at", { withTimezone: true }),
+  orderTermsAcceptedBy: text("order_terms_accepted_by"),
+  ...timestamps,
+});
+
+/**
+ * A person with an account: who they are and how they sign in. What they may do is not here — it depends on the
+ * company they act for (`org_members`): one person can belong to several companies, with a role in each.
+ */
+export const users = pgTable("users", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  /** Lower case: one account per address. */
+  email: text("email").notNull().unique(),
+  /** scrypt, with its own salt (server/auth.ts). Never the password. */
+  passwordHash: text("password_hash").notNull(),
+  /** Set when the person typed the code sent to this address. Null: the address is not verified. */
+  emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
+  emailCodeHash: text("email_code_hash"),
+  emailCodeExpiresAt: timestamp("email_code_expires_at", { withTimezone: true }),
+  emailCodeAttempts: integer("email_code_attempts").notNull().default(0),
+  ...timestamps,
+});
+
+/**
+ * A person's place in a company: their role and what they may do there (ROLES and PERMISSIONS in
+ * lib/orders/types.ts). An admin may do everything the company's side can do; a member, what is listed.
+ */
+export const orgMembers = pgTable(
+  "org_members",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** admin | member */
+    role: text("role").notNull().default("member"),
+    permissions: jsonb("permissions").$type<string[]>().notNull().default([]),
+    disabledAt: timestamp("disabled_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (t) => [uniqueIndex("org_members_pair_idx").on(t.orgId, t.userId)],
+);
+
+/** A signed-in browser, acting for one company. Only the hash of its token is kept. */
+export const authSessions = pgTable("auth_sessions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  /** The company this session acts for: a person of several companies signs in to one at a time. */
+  orgId: uuid("org_id")
+    .notNull()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  tokenHash: text("token_hash").notNull().unique(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+});
+
+/**
+ * An invitation from the buyer to one company it knows: a supplier it buys from, or a company that answered a request
+ * for quotation. The link is given to the buyer, who sends it — the app sends nothing. Only its hash is kept.
+ */
+export const orgInvites = pgTable("org_invites", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tokenHash: text("token_hash").notNull().unique(),
+  buyerOrgId: uuid("buyer_org_id")
+    .notNull()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  /** The record of the buyer the invitation is about: one of the two. */
+  supplierId: uuid("supplier_id").references(() => suppliers.id, { onDelete: "set null" }),
+  rfqSupplierId: uuid("rfq_supplier_id").references(() => rfqSuppliers.id, { onDelete: "set null" }),
+  companyName: text("company_name").notNull(),
+  email: text("email").notNull(),
+  createdBy: text("created_by"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+  acceptedOrgId: uuid("accepted_org_id").references(() => organizations.id, { onDelete: "set null" }),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+});
+
+/**
+ * The private channel between one buyer and one supplier: who they are to each other, and whether the supplier lets
+ * this customer send order requests. The buyer's own record of the company (`supplier_id`, `rfq_supplier_id`) is what
+ * ties the channel to the purchases and the quotations on file; nothing of those records is changed by it.
+ */
+export const tradeRelationships = pgTable(
+  "trade_relationships",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    buyerOrgId: uuid("buyer_org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    supplierOrgId: uuid("supplier_org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    supplierId: uuid("supplier_id").references(() => suppliers.id, { onDelete: "set null" }),
+    rfqSupplierId: uuid("rfq_supplier_id").references(() => rfqSuppliers.id, { onDelete: "set null" }),
+    /** allowed | blocked — the supplier's decision. */
+    ordering: text("ordering").notNull().default("allowed"),
+    ...timestamps,
+  },
+  (t) => [uniqueIndex("trade_relationships_pair_idx").on(t.buyerOrgId, t.supplierOrgId)],
+);
+
+/**
+ * A supplier's article that can be ordered: its own code and its own technical description, and whether orders for
+ * it are switched on. "Order Ready" is not stored: it is worked out each time from this row, the supplier's company
+ * data and the conditions in force (lib/orders/ready.ts) — a price past its date stops it by itself.
+ */
+export const orderProducts = pgTable(
+  "order_products",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    supplierOrgId: uuid("supplier_org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    code: text("code"),
+    name: text("name").notNull(),
+    description: text("description"),
+    unit: text("unit").notNull(),
+    /** When a person of the supplier confirmed that code and description say exactly which article this is. */
+    specConfirmedAt: timestamp("spec_confirmed_at", { withTimezone: true }),
+    specConfirmedBy: text("spec_confirmed_by"),
+    /** all: every customer with a channel · selected: only the customers allowed in order_product_buyers. */
+    audience: text("audience").notNull().default("all"),
+    /** When orders were switched on, and by whom. `suspended_at` pauses them without losing anything. */
+    enabledAt: timestamp("enabled_at", { withTimezone: true }),
+    enabledBy: text("enabled_by"),
+    suspendedAt: timestamp("suspended_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (t) => [index("order_products_org_idx").on(t.supplierOrgId)],
+);
+
+/** One article for one customer: whether that customer may order it, and which of the customer's own products it is. */
+export const orderProductBuyers = pgTable(
+  "order_product_buyers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orderProductId: uuid("order_product_id")
+      .notNull()
+      .references(() => orderProducts.id, { onDelete: "cascade" }),
+    relationshipId: uuid("relationship_id")
+      .notNull()
+      .references(() => tradeRelationships.id, { onDelete: "cascade" }),
+    /** The buyer's product this article is — said by the buyer, or known because it is what the buyer bought. Null: not tied. */
+    buyerProductId: uuid("buyer_product_id").references(() => products.id, { onDelete: "set null" }),
+    allowed: boolean("allowed").notNull().default(true),
+    ...timestamps,
+  },
+  (t) => [uniqueIndex("order_product_buyers_pair_idx").on(t.orderProductId, t.relationshipId)],
+);
+
+/**
+ * The commercial conditions of an article: the six things a supplier states to receive orders. With no customer they
+ * hold for every customer allowed; with one they are that customer's alone and nobody else reads them. A change is a
+ * new row — the one before is closed (`replaced_at`) and kept, so an order always knows the conditions it was made on.
+ */
+export const orderTerms = pgTable(
+  "order_terms",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orderProductId: uuid("order_product_id")
+      .notNull()
+      .references(() => orderProducts.id, { onDelete: "cascade" }),
+    relationshipId: uuid("relationship_id").references(() => tradeRelationships.id, { onDelete: "cascade" }),
+    unitPrice: money("unit_price"),
+    currency: text("currency"),
+    taxesIncluded: boolean("taxes_included"),
+    minQuantity: qty("min_quantity"),
+    quantityStep: qty("quantity_step"),
+    /** LEAD_TIMES, DELIVERY_TERMS, PAYMENT_TERMS (lib/orders/types.ts), each with the words that complete it. */
+    leadTime: text("lead_time"),
+    leadTimeNote: text("lead_time_note"),
+    delivery: text("delivery"),
+    deliveryPlace: text("delivery_place"),
+    incotermsVersion: text("incoterms_version"),
+    deliveryNote: text("delivery_note"),
+    /** Said by the supplier when the delivery terms do not say it themselves. */
+    transportIncluded: boolean("transport_included"),
+    payment: text("payment"),
+    paymentNote: text("payment_note"),
+    validUntil: date("valid_until"),
+    /** Confirmed by an authorised person of the supplier. Null: written down, not confirmed — never used for an order. */
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+    confirmedBy: text("confirmed_by"),
+    replacedAt: timestamp("replaced_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("order_terms_product_idx").on(t.orderProductId)],
+);
+
+/**
+ * An order request and what became of it (ORDER_STATUSES). It is not a purchase: purchases are what invoices prove.
+ * The conditions it was made on are copied in (`terms`); once both companies have confirmed it, the whole order is
+ * written once in `confirmed` and never changed again — a later price list does not reach it.
+ */
+export const orders = pgTable(
+  "orders",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    number: text("number").notNull(),
+    relationshipId: uuid("relationship_id")
+      .notNull()
+      .references(() => tradeRelationships.id, { onDelete: "restrict" }),
+    buyerOrgId: uuid("buyer_org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    supplierOrgId: uuid("supplier_org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    status: text("status").notNull(),
+    /** Made up once by whoever sends the request: the same request sent twice is one order. */
+    idempotencyKey: text("idempotency_key"),
+    destinationId: uuid("destination_id").references((): AnyPgColumn => deliveryDestinations.id, { onDelete: "set null" }),
+    /** The destination as it was when the request was written. */
+    destination: jsonb("destination").$type<Record<string, unknown>>().notNull(),
+    wantedDate: date("wanted_date"),
+    buyerNotes: text("buyer_notes"),
+    terms: jsonb("terms").$type<Record<string, unknown>>().notNull(),
+    termsId: uuid("terms_id"),
+    /** What the supplier stated and the buyer accepted after the request: a transport charge, the delivery date. */
+    transportCost: money("transport_cost"),
+    deliveryDate: date("delivery_date"),
+    confirmed: jsonb("confirmed").$type<Record<string, unknown>>(),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+    /** The day it lapses if nobody moves it. */
+    expiresOn: date("expires_on"),
+    createdBy: text("created_by"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    /** Counts every change of status: two people acting on the same order at once cannot both go through. */
+    version: integer("version").notNull().default(1),
+    ...timestamps,
+  },
+  (t) => [uniqueIndex("orders_number_idx").on(t.buyerOrgId, t.number), uniqueIndex("orders_idempotency_idx").on(t.buyerOrgId, t.idempotencyKey), index("orders_supplier_idx").on(t.supplierOrgId)],
+);
+
+/** What is ordered: the article as it was described when the request was written, the quantity and its price. One line today; the table takes more. */
+export const orderLines = pgTable(
+  "order_lines",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => orders.id, { onDelete: "cascade" }),
+    position: integer("position").notNull().default(1),
+    orderProductId: uuid("order_product_id").references(() => orderProducts.id, { onDelete: "set null" }),
+    buyerProductId: uuid("buyer_product_id").references(() => products.id, { onDelete: "set null" }),
+    code: text("code"),
+    name: text("name").notNull(),
+    description: text("description"),
+    unit: text("unit").notNull(),
+    quantity: qty("quantity").notNull(),
+    unitPrice: money("unit_price").notNull(),
+    currency: text("currency").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("order_lines_order_idx").on(t.orderId)],
+);
+
+/** What the supplier would change in a request, and what the buyer answered. A proposal is never an order by itself. */
+export const orderProposals = pgTable(
+  "order_proposals",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => orders.id, { onDelete: "cascade" }),
+    /** ProposalChanges (lib/orders/types.ts). */
+    changes: jsonb("changes").$type<Record<string, unknown>>().notNull(),
+    note: text("note"),
+    /** pending | accepted | rejected */
+    status: text("status").notNull().default("pending"),
+    createdBy: text("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    decidedBy: text("decided_by"),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    decisionNote: text("decision_note"),
+  },
+  (t) => [index("order_proposals_order_idx").on(t.orderId)],
+);
+
+/** Everything that happened to an order, in order: who, of which company, did what, and when. Rows are only ever added. */
+export const orderEvents = pgTable(
+  "order_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => orders.id, { onDelete: "cascade" }),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+    /** user (a person of the buyer) · supplier (a person of the supplier) · ai (an assistant operating the app) · system */
+    actorType: text("actor_type").notNull(),
+    actorOrgId: uuid("actor_org_id"),
+    actorUserId: uuid("actor_user_id"),
+    actorName: text("actor_name"),
+    action: text("action").notNull(),
+    fromStatus: text("from_status"),
+    toStatus: text("to_status"),
+    data: jsonb("data").$type<Record<string, unknown>>(),
+    note: text("note"),
+  },
+  (t) => [index("order_events_order_idx").on(t.orderId)],
+);
+
+/** Something a company should know about an order or an article. It names the order and the other company — never a price or a quantity. */
+export const notifications = pgTable(
+  "notifications",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    /** NOTIFICATION_KINDS (lib/orders/types.ts). */
+    kind: text("kind").notNull(),
+    orderId: uuid("order_id").references(() => orders.id, { onDelete: "cascade" }),
+    orderProductId: uuid("order_product_id").references(() => orderProducts.id, { onDelete: "cascade" }),
+    params: jsonb("params").$type<Record<string, string>>().notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    readAt: timestamp("read_at", { withTimezone: true }),
+  },
+  (t) => [index("notifications_org_idx").on(t.orgId)],
 );
 
 export type Supplier = typeof suppliers.$inferSelect;

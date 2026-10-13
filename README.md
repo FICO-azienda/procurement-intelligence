@@ -475,7 +475,7 @@ Pagina **Database fornitori** (`/sourcing/directory`, dal pulsante nella pagina 
 - **Excel**: «Esporta in Excel» scarica il database in nove fogli (elenco completo, Italia, Europa, Cina e Asia, resto del mondo, shortlist, contatti, fonti e lacune, referenze).
 - I file di ricerca stanno in `.data/research/markets/` e si caricano dalla pagina, con controllo e conferma.
 
-Codice: `src/lib/markets/`, `src/server/markets.ts`, `src/app/sourcing/directory/`.
+Codice: `src/lib/markets/`, `src/server/markets.ts`, `src/app/(workspace)/sourcing/directory/`.
 
 ## Risposte ai preventivi
 
@@ -489,7 +489,7 @@ Pagina **Risposte ai preventivi** (`/sourcing/replies`, dal pulsante nella pagin
 - **Quello che scrivi tu resta**: uno stato, una prossima azione, un contatto corretti a mano non vengono più cambiati da un file. Un valore in archivio non viene mai svuotato da un file che lo omette, né sostituito da un file più vecchio.
 - I file stanno in `.data/research/replies/` (oppure si scelgono a mano dalla pagina) e restano sul computer. Non viene inviato nulla a nessuno.
 
-Codice: `src/lib/replies/`, `src/server/replies.ts`, `src/app/sourcing/replies/`.
+Codice: `src/lib/replies/`, `src/server/replies.ts`, `src/app/(workspace)/sourcing/replies/`.
 
 ## Preventivi e alternative (offerte collegate ai prodotti)
 
@@ -509,6 +509,49 @@ L'app non ha ancora utenti e organizzazioni: i dati stanno sul computer di chi l
 
 Codice: `src/lib/replies/` (`match.ts`, `offers.ts`, `landed.ts`, `rows.ts`), `src/server/replies.ts`, `src/server/audit.ts`, `src/server/destinations.ts`.
 
+## Aziende, persone e accesso
+
+Un'installazione è lo **spazio di lavoro di un'azienda acquirente** (tutto ciò che c'era: `src/app/(workspace)`) più un **portale fornitori** (`src/app/(outside)/portal`), che ha una cornice propria e non legge nulla dello spazio di lavoro.
+
+- **Chi sta agendo** lo stabilisce sempre il server, da un cookie controllato sul database: mai una pagina o un pulsante. Ogni funzione riceve quella persona e risponde solo sulla sua azienda.
+- **Due modi di usare lo spazio di lavoro**, scelti dove l'app viene avviata:
+  - sul computer dell'azienda (predefinito): aperto a chi è seduto davanti, come sempre;
+  - su un server raggiungibile da altri (`WORKSPACE_ACCESS=login` e `AUTH_SECRET` di almeno 32 caratteri): nessuna pagina, esportazione o azione risponde senza una persona dell'acquirente che ha effettuato l'accesso. **Mai mettere l'app su un server raggiungibile senza questa modalità.**
+- **Persone e ruoli**: una persona ha un solo account e può appartenere a più aziende, con un ruolo in ciascuna — amministratore (tutto ciò che il lato della sua azienda può fare) o membro (ciò che gli viene dato, voce per voce). Le persone dell'acquirente si creano in Impostazioni → «Persone della tua azienda»: va creato almeno un amministratore **prima** di attivare l'accesso.
+- **Un fornitore non diventa un account da solo**: un'azienda delle fatture, delle risposte ai preventivi o di un database di mercato si registra soltanto accettando un invito, il cui link viene inviato dall'acquirente (l'app non invia nulla). Di link, sessioni e password si conserva solo l'impronta.
+- **Verifica dell'email**: con un codice inviato all'indirizzo. L'invio passa da un adattatore attivato dall'ambiente; nessuno è attivo di default (`MAIL_MODE=file` + `MAIL_DIR` scrive i messaggi in una cartella, per sviluppo). Senza invio, nessun indirizzo risulta verificato.
+- **Limite dichiarato**: più aziende acquirenti nello stesso database non sono supportate. Ogni acquirente è un'installazione con i propri dati.
+
+Codice: `src/lib/auth/cookie.ts`, `src/server/auth.ts`, `orgs.ts`, `session.ts`, `src/proxy.ts`.
+
+## Direct Order (canale ordini cliente–fornitore)
+
+Si attiva da Impostazioni → Direct Order. Spento, non compare nulla e il portale non esiste.
+
+1. **Invito**: dalla scheda di un fornitore (o di un'azienda che ha risposto a un preventivo) si crea un link di invito, da inviare a mano.
+2. **Registrazione del fornitore**: dati aziendali chiesti una volta sola, email verificata, condizioni del servizio accettate.
+3. **Order Ready**: il fornitore aggiunge un articolo (anche partendo da ciò che ha già fatturato o quotato, con le sue parole e senza prezzi) e conferma **sei condizioni**: prezzo, quantità minima e multipli, tempi di consegna, resa, pagamento, validità del prezzo. Order Ready non è un badge e non si compra: è calcolato ogni volta, e alla scadenza del prezzo l'articolo smette da solo di ricevere ordini.
+4. **Richiesta d'ordine**: dalla scheda prodotto, «Richiedi ordine» → quantità, destinazione, data, note → riepilogo → «Invia richiesta d'ordine». Il totale compare solo se è determinabile: «DAP» da solo non significa «reso ovunque a quel prezzo».
+5. **Risposta del fornitore**: Accetta, Proponi modifica, Rifiuta. Una controproposta non è mai un ordine: lo diventa solo se il cliente la accetta; un articolo diverso richiede un'approvazione esplicita della specifica.
+6. **Ordine confermato**: le condizioni accettate vengono scritte una volta e non cambiano più (lo impedisce anche il database). Ogni passaggio è un evento con autore e ora.
+7. **Riordino**: riparte dalle condizioni in vigore oggi, mai dal vecchio prezzo; se l'articolo non è più ordinabile si chiede un nuovo preventivo.
+
+Prezzi riservati a un cliente sono letti solo da quel cliente. Le notifiche nominano l'ordine e l'altra azienda, mai prezzi o quantità. Nessun pagamento, nessuna email inviata, nessun acquisto o preventivo scritto: un ordine non è un acquisto.
+
+Le condizioni del servizio (`src/lib/orders/conditions.ts`) sono una **bozza per il pilota, non rivista da un legale**: vanno riviste prima di un uso reale.
+
+Codice: `src/lib/orders/` (regole pure e test), `src/server/order-catalog.ts`, `src/server/orders.ts`, `src/app/order-actions.ts`, `src/app/(outside)/portal/`, `src/components/orders/`.
+
+## Migrazioni sicure
+
+Su un computer con dati reali una modifica allo schema si fa con:
+
+```bash
+npx tsx scripts/migrate-safe.ts nome_della_modifica
+```
+
+La migrazione viene generata in una cartella a parte, applicata a un database vuoto e a una copia dei dati (ogni tabella deve conservare le sue righe), poi viene fatto un backup in `.data/backups/` e solo allora i file vengono pubblicati in `drizzle/` — l'elenco per ultimo, in un colpo. Se un passo fallisce non viene pubblicato nulla. Per tornare indietro: fermare l'app, ripristinare la cartella di backup sopra `.data/pglite`, togliere da `drizzle/` le tre voci della migrazione.
+
 ## Strategia di sourcing (Sourcing Mix)
 
 Pagina **Strategia** (`/strategy`): per i prodotti che pesano di più (Top 5, poi Top 18) mostra il portafoglio di oggi e, per ogni obiettivo, il mix di fornitori che farebbe meglio — costo più basso, bundle, specialisti, valore economico totale, qualità, consegna, rischio, liquidità, meno fornitori, bilanciato, pesi personalizzati.
@@ -520,7 +563,7 @@ Pagina **Strategia** (`/strategy`): per i prodotti che pesano di più (Top 5, po
 - Un vantaggio è una stima ai prezzi in archivio (teorico, da validare, validato), mai un risparmio.
 - Nulla viene salvato: obiettivo, pesi e limiti viaggiano nell'indirizzo della pagina.
 
-Codice: `src/lib/portfolio/` (regole pure e test), `src/server/portfolio.ts`, `src/app/strategy/`.
+Codice: `src/lib/portfolio/` (regole pure e test), `src/server/portfolio.ts`, `src/app/(workspace)/strategy/`.
 
 ## Demo su GitHub Pages
 

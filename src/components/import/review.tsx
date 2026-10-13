@@ -18,7 +18,7 @@ import {
   updateItemAction,
   updateSessionFieldsAction,
   type ActionResult,
-} from "@/app/import/actions";
+} from "@/app/(workspace)/import/actions";
 import * as f from "@/lib/format";
 import { said, type Msg } from "@/lib/i18n";
 import { rich } from "@/lib/i18n/rich";
