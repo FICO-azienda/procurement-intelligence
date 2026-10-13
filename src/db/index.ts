@@ -37,6 +37,10 @@ const migrationsStamp = () => {
 };
 
 export function getDb(): Promise<DB> {
+  // A build is another process: it must never open the data. A page that reads the database while it is being built
+  // would open the embedded database a second time, next to the app that is running on it — which damages it. Every
+  // page that reads data asks for the request first (`connection()`), so that it is only ever rendered when asked for.
+  if (process.env.NEXT_PHASE === "phase-production-build") return Promise.reject(new Error("The database is not opened while the app is being built: the page that asked for it must wait for a request (connection())."));
   if (!globalForDb.__db) {
     globalForDb.__migrations = migrationsStamp();
     globalForDb.__db = connect().catch((err) => {

@@ -10,6 +10,7 @@
  * A supplier's session is nobody in the workspace, and the other way round.
  */
 import { cookies, headers } from "next/headers";
+import { connection } from "next/server";
 import { cache } from "react";
 import { getDb } from "@/db";
 import { settings } from "@/db/schema";
@@ -22,14 +23,16 @@ import { ensureWorkspaceOrg } from "./orgs";
 
 /** Direct Order is switched on for this workspace (Settings). Off: none of it answers. */
 export const directOrderOn = cache(async (): Promise<boolean> => {
+  // Read when a request asks, never while the app is being built: a build must not open the data.
+  await connection();
   const [row] = await (await getDb()).select({ on: settings.directOrder }).from(settings).limit(1);
   return row?.on === true;
 });
 
 /** The buyer at the workspace — or null when the workspace asks for a sign-in and nobody is signed in. */
 export const workspacePrincipal = cache(async (): Promise<Principal | null> => {
-  const db = await getDb();
   const jar = await cookies();
+  const db = await getDb();
   if (workspaceAccess() === "login") {
     const secret = authSecret();
     return secret ? principalOf(db, unseal(jar.get(WORKSPACE_COOKIE)?.value, secret), "buyer") : null;
@@ -41,7 +44,10 @@ export const workspacePrincipal = cache(async (): Promise<Principal | null> => {
 });
 
 /** The supplier's person signed in to the portal, or null. */
-export const supplierPrincipal = cache(async (): Promise<Principal | null> => principalOf(await getDb(), (await cookies()).get(PORTAL_COOKIE)?.value, "supplier"));
+export const supplierPrincipal = cache(async (): Promise<Principal | null> => {
+  const token = (await cookies()).get(PORTAL_COOKIE)?.value;
+  return principalOf(await getDb(), token, "supplier");
+});
 
 /**
  * The language of the pages outside the workspace (the portal, the sign-in
