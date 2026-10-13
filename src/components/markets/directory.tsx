@@ -9,7 +9,8 @@ import type { Selection, CategoryTree } from "@/lib/catalog/tree";
 import * as f from "@/lib/format";
 import { useT } from "@/lib/i18n/client";
 import type { Facets } from "@/lib/markets/filter";
-import { CONTINENT_LABEL, PRODUCT_TYPE_LABEL, ROLE_LABEL, STATUSES, STATUS_LABEL, STATUS_MEANING, TECHNOLOGY_LABEL, type Continent, type MarketStatus } from "@/lib/markets/types";
+import { BOTH_WICKS, CONTINENT_LABEL, PRODUCT_TYPE_LABEL, ROLE_LABEL, STATUSES, STATUS_LABEL, STATUS_MEANING, TECHNOLOGY_LABEL, type Continent, type MarketStatus } from "@/lib/markets/types";
+import type { Msg } from "@/lib/i18n";
 import type { MarketImport } from "@/server/markets";
 import { ProductCategoryPicker } from "../catalog/category-picker";
 import { Input, Select } from "../form-kit";
@@ -26,7 +27,7 @@ const chip = (on: boolean) =>
  * only what is on file is offered, with how many companies it leaves — and
  * the countries are those of the continent chosen, never a list of the world.
  */
-export function DirectoryFilters({ facets, countries }: { facets: Facets; countries: [string, number][] }) {
+export function DirectoryFilters({ facets, countries, typeLabel = "Kind of container" }: { facets: Facets; countries: [string, number][]; typeLabel?: Msg }) {
   const t = useT();
   const router = useRouter();
   const pathname = usePathname();
@@ -99,7 +100,7 @@ export function DirectoryFilters({ facets, countries }: { facets: Facets; countr
           ...facets.roles.filter(([r]) => r === "candle_maker").map(([r, n]) => [r, t(ROLE_LABEL.candle_maker), n] as [string, string, number]),
         ])}
         {group(t("Material"), "material", facets.materials.map(([m, n]) => [m, m, n]))}
-        {group(t("Kind of container"), "type", facets.types.map(([x, n]) => [x, t(PRODUCT_TYPE_LABEL[x as keyof typeof PRODUCT_TYPE_LABEL] ?? "Not known"), n]))}
+        {group(t(typeLabel), "type", facets.types.map(([x, n]) => [x, x === BOTH_WICKS ? t("Both wood and fibre") : t(PRODUCT_TYPE_LABEL[x as keyof typeof PRODUCT_TYPE_LABEL] ?? "Not known"), n]))}
         {group(t("Technology"), "technology", facets.technologies.map(([x, n]) => [x, t(TECHNOLOGY_LABEL[x as keyof typeof TECHNOLOGY_LABEL] ?? "Not known"), n]))}
         {group(t("Research status"), "status", facets.statuses.map(([x, n]) => [x, t(STATUS_LABEL[x as MarketStatus] ?? "Not known"), n]))}
         {group(t("To write to"), "email", [
@@ -114,7 +115,9 @@ export function DirectoryFilters({ facets, countries }: { facets: Facets; countr
           className="mt-3 inline-flex items-center gap-1 text-[12.5px] font-medium text-ink-3 hover:text-ink hover:underline"
           onClick={() => {
             setQ("");
-            start(() => router.replace(pathname, { scroll: false }));
+            // The market stays: clearing the filters is not leaving the directory.
+            const market = params.get("market");
+            start(() => router.replace(market ? `${pathname}?market=${market}` : pathname, { scroll: false }));
           }}
         >
           <X size={12} /> {t("Clear filters")}

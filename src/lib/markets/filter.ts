@@ -7,7 +7,10 @@
  */
 import { countryKey } from "../countries";
 import { findProducts } from "../catalog/find";
-import { continentOf, isMaker, isOem, statusRank, type Continent, type MarketSupplier } from "./types";
+import { BOTH_WICKS, continentOf, isMaker, isOem, statusRank, type Continent, type MarketSupplier } from "./types";
+
+/** A type filter, or several joined by "+": the company offers every one of them. */
+const hasTypes = (s: { productTypes: string[] }, type: string) => type.split("+").every((x) => s.productTypes.includes(x));
 
 /** What the buyer's own records say about a company of the directory. */
 export interface SupplierLinks {
@@ -51,7 +54,7 @@ export function filterSuppliers(rows: Row[], query: MarketQuery): Row[] {
     if (country && countryKey(s.country) !== country) return false;
     if (query.role === "maker" ? !isMaker(s.role) : query.role === "oem" ? !isOem(s) : query.role === "reseller" ? !(s.role === "distributor" || s.role === "importer") : query.role ? s.role !== query.role : false) return false;
     if (query.material && !s.materials.some((m) => m.toUpperCase() === query.material!.toUpperCase())) return false;
-    if (query.type && !s.productTypes.includes(query.type)) return false;
+    if (query.type && !hasTypes(s, query.type)) return false;
     if (query.technology && !s.technologies.includes(query.technology)) return false;
     if (query.status && s.status !== query.status) return false;
     if (query.email === "yes" ? !s.email : query.email === "no" ? !!s.email : false) return false;
@@ -102,7 +105,8 @@ export function facets(rows: Row[]): Facets {
     continents: count(rows.map((s) => continentOf(s.country))),
     countries: count(rows.map((s) => countryKey(s.country))),
     materials: count(rows.flatMap((s) => s.materials.map((m) => m.toUpperCase()))),
-    types: count(rows.flatMap((s) => s.productTypes)),
+    // Wood and fibre wicks together are a kind of source of their own: offered when some company has both.
+    types: [...count(rows.flatMap((s) => s.productTypes)), ...((n) => (n ? [[BOTH_WICKS, n] as [string, number]] : []))(rows.filter((s) => hasTypes(s, BOTH_WICKS)).length)],
     technologies: count(rows.flatMap((s) => s.technologies)),
     statuses: count(rows.map((s) => s.status)).sort((a, b) => statusRank(b[0]) - statusRank(a[0])),
     roles: count(rows.map((s) => s.role)),

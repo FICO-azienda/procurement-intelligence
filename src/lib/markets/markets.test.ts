@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { countryName } from "../countries";
 import { NO_LINKS, facets, filterSuppliers, isMatch, pageOf, type Row } from "./filter";
-import { continentOf, isOem, parseMarketFile, sameCompany, statusRank } from "./types";
+import { BOTH_WICKS, continentOf, isOem, parseMarketFile, sameCompany, statusRank } from "./types";
 
 const file = (suppliers: unknown[], more: Record<string, unknown> = {}) => JSON.stringify({ kind: "market_suppliers", market: "plastic_candle_containers", researchedAt: "2026-10-11", source: "test", suppliers, ...more });
 const entry = { name: "Tube Works sp. z o.o.", country: "Poland", role: "manufacturer", status: "manufacturer_confirmed", evidenceUrl: "https://tubeworks.example/products", materials: ["PP"], technologies: ["injection"], productTypes: ["votive_container"] };
@@ -146,5 +146,25 @@ describe("small things the directory relies on", () => {
     expect(isMatch({ status: "technical_match_to_review" })).toBe(true);
     expect(isMatch({ status: "manufacturer_confirmed" })).toBe(false);
     expect(statusRank("quote_received")).toBeGreaterThan(statusRank("rfq_ready"));
+  });
+});
+
+describe("a market of wicks", () => {
+  const wicks = (suppliers: unknown[]) => JSON.stringify({ kind: "market_suppliers", market: "candle_wicks", researchedAt: "2026-10-11", source: "test", suppliers });
+  const maker = { name: "Woodline sp. z o.o.", country: "Poland", role: "manufacturer", status: "evidence_found", evidenceUrl: "https://woodline.example/wicks", productTypes: ["wood_wick"] };
+
+  it("reads wood, fibre and holders as kinds of wick", () => {
+    const r = parseMarketFile(wicks([maker, { ...maker, name: "Braid Co", evidenceUrl: "https://braid.example", productTypes: ["fibre_wick", "wick_holder"] }]));
+    expect(r.ok && r.file.suppliers.map((s) => s.productTypes)).toEqual([["wood_wick"], ["fibre_wick", "wick_holder"]]);
+  });
+
+  it("filters the companies that offer both wood and fibre, and only them", () => {
+    const row = (name: string, productTypes: string[]): Row => ({ id: name, market: "candle_wicks", name, tradeName: null, country: "Poland", city: null, website: null, email: null, phone: null, role: "unknown", status: "discovered", materials: [], technologies: [], productTypes, profile: {}, evidenceUrl: "https://x.example", sourceLevel: "external", checkedAt: null, links: NO_LINKS });
+    const rows = [row("Wood only", ["wood_wick"]), row("Both", ["wood_wick", "fibre_wick"]), row("Fibre only", ["fibre_wick"]), row("Nothing documented", [])];
+    expect(filterSuppliers(rows, { type: BOTH_WICKS }).map((s) => s.name)).toEqual(["Both"]);
+    expect(filterSuppliers(rows, { type: "wood_wick" }).map((s) => s.name).sort()).toEqual(["Both", "Wood only"]);
+    expect(facets(rows).types).toContainEqual([BOTH_WICKS, 1]);
+    // Nothing documented is not a "no": it is simply not offered as a filter value.
+    expect(facets(rows).types.map(([x]) => x)).not.toContain("");
   });
 });

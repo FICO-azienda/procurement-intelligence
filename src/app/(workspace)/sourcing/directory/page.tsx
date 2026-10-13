@@ -43,7 +43,8 @@ export default async function DirectoryPage({ searchParams }: PageProps<"/sourci
   const coverage = countryCoverage(logs);
   const leads = logs.flatMap((l) => l.coverage.leads);
   const gaps = [...new Set(logs.flatMap((l) => l.coverage.gaps))];
-  const href = (p: number) => `/sourcing/directory?${new URLSearchParams({ ...Object.fromEntries(Object.entries(query).filter(([, v]) => v) as [string, string][]), ...(p > 1 ? { page: String(p) } : {}) }).toString()}`;
+  const href = (p: number) => `/sourcing/directory?${new URLSearchParams({ ...(market !== MARKETS[0] ? { market: market.key } : {}), ...Object.fromEntries(Object.entries(query).filter(([, v]) => v) as [string, string][]), ...(p > 1 ? { page: String(p) } : {}) }).toString()}`;
+  const marketHref = (key: string) => (key === MARKETS[0].key ? "/sourcing/directory" : `/sourcing/directory?market=${key}`);
   const missing = (v: unknown) => (v == null || v === "" ? <span className="text-[11.5px] font-medium tracking-wide text-caution">{MISSING}</span> : String(v));
 
   return (
@@ -54,6 +55,16 @@ export default async function DirectoryPage({ searchParams }: PageProps<"/sourci
         meta={t(market.about)}
         actions={rows.length > 0 ? <ExportLink href={`/export/market/${market.key}`}>{t("Export to Excel")}</ExportLink> : undefined}
       />
+
+      {MARKETS.length > 1 && (
+        <nav className="mb-5 flex flex-wrap gap-1.5" aria-label={t("Markets")}>
+          {MARKETS.map((m) => (
+            <Link key={m.key} href={marketHref(m.key)} aria-current={m.key === market.key ? "page" : undefined} className={cx("inline-flex h-8 items-center rounded-full border px-3 text-[13px]", m.key === market.key ? "border-ledger/30 bg-ledger-wash font-medium text-ledger" : "border-rule-strong text-ink-2 hover:bg-wash")}>
+              {t(m.label)}
+            </Link>
+          ))}
+        </nav>
+      )}
 
       {rows.length === 0 ? (
         <div className="mb-6 rounded-lg border border-dashed border-rule-strong">
@@ -73,12 +84,12 @@ export default async function DirectoryPage({ searchParams }: PageProps<"/sourci
           </p>
 
           <Suspense>
-            <DirectoryFilters facets={all} countries={inContinent} />
+            <DirectoryFilters facets={all} countries={inContinent} typeLabel={market.typeLabel} />
           </Suspense>
 
           <div className="rounded-lg border border-rule">
             {found.length === 0 ? (
-              <Empty title={t("No company matches these filters")} action={<Link href="/sourcing/directory" className="text-[13px] font-medium text-ledger hover:underline">{t("Clear filters")}</Link>} />
+              <Empty title={t("No company matches these filters")} action={<Link href={marketHref(market.key)} className="text-[13px] font-medium text-ledger hover:underline">{t("Clear filters")}</Link>} />
             ) : (
               <>
                 <Table>
@@ -106,7 +117,7 @@ export default async function DirectoryPage({ searchParams }: PageProps<"/sourci
                         <Td className="hidden @2xl:table-cell">{t(ROLE_LABEL[s.role])}</Td>
                         <Td className="hidden max-w-[320px] whitespace-normal! @4xl:table-cell">
                           <div className="text-[13px]">{s.productTypes.map((x) => t(PRODUCT_TYPE_LABEL[x as keyof typeof PRODUCT_TYPE_LABEL] ?? "Not known")).join(", ") || missing(null)}</div>
-                          <div className="text-[12px] text-ink-3">{[...s.materials, ...s.technologies.map((x) => t(TECHNOLOGY_LABEL[x as keyof typeof TECHNOLOGY_LABEL] ?? "Not known"))].join(" · ")}</div>
+                          <div className="text-[12px] text-ink-3">{[...s.materials, ...(market.containerFields ? s.technologies.map((x) => t(TECHNOLOGY_LABEL[x as keyof typeof TECHNOLOGY_LABEL] ?? "Not known")) : [])].join(" · ")}</div>
                         </Td>
                         <Td>
                           <span title={t(STATUS_MEANING[s.status])} className={cx("inline-flex h-[22px] items-center rounded-full px-2 text-[12px] font-medium whitespace-nowrap", tone(s.status))}>
@@ -194,7 +205,9 @@ export default async function DirectoryPage({ searchParams }: PageProps<"/sourci
       {references.length > 0 && (
         <Disclosure className="mt-3" title={t("Your products in this market")} description={t.n(references.length, "{n} product on file, with what is known of it and what is missing", "{n} products on file, with what is known of them and what is missing")} flush>
           <p className="border-b border-rule px-5 py-3 text-[13px] text-ink-2">
-            {t("A supplier is compared on material, sizes and capacity. What the invoices do not say is marked as missing and is never filled in: two containers are not the same because they look alike. Write the specification on each product's page.")}
+            {market.containerFields
+              ? t("A supplier is compared on material, sizes and capacity. What the invoices do not say is marked as missing and is never filled in: two containers are not the same because they look alike. Write the specification on each product's page.")
+              : t("A supplier is compared on what the product is made of, its construction and sizes. What the invoices do not say is marked as missing and is never filled in: two products are not the same because they look alike. Write the specification on each product's page.")}
           </p>
           <Table>
             <thead>

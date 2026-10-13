@@ -10,7 +10,7 @@ import { catalogueTree } from "@/lib/catalog/tree";
 import { countryName, flagOf } from "@/lib/countries";
 import { getT } from "@/lib/data";
 import * as f from "@/lib/format";
-import { CONTINENT_LABEL, INTENDED_USE_LABEL, PRODUCT_TYPE_LABEL, RELIABILITY_LABEL, ROLE_LABEL, SOURCE_LEVEL_LABEL, STATUS_LABEL, STATUS_MEANING, TECHNOLOGY_LABEL, continentOf, marketOf } from "@/lib/markets/types";
+import { CONTINENT_LABEL, INTENDED_USE_LABEL, MARKETS, PRODUCT_TYPE_LABEL, RELIABILITY_LABEL, ROLE_LABEL, SOURCE_LEVEL_LABEL, STATUS_LABEL, STATUS_MEANING, TECHNOLOGY_LABEL, continentOf, marketOf } from "@/lib/markets/types";
 import { getCategoryTree } from "@/server/categories";
 import { RFQ_LABEL, readDirectory } from "@/server/markets";
 import { marketSuppliers } from "@/db/schema";
@@ -33,6 +33,8 @@ export default async function DirectorySupplierPage({ params }: PageProps<"/sour
   const market = marketOf(s.market);
   const tree = catalogueTree(await getCategoryTree());
   const p = s.profile;
+  // Moulding technology, intended use and the safety caveat belong to containers only.
+  const containers = market?.containerFields ?? true;
   const continent = continentOf(s.country);
   const missing = <span className="text-[11.5px] font-medium tracking-wide text-caution">MISSING</span>;
   const link = (url: string | null | undefined, label?: string) =>
@@ -54,7 +56,7 @@ export default async function DirectorySupplierPage({ params }: PageProps<"/sour
   return (
     <>
       <PageHeader
-        eyebrow={<Crumbs items={[{ href: "/sourcing", label: t("Market") }, { href: "/sourcing/directory", label: market ? t(market.label) : t("Supplier directory") }]} />}
+        eyebrow={<Crumbs items={[{ href: "/sourcing", label: t("Market") }, { href: market && market.key !== MARKETS[0].key ? `/sourcing/directory?market=${market.key}` : "/sourcing/directory", label: market ? t(market.label) : t("Supplier directory") }]} />}
         title={s.name}
         meta={
           <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -91,9 +93,9 @@ export default async function DirectorySupplierPage({ params }: PageProps<"/sour
         <Section title={t("What it makes")}>
           <dl>
             {row2(t("What it is"), `${t(ROLE_LABEL[s.role])}${p.oem ? ` · ${t("makes to a drawing (OEM)")}` : ""}`)}
-            {row2(t("Kind of container"), labels(s.productTypes, PRODUCT_TYPE_LABEL))}
+            {row2(t(market?.typeLabel ?? "Kind of container"), labels(s.productTypes, PRODUCT_TYPE_LABEL))}
             {row2(t("Materials"), s.materials.join(", "))}
-            {row2(t("Technology"), labels(s.technologies, TECHNOLOGY_LABEL))}
+            {containers && row2(t("Technology"), labels(s.technologies, TECHNOLOGY_LABEL))}
             {row2(t("Products, as its page says"), p.products)}
             {row2(t("Sizes"), p.sizes)}
             {row2(t("Colours"), p.colours)}
@@ -101,17 +103,21 @@ export default async function DirectorySupplierPage({ params }: PageProps<"/sour
             {row2(t("Catalogue"), link(p.catalogUrl))}
           </dl>
         </Section>
-        <Section title={t("Conditions and safety")}>
+        <Section title={containers ? t("Conditions and safety") : t("Conditions")}>
           <dl>
             {row2(t("Minimum order"), p.moq)}
             {row2(t("Samples"), p.samples)}
             {row2(t("Customisation"), p.customisation)}
             {row2(t("Delivery times"), p.leadTime)}
             {row2(t("Shipping"), p.export)}
-            {row2(t("Intended use"), p.intendedUse ? t(INTENDED_USE_LABEL[p.intendedUse]) : <span className="font-medium text-caution">{t("Technical validation required")}</span>)}
-            {row2(t("Safety documents"), p.safety)}
+            {containers && row2(t("Intended use"), p.intendedUse ? t(INTENDED_USE_LABEL[p.intendedUse]) : <span className="font-medium text-caution">{t("Technical validation required")}</span>)}
+            {row2(containers ? t("Safety documents") : t("Technical documents and certifications"), p.safety)}
           </dl>
-          <p className="mt-3 text-[12.5px] text-ink-3">{t("A container sold for candles is not for that reason safe with your wax: a material certificate says nothing of the finished candle. An empty container, one for a candle already made, one made to receive hot wax and an outer support are four different things, and only a burn test on the finished candle settles it.")}</p>
+          {containers ? (
+            <p className="mt-3 text-[12.5px] text-ink-3">{t("A container sold for candles is not for that reason safe with your wax: a material certificate says nothing of the finished candle. An empty container, one for a candle already made, one made to receive hot wax and an outer support are four different things, and only a burn test on the finished candle settles it.")}</p>
+          ) : (
+            <p className="mt-3 text-[12.5px] text-ink-3">{t("A wick recommended for a diameter is a starting point: only a burn test with your wax, fragrance and container says which size is right.")}</p>
+          )}
         </Section>
       </div>
 

@@ -213,4 +213,21 @@ export const markets = {
   "Production method": "Metodo produttivo",
   "Documents on file": "Documenti in archivio",
   "Estimated from the invoices": "Stimata dalle fatture",
+
+  // ---- Candle wicks market
+  "Candle wicks": "Stoppini per candele",
+  "Makers and sellers of candle wicks: wood wicks, cotton and other fibre wicks — braided, flat, round, with a paper or other core, on spools or cut, waxed, with a tab — and the holders and sustainers that go with them.":
+    "Produttori e rivenditori di stoppini per candele: stoppini in legno, in cotone e in altre fibre — intrecciati, piatti, tondi, con anima in carta o altro, in bobina o tagliati, cerati, con base — e i supporti e sostegni che li accompagnano.",
+  "Kind of wick": "Tipo di stoppino",
+  "Wood wicks": "Stoppini in legno",
+  "Cotton, braided and other fibre wicks": "Stoppini in cotone, intrecciati e in altre fibre",
+  "Wick holders, tabs and sustainers": "Supporti, basi e sostegni per stoppini",
+  "Both wood and fibre": "Sia legno sia fibra",
+  Markets: "Mercati",
+  Conditions: "Condizioni",
+  "Technical documents and certifications": "Documenti tecnici e certificazioni",
+  "A wick recommended for a diameter is a starting point: only a burn test with your wax, fragrance and container says which size is right.":
+    "Uno stoppino consigliato per un diametro è un punto di partenza: solo una prova di combustione con la tua cera, la tua fragranza e il tuo contenitore dice quale misura è giusta.",
+  "A supplier is compared on what the product is made of, its construction and sizes. What the invoices do not say is marked as missing and is never filled in: two products are not the same because they look alike. Write the specification on each product's page.":
+    "Un fornitore si confronta su materiale, costruzione e misure del prodotto. Ciò che le fatture non dicono è segnato come mancante e non viene mai riempito: due prodotti non sono uguali perché si somigliano. Scrivi la specifica sulla pagina di ogni prodotto.",
 };

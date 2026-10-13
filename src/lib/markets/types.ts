@@ -25,6 +25,12 @@ export interface MarketDefinition {
   about: Msg;
   /** The built-in subcategories (lib/catalog/taxonomy.ts) whose products this market supplies. */
   serves: string[];
+  /** What the product types of this market are called in its filters and pages. */
+  typeLabel: Msg;
+  /** The product types that belong to this market (a subset of PRODUCT_TYPES). */
+  types: readonly (typeof PRODUCT_TYPES)[number][];
+  /** Containers only: how they are made and what they are for — moulding technology, intended use, the safety caveat. */
+  containerFields: boolean;
 }
 
 export const MARKETS: MarketDefinition[] = [
@@ -33,6 +39,18 @@ export const MARKETS: MarketDefinition[] = [
     label: "Plastic candle containers",
     about: "Makers of the empty plastic containers used for votive, cemetery and religious candles and for tealights: tubes, cups and shells in PP, PVC, PC and other plastics, moulded or blown.",
     serves: ["candle_container"],
+    typeLabel: "Kind of container",
+    types: ["votive_container", "tealight_cup", "lantern_housing", "lid", "base", "oil_insert", "electric_light", "custom"],
+    containerFields: true,
+  },
+  {
+    key: "candle_wicks",
+    label: "Candle wicks",
+    about: "Makers and sellers of candle wicks: wood wicks, cotton and other fibre wicks — braided, flat, round, with a paper or other core, on spools or cut, waxed, with a tab — and the holders and sustainers that go with them.",
+    serves: ["wick", "wick_holder"],
+    typeLabel: "Kind of wick",
+    types: ["wood_wick", "fibre_wick", "wick_holder"],
+    containerFields: false,
   },
 ];
 export const marketOf = (key: string | null | undefined) => MARKETS.find((m) => m.key === key) ?? null;
@@ -82,7 +100,7 @@ export const isStatus = (v: unknown): v is MarketStatus => typeof v === "string"
 export const TECHNOLOGIES = ["injection", "blow", "extrusion", "thermoforming"] as const;
 export const TECHNOLOGY_LABEL: Record<(typeof TECHNOLOGIES)[number], Msg> = { injection: "Injection moulding", blow: "Blow moulding", extrusion: "Extrusion", thermoforming: "Thermoforming" };
 
-export const PRODUCT_TYPES = ["votive_container", "tealight_cup", "lantern_housing", "lid", "base", "oil_insert", "electric_light", "custom"] as const;
+export const PRODUCT_TYPES = ["votive_container", "tealight_cup", "lantern_housing", "lid", "base", "oil_insert", "electric_light", "custom", "wood_wick", "fibre_wick", "wick_holder"] as const;
 export const PRODUCT_TYPE_LABEL: Record<(typeof PRODUCT_TYPES)[number], Msg> = {
   votive_container: "Containers and tubes for votive and cemetery candles",
   tealight_cup: "Tealight cups",
@@ -92,7 +110,12 @@ export const PRODUCT_TYPE_LABEL: Record<(typeof PRODUCT_TYPES)[number], Msg> = {
   oil_insert: "Oil inserts",
   electric_light: "Electric votive lights",
   custom: "Custom moulding",
+  wood_wick: "Wood wicks",
+  fibre_wick: "Cotton, braided and other fibre wicks",
+  wick_holder: "Wick holders, tabs and sustainers",
 };
+/** A company that offers both wood and fibre wicks: a filter of its own, since it is a different kind of source. */
+export const BOTH_WICKS = "wood_wick+fibre_wick";
 
 /** What the container is for: the four are not interchangeable, and only a test on the finished candle says a container is safe. */
 export const INTENDED_USES = ["hot_fill", "finished_candle", "empty_container", "outer_support"] as const;
