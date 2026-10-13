@@ -203,7 +203,8 @@ function company() {
       purchase({ productId: stale.id, supplierId: lone.id, date: "2025-12-01", quantity: 100, unitPrice: 9 }),
     ],
     quotes: [
-      quote({ productId: widget.id, supplierId: borg.id, date: "2026-09-20", unitPrice: 1.45, moq: 2000, leadTimeDays: 30, paymentTermsDays: 30, incoterm: "EXW" }),
+      // Delivered, from the same country: a cost to the plant, so it is set against the price paid (comparison.ts).
+      quote({ productId: widget.id, supplierId: borg.id, date: "2026-09-20", unitPrice: 1.45, moq: 2000, leadTimeDays: 30, paymentTermsDays: 30, incoterm: "DAP" }),
       quote({ productId: widget.id, supplierId: ankara.id, date: "2026-03-01", unitPrice: 1.2, currency: "USD", fxRate: 0.92, moq: 40_000, leadTimeDays: 45, paymentTermsDays: 0, validUntil: "2026-04-01" }),
       quote({ productId: gadget.id, supplierId: ankara.id, date: "2026-09-25", unitPrice: 2, currency: "USD", fxRate: null }),
     ],

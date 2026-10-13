@@ -7,7 +7,13 @@
  * - DATABASE_URL set → any Postgres (e.g. Supabase). Same schema/migrations.
  *   Never auto-seeded.
  *
- * Migrations in ./drizzle are applied on startup in both cases.
+ * Migrations in ./drizzle are applied on startup in both cases. On the
+ * embedded database a migration never reaches data already on file without a
+ * copy made a moment before (server/backup.ts), and the company's own data is
+ * copied once a day.
+ *
+ * The embedded database belongs to one process: the app. A build refuses to
+ * open it, and so does a test run — tests work on databases of their own.
  */
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import path from "node:path";
@@ -18,6 +24,7 @@ import { drizzle as drizzlePostgres } from "drizzle-orm/postgres-js";
 import { migrate as migratePostgres } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
 import * as schema from "./schema";
+import { backupBeforeMigrations, dailyBackup } from "../server/backup";
 import { seedDemo } from "./seed";
 
 export type DB = PgliteDatabase<typeof schema>;
@@ -25,7 +32,11 @@ export type DB = PgliteDatabase<typeof schema>;
 const migrationsFolder = path.join(process.cwd(), "drizzle");
 
 // Survive Next.js hot reloads: one connection per process.
-const globalForDb = globalThis as unknown as { __db?: Promise<DB>; __migrations?: number };
+const globalForDb = globalThis as unknown as { __db?: Promise<DB>; __migrations?: number; __backupDay?: string };
+
+/** Where the embedded database lives, and next to it the documents on file and the backups. */
+const dataDir = () => process.env.PGLITE_DIR ?? path.join(process.cwd(), ".data", "pglite");
+const dataRoot = () => path.dirname(dataDir());
 
 /** When the list of migrations last changed: a new one is applied without restarting the dev server. */
 const migrationsStamp = () => {
@@ -41,6 +52,8 @@ export function getDb(): Promise<DB> {
   // would open the embedded database a second time, next to the app that is running on it — which damages it. Every
   // page that reads data asks for the request first (`connection()`), so that it is only ever rendered when asked for.
   if (process.env.NEXT_PHASE === "phase-production-build") return Promise.reject(new Error("The database is not opened while the app is being built: the page that asked for it must wait for a request (connection())."));
+  // Tests make their own databases, in memory. A test that reached for the app's connection would open the company's data: refused.
+  if (process.env.VITEST && !process.env.PGLITE_DIR && !process.env.DATABASE_URL) return Promise.reject(new Error("Tests never open the app's database: make one in memory (new PGlite()) or point PGLITE_DIR at a copy."));
   if (!globalForDb.__db) {
     globalForDb.__migrations = migrationsStamp();
     globalForDb.__db = connect().catch((err) => {
@@ -55,6 +68,8 @@ export function getDb(): Promise<DB> {
       const opened = globalForDb.__db;
       globalForDb.__db = opened.then(async (db) => {
         try {
+          // A copy first: if it cannot be written, the migration is not applied.
+          await backupBeforeMigrations(db, dataRoot(), migrationsFolder);
           await migratePglite(db, { migrationsFolder });
         } catch (err) {
           // A migration that cannot be applied now — its file still being written, the list half-edited — must not
@@ -67,7 +82,23 @@ export function getDb(): Promise<DB> {
       });
     }
   }
+  keepDailyBackup(globalForDb.__db);
   return globalForDb.__db;
+}
+
+/** Once a day, after the response is on its way: a copy of the company's data. A failure is said in the log and tried again on a later request. */
+function keepDailyBackup(opened: Promise<DB>) {
+  if (process.env.DATABASE_URL || process.env.VITEST) return;
+  const today = new Date().toISOString().slice(0, 10);
+  if (globalForDb.__backupDay === today) return;
+  globalForDb.__backupDay = today;
+  opened
+    .then((db) => dailyBackup(db, dataRoot()))
+    .then((dir) => dir && console.log(`[backup] daily copy written to ${dir}`))
+    .catch((err) => {
+      globalForDb.__backupDay = undefined;
+      console.error("[backup] the daily copy could not be written", err);
+    });
 }
 
 async function connect(): Promise<DB> {
@@ -80,11 +111,13 @@ async function connect(): Promise<DB> {
     return db as unknown as DB;
   }
 
-  const dataDir = process.env.PGLITE_DIR ?? path.join(process.cwd(), ".data", "pglite");
+  const dir = dataDir();
   // Runtime data folder, not app code: keep it out of build file tracing.
-  const isNew = !existsSync(/*turbopackIgnore: true*/ dataDir);
-  mkdirSync(/*turbopackIgnore: true*/ dataDir, { recursive: true });
-  const db = drizzlePglite(new PGlite(dataDir), { schema });
+  const isNew = !existsSync(/*turbopackIgnore: true*/ dir);
+  mkdirSync(/*turbopackIgnore: true*/ dir, { recursive: true });
+  const db = drizzlePglite(new PGlite(dir), { schema });
+  // Data already on file: a copy before any change of structure reaches it.
+  if (!isNew) await backupBeforeMigrations(db, dataRoot(), migrationsFolder);
   await migratePglite(db, { migrationsFolder });
   if (isNew) await seedDemo(db);
   return db;

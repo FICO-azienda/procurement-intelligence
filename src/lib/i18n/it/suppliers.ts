@@ -63,7 +63,7 @@ export const suppliers = {
   // ---- The whole relationship
   "The whole relationship": "L'intera relazione",
   "Everything you buy from this company, over every name it is known by: what the leverage on each of its products is read from.": "Tutto quello che compri da questa azienda, sotto ogni nome con cui è conosciuta: è da qui che si legge la leva su ciascuno dei suoi prodotti.",
-  "Total spend, last 12 months": "Spesa totale, ultimi 12 mesi",
+  "Spend on catalogue products, last 12 months": "Spesa in prodotti a catalogo, ultimi 12 mesi",
   "Historical spend on file": "Spesa storica in archivio",
   "{amount} since {date}": "{amount} dal {date}",
   "Products purchased": "Prodotti acquistati",

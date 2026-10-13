@@ -154,7 +154,8 @@ describe("the history follows the evidence", () => {
     await recordCandidateQuote(db, second.id, { date: todayISO(), unitPrice: 1.3, currency: "EUR", fxRate: 1, moq: null, leadTimeDays: null, paymentTermsDays: null, incoterm: "FCA", validUntil: null, notes: null, original: null });
     const n = await one();
     const fca = n.anchors.find((a) => a.label === "Mock Paraffin Sp. z o.o.")!;
-    expect(fca).toMatchObject({ basis: "nominal", role: "supports" });
+    // Quoted ex-carrier with no freight on file: not a cost to the plant, so it weighs nothing in the estimate.
+    expect(fca).toMatchObject({ basis: "nominal", role: "not_used" });
     expect(n.warnings.join(" ")).toMatch(/Mock Paraffin Sp\. z o\.o\.: the true cost is incomplete/);
     // The cheaper-looking quote does not become the low end: the delivered offer still sets it.
     expect(n.range!.low).toBeGreaterThan(1.3);

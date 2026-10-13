@@ -4,12 +4,27 @@
  * judgement of whether each offer can be compared with what we buy today.
  *
  * Prices here are purchase/quote prices only — no freight, duties, FX costs,
- * inventory, quality or financing. The landed-cost phase extends these rows;
- * it does not replace them.
+ * inventory, quality or financing are added to them. For that very reason a
+ * quoted price is set against the price paid only when the two stand on the
+ * same ground:
+ *
+ *  - what is paid is the price on the invoice, taken as the goods at the plant;
+ *  - a quote is comparable with it only when it is a cost to the plant too: an
+ *    offer whose landed cost is complete, or a price quoted delivered (DDP, or
+ *    DAP/DPU from inside the same customs area). Ex-works, FOB, CIF, a price
+ *    whose terms nobody stated: NOT COMPARABLE — INSUFFICIENT DATA. No
+ *    difference, no saving, no "lowest" is worked out from it, and no missing
+ *    cost is read as zero;
+ *  - a quote written for another grade or size than the product (56/58 for a
+ *    52/54) is another product: not comparable, unless the user says so.
  */
 import { basePrice, daysBetween, isPriced, type ProductData, type PurchaseData, type QuoteData, type SupplierData } from "../analytics";
+import { compareIdentity, identityOf } from "../catalog/identity";
+import { numbersOf } from "../catalog/specs";
 import { en, type T } from "../i18n";
+import { parseIncoterm } from "../import/normalize/terms";
 import { normalizeKey } from "../import/normalize/text";
+import { crossesCustoms } from "../sourcing/regions";
 import { INTEL_CONFIG, type IntelConfig } from "./config";
 
 export type Comparability = "comparable" | "partial" | "not";
@@ -62,6 +77,14 @@ export interface ComparisonRow {
   differencePct: number | null;
   comparability: Comparability;
   comparabilityReasons: string[];
+  /**
+   * The price is a cost to the plant, like the price paid: a purchase, an offer with its landed cost complete, a
+   * quote delivered with nothing left to add. False: transport, duties or the terms themselves are not known — the
+   * row is "not comparable" for that reason alone, until a complete true cost says what it comes to.
+   */
+  deliveredBasis: boolean;
+  /** How far it is the product bought, the delivery terms aside: what a complete true cost is judged with. */
+  specComparability: Comparability;
   /** The user decided the comparability. */
   overridden: boolean;
   specsKnown: boolean;
@@ -113,6 +136,33 @@ export interface ComparisonInput {
   /** Median order quantity, to judge MOQs. */
   typicalOrderQuantity: number | null;
   asOf: string;
+  /** The buyer's country: says whether a price quoted "delivered" still has customs to pay. Unknown: it is not assumed away. */
+  homeCountry?: string | null;
+}
+
+/** Terms under which the seller brings the goods to the buyer's door. */
+const TO_THE_DOOR = new Set(["DAP", "DPU", "DDP"]);
+
+/**
+ * Whether a quoted price is a cost to the buyer's plant — and when it is not, what is missing, in words. Nothing is
+ * assumed: terms nobody stated are unknown, and a delivered price from a country that may be across customs is not
+ * taken as duty-free.
+ */
+export function deliveredBasis(
+  quote: Pick<QuoteData, "incoterm" | "landed">,
+  supplierCountry: string | null,
+  /** The buyer's country — or, when it is not on file, the country the product is bought from today: a supplier of that same country stands where today's does. */
+  homeCountry: string | null | undefined,
+  t: T = en,
+): { delivered: boolean; why: string | null } {
+  if (quote.landed) return { delivered: true, why: null };
+  const incoterm = parseIncoterm(quote.incoterm);
+  if (!incoterm) return { delivered: false, why: t("the delivery terms are not stated, so it is not known what the price includes") };
+  if (!TO_THE_DOOR.has(incoterm)) return { delivered: false, why: t("quoted {incoterm}: transport to your plant, and what comes with it, is not in the price", { incoterm }) };
+  if (incoterm === "DDP") return { delivered: true, why: null };
+  const customs = crossesCustoms(supplierCountry, homeCountry);
+  if (customs === false) return { delivered: true, why: null };
+  return { delivered: false, why: customs == null ? t("quoted {incoterm}, but the supplier's country or yours is not on file: it is not known whether duties are due", { incoterm }) : t("quoted {incoterm} from outside your customs area: duties and clearance are not in the price", { incoterm }) };
 }
 
 export function compareSuppliers(input: ComparisonInput, cfg: IntelConfig = INTEL_CONFIG, t: T = en): ComparisonRow[] {
@@ -124,6 +174,9 @@ export function compareSuppliers(input: ComparisonInput, cfg: IntelConfig = INTE
     ...input.quotes.map((q) => q.supplierId),
   ]);
   if (input.currentSupplierId) supplierIds.add(input.currentSupplierId);
+
+  // Where the product comes from today: with the buyer's own country not on file, it is the ground the price paid stands on.
+  const paidFrom = input.suppliers.find((s) => s.id === input.currentSupplierId)?.country ?? null;
 
   const rows: ComparisonRow[] = [];
   for (const supplierId of supplierIds) {
@@ -160,6 +213,11 @@ export function compareSuppliers(input: ComparisonInput, cfg: IntelConfig = INTE
     const reasons: string[] = [];
     let comparability: Comparability = "comparable";
     let overridden = false;
+    // The ground the price stands on: a purchase is an invoice price like the one paid; a quote must be a cost to the plant.
+    const basis = useQuote && !isCurrent ? deliveredBasis(quote!, supplier.country, input.homeCountry ?? paidFrom, t) : { delivered: true, why: null };
+    // The grade or size the quote was written for, when its own words state one: another one is another product.
+    const quoted = useQuote && !isCurrent && !quote!.validated && quote!.originalDescription ? identityOf(quote!.originalDescription, { names: [supplier.name] }) : null;
+    const otherGrade = !!quoted && quoted.numbers.length > 0 && compareIdentity(quoted, identityOf(product.name)).match === "other_spec";
     if (!record && mismatch) {
       comparability = "not";
       reasons.push(t('Bought in "{from}", which can\'t be converted to {to}', { from: mismatch.unit, to: product.unit }));
@@ -170,11 +228,15 @@ export function compareSuppliers(input: ComparisonInput, cfg: IntelConfig = INTE
       comparability = "not";
       reasons.push(t("FX conversion required ({currency} price, no exchange rate on record)", { currency }));
     } else if (!isCurrent) {
-      if (diffs.length) {
+      if (otherGrade) {
+        comparability = "not";
+        reasons.push(t("Another grade or size: quoted for {theirs}, you buy {ours}. Not the same product", { theirs: quoted!.numbers.join("/"), ours: numbersOf(product.name).join("/") }));
+      }
+      if (diffs.length && comparability !== "not") {
         comparability = "partial";
         reasons.push(t("Specification difference: {list}", { list: diffs.map((d) => t("{name} {theirs} vs {ours}", { name: d.name, theirs: d.theirs, ours: d.ours })).join(", ") }));
       }
-      if (moq != null && input.typicalOrderQuantity != null && moq > input.typicalOrderQuantity * cfg.moqToleranceFactor) {
+      if (comparability !== "not" && moq != null && input.typicalOrderQuantity != null && moq > input.typicalOrderQuantity * cfg.moqToleranceFactor) {
         comparability = "partial";
         const n = (v: number) => v.toLocaleString("it-IT", { useGrouping: "always", maximumFractionDigits: 2 });
         reasons.push(t("MOQ {moq} {unit} is above your typical order of {typical} {unit}", { moq: n(moq), typical: n(input.typicalOrderQuantity), unit: product.unit }));
@@ -182,11 +244,19 @@ export function compareSuppliers(input: ComparisonInput, cfg: IntelConfig = INTE
     }
     // A missing price, an unknown exchange rate or an unconvertible unit can't be overridden into "comparable".
     const hardBlock = price == null || fxRequired;
+    const specComparability: Comparability = !isCurrent && link?.comparabilityOverride && (!hardBlock || link.comparabilityOverride === "not") ? link.comparabilityOverride : comparability;
     if (!isCurrent && link?.comparabilityOverride && (!hardBlock || link.comparabilityOverride === "not")) {
       // Otherwise the user's judgement wins.
       comparability = link.comparabilityOverride;
       overridden = true;
       reasons.unshift(link.comparabilityNote ? t("Set by you: {note}", { note: link.comparabilityNote }) : t("Set by you"));
+    }
+
+    // Not a cost to the plant: whatever else is true of it, it is not set against the price paid. This is not a
+    // judgement the user can overrule — it is data that is missing; a complete true cost is what settles it.
+    if (!basis.delivered && price != null && !fxRequired) {
+      comparability = "not";
+      reasons.unshift(t("NOT COMPARABLE — INSUFFICIENT DATA: {why}", { why: basis.why ?? "" }));
     }
 
     const difference = !isCurrent && priceEUR != null && currentPrice != null && comparability !== "not" ? priceEUR - currentPrice : null;
@@ -214,6 +284,8 @@ export function compareSuppliers(input: ComparisonInput, cfg: IntelConfig = INTE
       differencePct: difference != null && currentPrice ? (difference / currentPrice) * 100 : null,
       comparability,
       comparabilityReasons: reasons,
+      deliveredBasis: basis.delivered,
+      specComparability,
       overridden,
       specsKnown,
       landed: useQuote && quote?.landed === true,

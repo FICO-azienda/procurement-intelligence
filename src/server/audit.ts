@@ -36,10 +36,13 @@ export interface AuditEvent extends Required<AuditInput> {
 
 const short = (v: string | null | undefined) => (v == null ? null : v.length > 2000 ? `${v.slice(0, 2000)}…` : v);
 
-/** Writes the events of one change, in the transaction that makes it: the change and its record stand or fall together. */
+/**
+ * Writes the events of one change, in the transaction that makes it: the change and its record stand or fall together.
+ * What a deletion took away is kept whole (`oldValue`): it is the only copy left of the record.
+ */
 export async function logEvents(db: DB, actor: Actor, events: AuditInput[]): Promise<void> {
   if (!events.length) return;
-  await db.insert(auditEvents).values(events.map((e) => ({ actorType: actor.type, actorId: actor.id, action: e.action, entity: e.entity, entityId: e.entityId, field: e.field ?? null, oldValue: short(e.oldValue), newValue: short(e.newValue), source: e.source ?? null, note: e.note ?? null })));
+  await db.insert(auditEvents).values(events.map((e) => ({ actorType: actor.type, actorId: actor.id, action: e.action, entity: e.entity, entityId: e.entityId, field: e.field ?? null, oldValue: e.action === "delete" ? (e.oldValue ?? null) : short(e.oldValue), newValue: short(e.newValue), source: e.source ?? null, note: e.note ?? null })));
 }
 
 const toEvent = (r: typeof auditEvents.$inferSelect): AuditEvent => ({

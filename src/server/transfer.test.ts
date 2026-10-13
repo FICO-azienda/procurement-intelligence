@@ -76,6 +76,8 @@ describe("moving a workspace's data", () => {
     const target = await fresh();
     const short = lines.filter((l, i) => !(l.startsWith('{"table":"purchases"') && i === lines.findIndex((x) => x.startsWith('{"table":"purchases"'))));
     await expect(restore(target, short)).rejects.toBeInstanceOf(TransferError);
+    // Refused and undone: not one row of the short file stayed.
+    expect(Object.values((await manifestOf(target)).tables).reduce((a, b) => a + b, 0)).toBe(0);
     const broken = await fresh();
     await expect(restore(broken, [lines[0], '{"table":"no_such_table","rows":[]}'])).rejects.toThrow(/does not have/);
     expect((await manifestOf(broken)).tables.suppliers).toBe(0);

@@ -135,6 +135,11 @@ export async function approveAction(sessionId: string) {
   });
 }
 
+/** Sets a file aside: nothing of it is imported, and it stops waiting. */
+export async function discardFileAction(sessionId: string) {
+  return run(async () => svc.discardSession(await getDb(), sessionId));
+}
+
 export async function reopenMappingAction(sessionId: string) {
   return run(async () => svc.reopenMapping(await getDb(), sessionId));
 }

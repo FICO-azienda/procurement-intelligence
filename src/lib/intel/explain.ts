@@ -52,7 +52,7 @@ export function explanations(cfg: IntelConfig = INTEL_CONFIG, t: T = en) {
     supplierWeightedChange: t(
       "For each product bought from this supplier: latest price vs the last price paid before 1 January (or the first price of the year). Each product weighs by its year-to-date spend, so large items count more than small ones.",
     ),
-    highSpend: t("Products that together make up the first {pareto}% of annual spend.", { pareto }),
+    highSpend: t("Products that together make up the first {pareto}% of spend.", { pareto }),
     alert: t("Price change over 12 months: above +{moderate}% moderate, from +{high}% high, from +{critical}% critical.", { moderate: a.moderate, high: a.high, critical: a.critical }),
     quoteAge: t("Fresh: under {fresh} days. Recent: {fresh}–{recent} days. Old: over {recent} days. Old and expired offers lower the confidence of a saving.", { fresh: cfg.quoteAge.freshDays, recent }),
     outlier: t("Flagged when a price is more than {deviation}% away from the median of at least {min} purchases. Nothing is removed automatically: you decide.", {

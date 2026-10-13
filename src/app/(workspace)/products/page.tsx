@@ -123,7 +123,7 @@ export default async function ProductsPage({ searchParams }: PageProps<"/product
             <Th className="hidden @2xl:table-cell">{t("What it is")}</Th>
             <Th className="hidden @4xl:table-cell" align="right">{t("Invoice lines")}</Th>
             <Th className="hidden @3xl:table-cell">{t("Last purchase")}</Th>
-            <Th align="right">{t("Annual spend")}</Th>
+            <Th align="right">{t("Spend, last 12 months")}</Th>
           </tr>
         </thead>
         <tbody>
@@ -298,7 +298,7 @@ export default async function ProductsPage({ searchParams }: PageProps<"/product
                 <Th className="hidden border-t-0 @2xl:table-cell" align="right">
                   {t("12 months")} <Hint text={EXPLAIN.change} />
                 </Th>
-                <Th className="border-t-0" align="right">{t("Annual spend")}</Th>
+                <Th className="border-t-0" align="right">{t("Spend, last 12 months")}</Th>
                 <Th className="hidden border-t-0 @4xl:table-cell" align="right">
                   {t("Potential saving")} <Hint text={EXPLAIN.potentialSaving} />
                 </Th>

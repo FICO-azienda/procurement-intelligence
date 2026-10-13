@@ -217,16 +217,35 @@ describe("product with a foreign supplier", () => {
     expect(text(d)).toContain("can't be compared yet");
   });
 
-  it("with a recorded rate it is compared, at medium confidence, with its open costs listed", () => {
+  it("with a recorded rate it is still not compared while quoted FOB: the price is not a cost to the plant", () => {
     const q = quote({ productId: p.id, supplierId: far.id, date: "2026-09-10", unitPrice: 1.4, currency: "USD", fxRate: 0.9, moq: 2000, leadTimeDays: 30, paymentTermsDays: 0, incoterm: "FOB" });
     const d = run({ suppliers: [a, far], products: [p], purchases, quotes: [q] }).of(p);
-    expect(d.best?.priceEUR).toBeCloseTo(1.26, 6);
-    expect(d.savingConfidence).toBe("medium");
-    expect(d.status).toBe("review");
-    const warnings = d.best!.flags.filter((x) => x.tone === "warn").map((x) => x.key);
-    expect(warnings).toEqual(["currency", "freight", "import", "lead_time", "payment", "specs_unknown", "quality"]);
-    expect(d.summary.at(-1)).toBe("This is a price comparison only: before treating it as a saving, add the cost of transport and check import costs.");
-    expect(d.nextActions.map((x) => x.kind)).toEqual(["negotiate", "get_freight", "check_import"]);
+    // The price in euro is known and shown — and nothing is worked out from it: no saving, no "below what you pay".
+    expect(d.alternatives[0]).toMatchObject({ comparability: "not", potentialSaving: null, confidence: null });
+    expect(d.alternatives[0].priceEUR).toBeCloseTo(1.26, 6);
+    expect(d.alternatives[0].notComparableReason).toBe("NOT COMPARABLE — INSUFFICIENT DATA: quoted FOB: transport to your plant, and what comes with it, is not in the price");
+    expect(d.potentialSaving).toBeNull();
+    expect(d.savingConfidence).toBeNull();
+    expect(d.status).not.toBe("action");
+  });
+
+  it("a price quoted delivered from across customs is not compared either: duties are not in it", () => {
+    const q = quote({ productId: p.id, supplierId: far.id, date: "2026-09-10", unitPrice: 1.4, currency: "USD", fxRate: 0.9, moq: 2000, incoterm: "DAP" });
+    const d = run({ suppliers: [a, far], products: [p], purchases, quotes: [q] }).of(p);
+    expect(d.alternatives[0]).toMatchObject({ comparability: "not", potentialSaving: null });
+    expect(d.alternatives[0].notComparableReason).toContain("from outside your customs area");
+    // Delivered duty paid is a cost to the plant: that one is compared.
+    const ddp = quote({ productId: p.id, supplierId: far.id, date: "2026-09-10", unitPrice: 1.4, currency: "USD", fxRate: 0.9, moq: 2000, incoterm: "DDP" });
+    expect(run({ suppliers: [a, far], products: [p], purchases, quotes: [ddp] }).of(p).alternatives[0].comparability).not.toBe("not");
+  });
+
+  it("a quote whose delivery terms nobody stated is not compared: nothing is assumed about what its price includes", () => {
+    const b = supplier({ name: "Nearby", country: "Italy" });
+    const q = quote({ productId: p.id, supplierId: b.id, date: "2026-09-10", unitPrice: 1.2, moq: 2000, incoterm: null });
+    const d = run({ suppliers: [a, b], products: [p], purchases, quotes: [q] }).of(p);
+    expect(d.alternatives[0]).toMatchObject({ comparability: "not", potentialSaving: null });
+    expect(d.alternatives[0].notComparableReason).toBe("NOT COMPARABLE — INSUFFICIENT DATA: the delivery terms are not stated, so it is not known what the price includes");
+    expect(d.potentialSaving).toBeNull();
   });
 });
 
@@ -266,20 +285,22 @@ describe("lowest quote is not the first alternative", () => {
   it("orders by reliability of the comparison, not by quoted price", () => {
     expect(d.alternatives.map((x) => x.supplierName)).toEqual(["Beta", "Cheapo"]);
     expect(d.best?.supplierName).toBe("Beta");
-    expect(d.alternatives[1]).toMatchObject({ comparability: "partial", confidence: "medium" });
+    // Quoted FOB from China: not a cost to the plant. It is listed, and compared with nothing.
+    expect(d.alternatives[1]).toMatchObject({ comparability: "not", confidence: null, potentialSaving: null });
   });
 
   it("says why the cheapest quote is not first", () => {
     expect(d.cheapestNotFirst?.explanation).toBe(
-      "Cheapo has the lowest quoted price (€1,12/kg), but it is not listed first: higher minimum order (20.000 kg), freight not included (FOB) and import costs not assessed. Its true cost has not been estimated yet.",
+      "Cheapo has the lowest quoted price (€1,12/kg), but it is not listed first: the comparison is less reliable. Its true cost has not been estimated yet.",
     );
     expect(d.summary).toContain("Cheapo quotes even less (€1,12/kg), but that offer is harder to compare and its true cost is not estimated yet.");
     expect(d.summary.length).toBeLessThanOrEqual(5);
   });
 
   it("the range of quotes on file is a comparison, not a market price", () => {
-    expect(d.market).toMatchObject({ type: "internal_quotes", count: 2, recent: 2, confidence: "medium", position: "above" });
-    expect(d.market.low).toBe(1.12);
+    // Only the delivered quote is a price to stand next to the one paid: the FOB one is not part of any range.
+    expect(d.market).toMatchObject({ type: "internal_quotes", count: 1, recent: 1, confidence: "low", position: "above" });
+    expect(d.market.low).toBe(1.49);
     expect(d.market.high).toBe(1.49);
   });
 
@@ -288,8 +309,8 @@ describe("lowest quote is not the first alternative", () => {
     const cols = compareColumns(intel.products.find((x) => x.product.id === p.id)!, INTEL_CONFIG);
     expect(cols.map((x) => [x.supplierName, x.isCurrent, x.highlights])).toEqual([
       ["Acme", true, []],
-      ["Beta", false, ["Lowest minimum order"]], // 2.000 kg against Cheapo's 20.000
-      ["Cheapo", false, ["Lowest quoted price", "Most recent quote"]],
+      ["Beta", false, ["Lowest quoted price"]], // the only quote that is a cost to the plant
+      ["Cheapo", false, []], // FOB: nothing about it is called "lowest"
     ]);
     expect(cols[0]).toMatchObject({ priceEUR: 1.58, differencePct: null, leadTimeDays: 12, paymentTermsDays: 60 });
     expect(cols[1].differencePct).toBeCloseTo(-5.696, 2);
@@ -386,7 +407,7 @@ describe("the whole page", () => {
     quotes: [
       quote({ productId: act.id, supplierId: alt1.id, date: "2026-09-10", unitPrice: 1.49, moq: 2000, incoterm: "DAP" }),
       // MOQ above the typical order (2.500) but within the annual volume (10.000): partly comparable.
-      quote({ productId: rev.id, supplierId: alt2.id, date: "2026-09-12", unitPrice: 1.02, moq: 6000, incoterm: "FCA" }),
+      quote({ productId: rev.id, supplierId: alt2.id, date: "2026-09-12", unitPrice: 1.02, moq: 6000, incoterm: "DAP" }),
       quote({ productId: good.id, supplierId: alt1.id, date: "2026-09-20", unitPrice: 0.52, moq: 500, incoterm: "DAP" }),
     ],
   };

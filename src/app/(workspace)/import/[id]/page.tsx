@@ -9,6 +9,7 @@ import { MappingForm } from "@/components/import/mapping-form";
 import {
   ApproveBar,
   DocumentDetails,
+  DiscardFileButton,
   DuplicateBanner,
   LinesPanel,
   MatchDecisions,
@@ -28,7 +29,7 @@ import { rich } from "@/lib/i18n/rich";
 import { FIELD_LABEL, proposeMapping, type ColumnMapping } from "@/lib/import/fields";
 import { buildGroups } from "@/lib/import/groups";
 import type { MatchResult } from "@/lib/import/match";
-import type { CurrentData, ExtractedData, Issue, RecordType } from "@/lib/import/types";
+import type { CurrentData, ExtractedData, Issue, ItemData, RecordType } from "@/lib/import/types";
 import {
   getSession,
   getSessionItems,
@@ -110,6 +111,10 @@ export default async function ImportSessionPage({ params }: PageProps<"/import/[
   if (session.status === "uploaded" || session.status === "processing") {
     const ex = session.extraction as SpreadsheetExtraction | null;
     const mapping = session.mapping as MappingInfo | null;
+    // The columns proposed when the file arrived are the code's reading of that day. Until someone confirms them, the
+    // screen starts from today's reading (a file reopened by the user keeps the columns the user had confirmed).
+    const fresh = ex && !ex.headerless ? proposeMapping(ex.headers) : undefined;
+    const start = mapping && mapping.auto !== false && fresh ? fresh : (mapping?.columns as ColumnMapping | undefined);
     return (
       <>
         {header}
@@ -123,12 +128,15 @@ export default async function ImportSessionPage({ params }: PageProps<"/import/[
             sample={ex.sample}
             rowCount={ex.rowCount}
             headerless={ex.headerless}
-            initial={{ columns: mapping.columns as ColumnMapping, recordType: mapping.recordType, defaultCurrency: mapping.defaultCurrency }}
-            suggested={ex.headerless ? undefined : proposeMapping(ex.headers)}
+            initial={{ columns: start ?? (mapping.columns as ColumnMapping), recordType: mapping.recordType, defaultCurrency: mapping.defaultCurrency }}
+            suggested={fresh}
           />
         ) : (
           <p className="text-ink-3">{t("Reading the file…")}</p>
         )}
+        <p className="mt-5">
+          <DiscardFileButton sessionId={id} />
+        </p>
       </>
     );
   }
@@ -171,6 +179,16 @@ export default async function ImportSessionPage({ params }: PageProps<"/import/[
   const attention = items.filter((i) => i.status === "attention");
   const flaggedOnly = attention.filter((i) => !(i.issues as Issue[]).some((x) => x.severity === "blocking")).length;
   const duplicates = attention.filter((i) => (i.issues as Issue[]).some((x) => x.code === "duplicate")).length;
+  // What this file has in common with invoices already on file: the document is recognised by issuer and number, not by its name.
+  const has = (i: (typeof items)[number], code: string) => (i.issues as Issue[]).some((x) => x.code === code);
+  const openItems = items.filter((i) => i.status === "ready" || i.status === "attention");
+  const touching = openItems.filter((i) => has(i, "duplicate") || has(i, "conflict") || has(i, "invoice_on_file"));
+  const onFile = {
+    invoices: new Set(touching.map((i) => `${i.supplierId}|${(i.data as ItemData).invoiceReference ?? ""}`)).size,
+    same: touching.filter((i) => has(i, "duplicate")).length,
+    conflicts: touching.filter((i) => has(i, "conflict")).length,
+    extra: touching.filter((i) => has(i, "invoice_on_file")).length,
+  };
   const summary = session.summary as ImportSummary | null;
   const open = count("ready") + count("attention");
   const reviewOnly = attention.length - duplicates;
@@ -256,6 +274,21 @@ export default async function ImportSessionPage({ params }: PageProps<"/import/[
       )}
       {!previous && duplicates > 0 && duplicates === attention.length && open === attention.length && (
         <DuplicateBanner sessionId={id} mode="lines" isPdf={isDocument} />
+      )}
+
+      {onFile.invoices > 0 && open > 0 && (
+        <div role="status" className="mb-5 rounded-lg border border-caution/30 bg-caution-wash px-4 py-3 text-[13.5px] text-ink">
+          <p className="font-medium">{t.n(onFile.invoices, "This file contains {n} invoice that is already on file", "This file contains {n} invoices that are already on file")}</p>
+          <p className="mt-1 text-ink-2">
+            {t("Of their lines: {same} are already on file and will not be imported again, {conflicts} are on file with other figures, {extra} are not among the lines on file.", { same: onFile.same, conflicts: onFile.conflicts, extra: onFile.extra })}{" "}
+            {t("Nothing of these is imported unless you say so, line by line: importing a line twice counts the purchase twice.")}
+          </p>
+          {session.recordsImported === 0 && (
+            <p className="mt-2">
+              <DiscardFileButton sessionId={id} />
+            </p>
+          )}
+        </div>
       )}
 
       {summary && summary.imported > 0 && <SummaryCard summary={summary} recordType={recordType} open={open} t={t} />}

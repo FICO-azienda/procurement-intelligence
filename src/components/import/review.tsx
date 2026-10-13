@@ -8,6 +8,7 @@ import {
   approveAction,
   approveAllAction,
   createAllNewAction,
+  discardFileAction,
   duplicateAction,
   duplicateFileAction,
   reclassifyAction,
@@ -533,7 +534,7 @@ function LineEditor({ line, close }: { line: LineVM; close: () => void }) {
   const priceChange = line.issues.find((i) => i.code === "price_increase" || i.code === "price_decrease");
   const blocking = line.issues.some((i) => i.severity === "blocking");
   const reviewOnly = !blocking && line.issues.some((i) => i.severity === "review") && !line.acknowledged;
-  const duplicate = line.issues.some((i) => i.code === "duplicate" || i.code === "duplicate_in_file");
+  const duplicate = line.issues.some((i) => i.code === "duplicate" || i.code === "duplicate_in_file" || i.code === "conflict");
 
   function save() {
     const patch: Partial<ItemData> = {};
@@ -969,7 +970,7 @@ export function QueueLineActions({ sessionId, itemId, issues }: { sessionId: str
           </button>
         </>
       )}
-      {(codes.has("duplicate") || codes.has("duplicate_in_file")) && (
+      {(codes.has("duplicate") || codes.has("duplicate_in_file") || codes.has("conflict")) && (
         <>
           <button type="button" disabled={pending} className={buttonClass("secondary", "sm")} onClick={() => run(() => duplicateAction({ itemId }, "skip"))}>
             {t("Skip")}
@@ -1015,6 +1016,26 @@ export function ImportAllButton({ ready, primary }: { ready: number; primary: bo
         {pending ? t("Importing…") : t.n(ready, "Import {n} ready line", "Import {n} ready lines")}
       </button>
       {error && <span className="text-[12.5px] text-up">{error}</span>}
+    </span>
+  );
+}
+
+/** Sets a file aside when nothing of it was imported: it stops waiting, and nothing is written. Two steps, like every removal. */
+export function DiscardFileButton({ sessionId }: { sessionId: string }) {
+  const { pending, error, run, t } = useAction();
+  const [armed, setArmed] = useState(false);
+  return (
+    <span className="inline-flex flex-wrap items-center gap-2 text-[13px]">
+      {armed ? (
+        <button type="button" disabled={pending} className={buttonClass("secondary", "sm")} onClick={() => run(() => discardFileAction(sessionId))}>
+          {pending ? t("Setting aside…") : t("Confirm: import nothing from this file")}
+        </button>
+      ) : (
+        <button type="button" className="font-medium text-ink-3 hover:text-ink hover:underline" onClick={() => setArmed(true)}>
+          {t("Set this file aside")}
+        </button>
+      )}
+      {error && <span className="text-up">{error}</span>}
     </span>
   );
 }

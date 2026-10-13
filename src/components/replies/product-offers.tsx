@@ -93,7 +93,7 @@ function Comparable({ row }: { row: OfferRow }) {
         {fact(t("Payment terms"), row.payment)}
         {fact(t("Validity"), row.validity)}
         {row.compare && fact(row.compare.lower ? t("Lower than today by") : t("Higher than today by"), `${row.compare.perUnit}${row.compare.pct ? ` (${row.compare.pct})` : ""}`)}
-        {row.compare?.lower && fact(t("Potential saving a year"), row.compare.annual)}
+        {row.compare?.lower && fact(t("Potential saving, on the volume of the last 12 months"), row.compare.annual)}
       </dl>
       {row.compare && <p className="mt-1.5 text-[12.5px] text-ink-3">{t("Against {current}, the last price you paid. A potential saving, on the volume of the last 12 months: nothing is saved until an invoice says so.", { current: row.compare.current })}</p>}
       {row.compare?.limit && <p className="mt-1 text-[12.5px] text-caution">{row.compare.limit}</p>}

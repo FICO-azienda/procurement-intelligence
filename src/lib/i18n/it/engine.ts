@@ -57,7 +57,7 @@ export const engine = {
     "Dipende dal numero di acquisti confrontabili ({high} o più è buono), da quanto è recente l'ultimo (entro {fresh} giorni) e dalla coerenza di unità, valute e quantità.",
   "For each product bought from this supplier: latest price vs the last price paid before 1 January (or the first price of the year). Each product weighs by its year-to-date spend, so large items count more than small ones.":
     "Per ogni prodotto comprato da questo fornitore: ultimo prezzo rispetto all'ultimo prezzo pagato prima del 1° gennaio (o al primo prezzo dell'anno). Ogni prodotto pesa per la sua spesa da inizio anno, così le voci grandi contano più delle piccole.",
-  "Products that together make up the first {pareto}% of annual spend.": "I prodotti che insieme fanno il primo {pareto}% della spesa annua.",
+  "Products that together make up the first {pareto}% of spend.": "I prodotti che insieme fanno il primo {pareto}% della spesa.",
   "Price change over 12 months: above +{moderate}% moderate, from +{high}% high, from +{critical}% critical.":
     "Variazione di prezzo in 12 mesi: oltre +{moderate}% moderata, da +{high}% forte, da +{critical}% critica.",
   "Fresh: under {fresh} days. Recent: {fresh}–{recent} days. Old: over {recent} days. Old and expired offers lower the confidence of a saving.":
@@ -132,8 +132,8 @@ export const engine = {
   "The price has not changed since {month}.": "Il prezzo non è cambiato da {month}.",
   "Current price is {pct}% above {month}.": "Il prezzo attuale è il {pct}% sopra quello di {month}.",
   "Current price is {pct}% below {month}.": "Il prezzo attuale è il {pct}% sotto quello di {month}.",
-  "The product represents {amount} annual spend ({share}% of the total).": "Il prodotto vale {amount} di spesa annua ({share}% del totale).",
-  "The product represents {amount} annual spend.": "Il prodotto vale {amount} di spesa annua.",
+  "The product represents {amount} of spend in the last 12 months ({share}% of the total).": "Il prodotto vale {amount} di spesa negli ultimi 12 mesi ({share}% del totale).",
+  "The product represents {amount} of spend in the last 12 months.": "Il prodotto vale {amount} di spesa negli ultimi 12 mesi.",
   "{~offer} from {supplier} is {pct}% below the current supplier price.": "{~offer} di {supplier} è il {pct}% sotto il prezzo del fornitore attuale.",
   "Potential nominal saving: {amount}/year before landed-cost adjustments ({~confidence} confidence).":
     "Risparmio nominale potenziale: {amount}/anno, prima degli aggiustamenti per il costo totale a destino (affidabilità {~confidence}).",
@@ -143,7 +143,7 @@ export const engine = {
   "All purchases come from {supplier}.": "Tutti gli acquisti provengono da {supplier}.",
   "Data quality is low ({why}): read these figures with caution.": "La qualità dei dati è bassa ({why}): leggi questi numeri con cautela.",
   "Data quality is low: read these figures with caution.": "La qualità dei dati è bassa: leggi questi numeri con cautela.",
-  "{name} represents {share}% of annual purchasing spend ({amount}).": "{name} vale il {share}% della spesa annua per acquisti ({amount}).",
+  "{name} represents {share}% of the spend on catalogue products in the last 12 months ({amount}).": "{name} vale il {share}% della spesa in prodotti a catalogo degli ultimi 12 mesi ({amount}).",
   "No purchases from {name} in the last 12 months.": "Nessun acquisto da {name} negli ultimi 12 mesi.",
   "Prices are unchanged year to date.": "I prezzi sono invariati da inizio anno.",
   "Prices increased by a weighted {pct}% year to date.": "Da inizio anno i prezzi sono aumentati del {pct}% (media ponderata).",
@@ -213,9 +213,9 @@ export const engine = {
   "Price up {pct} in 12 months": "Prezzo aumentato del {pct} in 12 mesi",
   "High-spend product with {n} supplier options on file — no lower comparable price yet": "Prodotto ad alta spesa con {n} fornitori possibili in archivio: ancora nessun prezzo confrontabile più basso",
   "A recent quote from the alternative suppliers": "Un preventivo recente dai fornitori alternativi",
-  "Single source for {pct} of annual spend — {n} alternative quote on file": "Fornitore unico per il {pct} della spesa annua — {n} preventivo alternativo in archivio",
-  "Single source for {pct} of annual spend — {n} alternative quotes on file": "Fornitore unico per il {pct} della spesa annua — {n} preventivi alternativi in archivio",
-  "Single source for {pct} of annual spend — no alternative quotes": "Fornitore unico per il {pct} della spesa annua — nessun preventivo alternativo",
+  "Single source for {pct} of spend — {n} alternative quote on file": "Fornitore unico per il {pct} della spesa — {n} preventivo alternativo in archivio",
+  "Single source for {pct} of spend — {n} alternative quotes on file": "Fornitore unico per il {pct} della spesa — {n} preventivi alternativi in archivio",
+  "Single source for {pct} of spend — no alternative quotes": "Fornitore unico per il {pct} della spesa — nessun preventivo alternativo",
   "Quotes from alternative suppliers": "Preventivi da fornitori alternativi",
 
   // ---- engine.ts
@@ -342,7 +342,7 @@ export const engine = {
   "Find and qualify a second supplier": "Trova e qualifica un secondo fornitore",
   "Bought from": "Comprato da",
   "one supplier ({supplier})": "un solo fornitore ({supplier})",
-  "Annual spend": "Spesa annua",
+  "Spend, last 12 months": "Spesa, ultimi 12 mesi",
   "{amount} · {share} of the total": "{amount} · {share} del totale",
   "A purchase with a usable price": "Un acquisto con un prezzo utilizzabile",
   "A comparable quote from another supplier": "Un preventivo confrontabile di un altro fornitore",

@@ -50,7 +50,9 @@ import {
   ReplyError, addReplyDocument, checkReplies, decideCompanyLink, decideOffer, declineSuggestion, importReplies, keepReplyFile, linkOffer, listReplyFiles, readReplyFile, removeReplyDocument, requestFromSupplier, saveLanded,
   setOfferCompatibility, unlinkOffer, updateReplyCompany, updateReplyThread, verifyReplyDocument, type ThreadUpdate,
 } from "@/server/replies";
-import { AuditError, correctAttribution } from "@/server/audit";
+import { AuditError, correctAttribution, logEvents } from "@/server/audit";
+import { DataGuardError, REAL_DATA_KEPT, dataState } from "@/server/data-guard";
+import { workspacePrincipal } from "@/server/session";
 import { referenceRate } from "@/server/fx";
 import { DestinationError, removeDestination, saveDestination, type DestinationField } from "@/server/destinations";
 import { summarise, type PlanSummary } from "@/lib/replies/plan";
@@ -147,9 +149,28 @@ export async function saveSupplier(_: FormState, formData: FormData): Promise<Fo
   return done();
 }
 
-export async function deleteSupplier(id: string) {
+/**
+ * Deleting is for a record entered by mistake. A supplier with purchases or quotes on file is the company's history:
+ * it is never deleted — the database would take its invoice lines with it.
+ */
+export async function deleteSupplier(id: string): Promise<SimpleResult | void> {
+  const t = await getT();
+  if (!(await mayManageData())) return { ok: false, error: t(NOT_ALLOWED) };
   const db = await getDb();
-  await db.delete(suppliers).where(eq(suppliers.id, id)); // cascades purchases & quotes
+  const [row] = await db.select().from(suppliers).where(eq(suppliers.id, id));
+  if (!row) return { ok: false, error: t("This record is no longer on file.") };
+  const [[p], [q], [merged]] = await Promise.all([
+    db.select({ n: count() }).from(purchases).where(eq(purchases.supplierId, id)),
+    db.select({ n: count() }).from(quotes).where(eq(quotes.supplierId, id)),
+    db.select({ n: count() }).from(suppliers).where(eq(suppliers.mergedIntoId, id)),
+  ]);
+  if (p.n > 0 || q.n > 0 || merged.n > 0) {
+    return { ok: false, error: t("{name} has {purchases} purchase lines and {quotes} quotes on file: it is part of your history and cannot be deleted.", { name: row.name, purchases: p.n, quotes: q.n }) };
+  }
+  await db.transaction(async (tx) => {
+    await tx.delete(suppliers).where(eq(suppliers.id, id));
+    await logEvents(tx as unknown as typeof db, await actorOf(), [{ action: "delete", entity: "supplier", entityId: id, oldValue: JSON.stringify(row), source: "ui" }]);
+  });
   refresh();
   redirect("/suppliers");
 }
@@ -185,9 +206,25 @@ export async function saveProduct(_: FormState, formData: FormData): Promise<For
   return done();
 }
 
-export async function deleteProduct(id: string) {
+/** A product with purchases or quotes on file is never deleted (see `deleteSupplier`): merge it or leave it. */
+export async function deleteProduct(id: string): Promise<SimpleResult | void> {
+  const t = await getT();
+  if (!(await mayManageData())) return { ok: false, error: t(NOT_ALLOWED) };
   const db = await getDb();
-  await db.delete(products).where(eq(products.id, id)); // cascades purchases & quotes
+  const [row] = await db.select().from(products).where(eq(products.id, id));
+  if (!row) return { ok: false, error: t("This record is no longer on file.") };
+  const [[p], [q], [merged]] = await Promise.all([
+    db.select({ n: count() }).from(purchases).where(eq(purchases.productId, id)),
+    db.select({ n: count() }).from(quotes).where(eq(quotes.productId, id)),
+    db.select({ n: count() }).from(products).where(eq(products.mergedIntoId, id)),
+  ]);
+  if (p.n > 0 || q.n > 0 || merged.n > 0) {
+    return { ok: false, error: t("{name} has {purchases} purchase lines and {quotes} quotes on file: it is part of your history and cannot be deleted.", { name: row.name, purchases: p.n, quotes: q.n }) };
+  }
+  await db.transaction(async (tx) => {
+    await tx.delete(products).where(eq(products.id, id));
+    await logEvents(tx as unknown as typeof db, await actorOf(), [{ action: "delete", entity: "product", entityId: id, oldValue: JSON.stringify(row), source: "ui" }]);
+  });
   refresh();
   redirect("/products");
 }
@@ -244,10 +281,19 @@ export async function savePurchase(_: FormState, formData: FormData): Promise<Fo
   return done();
 }
 
-export async function deletePurchase(id: string) {
+/** A line taken off the purchases is written whole in the change log first: who took it off, when, and everything it said. */
+export async function deletePurchase(id: string): Promise<SimpleResult> {
+  const t = await getT();
+  if (!(await mayManageData())) return { ok: false, error: t(NOT_ALLOWED) };
   const db = await getDb();
-  await db.delete(purchases).where(eq(purchases.id, id));
+  const [row] = await db.select().from(purchases).where(eq(purchases.id, id));
+  if (!row) return { ok: true };
+  await db.transaction(async (tx) => {
+    await logEvents(tx as unknown as typeof db, await actorOf(), [{ action: "delete", entity: "purchase", entityId: id, oldValue: JSON.stringify(row), source: "ui", note: row.invoiceReference ? `invoice ${row.invoiceReference}` : null }]);
+    await tx.delete(purchases).where(eq(purchases.id, id));
+  });
   refresh();
+  return { ok: true };
 }
 
 // ---------------- Quotes ----------------
@@ -288,10 +334,18 @@ export async function saveQuote(_: FormState, formData: FormData): Promise<FormS
   return done();
 }
 
-export async function deleteQuote(id: string) {
+export async function deleteQuote(id: string): Promise<SimpleResult> {
+  const t = await getT();
+  if (!(await mayManageData())) return { ok: false, error: t(NOT_ALLOWED) };
   const db = await getDb();
-  await db.delete(quotes).where(eq(quotes.id, id));
+  const [row] = await db.select().from(quotes).where(eq(quotes.id, id));
+  if (!row) return { ok: true };
+  await db.transaction(async (tx) => {
+    await logEvents(tx as unknown as typeof db, await actorOf(), [{ action: "delete", entity: "quote", entityId: id, oldValue: JSON.stringify(row), source: "ui" }]);
+    await tx.delete(quotes).where(eq(quotes.id, id));
+  });
   refresh();
+  return { ok: true };
 }
 
 // ---------------- Creating on the fly, from inside another form ----------------
@@ -460,17 +514,33 @@ export async function setLanguage(language: string): Promise<SimpleResult> {
 
 // ---------------- Data management ----------------
 
-export async function clearAllData() {
-  const db = await getDb();
-  await clearAll(db);
-  refresh();
+/**
+ * Clearing everything and loading the demo are for the demo dataset only. Once the database holds anything of the
+ * company's own, both are refused here — whatever the page shows, whoever calls them (server/data-guard.ts).
+ */
+export async function clearAllData(): Promise<SimpleResult> {
+  return wipe(false);
 }
 
-export async function loadDemoData() {
-  const db = await getDb();
-  await clearAll(db);
-  await seedDemo(db);
+export async function loadDemoData(): Promise<SimpleResult> {
+  return wipe(true);
+}
+
+async function wipe(thenDemo: boolean): Promise<SimpleResult> {
+  const t = await getT();
+  if (!(await mayManageData())) return { ok: false, error: t(NOT_ALLOWED) };
+  try {
+    const db = await getDb();
+    if ((await dataState(db)) === "real") return { ok: false, error: t(REAL_DATA_KEPT) };
+    await clearAll(db);
+    if (thenDemo) await seedDemo(db);
+  } catch (err) {
+    if (err instanceof DataGuardError) return { ok: false, error: t(REAL_DATA_KEPT) };
+    console.error("[data]", err);
+    return { ok: false, error: t("Something went wrong. Nothing was changed — please try again.") };
+  }
   refresh();
+  return { ok: true };
 }
 
 // ---------------- Price intelligence: user decisions ----------------
@@ -1151,7 +1221,7 @@ export async function setOpportunityStatus(key: string, status: OpportunityStatu
     const db = await getDb();
     const [data, learning, states] = await Promise.all([readDataset(db), readLearning(db), readOpportunityStates(db)]);
     // The snapshot keeps the reason in the language it was decided in.
-    const intel = analyze(catalogueOf(data), learning.supplierProducts, states, todayISO(), undefined, t);
+    const intel = analyze(catalogueOf(data), learning.supplierProducts, states, todayISO(), undefined, t, { homeCountry: (await getSettings()).country });
     const o = intel.opportunities.find((x) => x.key === key);
     const [existing] = await db.select().from(opportunities).where(eq(opportunities.key, key));
     if (!o && !existing) return { ok: false, error: t("This opportunity is no longer detected.") };
@@ -1273,6 +1343,17 @@ export async function loadReplyFileAction(source: { name: string; raw?: string }
  * setting the `pi_actor` cookie in its own browser before it touches anything: what it does is then recorded as the
  * assistant's, never as the person's.
  */
+const NOT_ALLOWED: Msg = "Only a person who manages the company's data can do this.";
+
+/**
+ * Deleting and clearing are for whoever manages the company's data: on the company's own computer the person at it,
+ * on a server a signed-in person with that permission — never any signed-in member.
+ */
+async function mayManageData(): Promise<boolean> {
+  const who = await workspacePrincipal();
+  return !!who && who.permissions.includes("company.manage");
+}
+
 async function actorOf(): Promise<Actor> {
   if ((await cookies()).get("pi_actor")?.value === "assistant") return { type: "ai", id: "assistant" };
   return { type: "user", id: (await getSettings()).userName };

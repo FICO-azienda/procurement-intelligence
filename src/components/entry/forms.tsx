@@ -338,8 +338,9 @@ export function PurchaseForm({
             purchase && (
               <DeleteButton
                 onConfirm={async () => {
-                  await deletePurchase(purchase.id);
-                  close();
+                  const res = await deletePurchase(purchase.id);
+                  if (res.ok) close();
+                  return res;
                 }}
               />
             )
@@ -518,8 +519,9 @@ export function QuoteForm({ quote, defaultProductId, defaultSupplierId, close }:
             quote && (
               <DeleteButton
                 onConfirm={async () => {
-                  await deleteQuote(quote.id);
-                  close();
+                  const res = await deleteQuote(quote.id);
+                  if (res.ok) close();
+                  return res;
                 }}
               />
             )

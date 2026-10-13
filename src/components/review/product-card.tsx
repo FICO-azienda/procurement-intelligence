@@ -142,7 +142,7 @@ export async function ProductCard({ d, detail, page = false }: { d: ProductDecis
                 )}
               </div>
               <div className="mt-2.5 text-[12.5px] text-ink-3">
-                {t("Annual spend")} <span className="num font-medium text-ink-2">{f.money(Math.round(d.annualSpend))}</span>
+                {t("Spend, last 12 months")} <span className="num font-medium text-ink-2">{f.money(Math.round(d.annualSpend))}</span>
                 {d.annualQuantity > 0 && <span className="num"> · {f.quantity(d.annualQuantity, unit)}</span>}
               </div>
             </>

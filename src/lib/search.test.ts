@@ -4,7 +4,8 @@ import { dataset, product, purchase, quote, supplier } from "./intel/fixtures";
 import { search } from "./search";
 
 const a = supplier({ name: "Acme Srl", country: "Italy" });
-const b = supplier({ name: "Beta Wax Ltd", country: "Turkey" });
+// In the buyer's own customs area: a price quoted delivered is a cost to the plant, and can be set against the price paid.
+const b = supplier({ name: "Beta Wax Ltd", country: "Italy" });
 const wax = product({ name: "Paraffina 58/60", sku: "PAR-5860", category: "Wax", currentSupplierId: a.id });
 const jar = product({ name: "Vetro Trasparente 300 ml", sku: "GLS-300", category: "Glass", unit: "pcs", currentSupplierId: a.id });
 const data = dataset({

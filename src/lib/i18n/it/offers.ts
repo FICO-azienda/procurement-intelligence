@@ -30,7 +30,7 @@ export const offers = {
   "Price as quoted": "Prezzo come quotato",
   "Lower than today by": "Più basso di oggi di",
   "Higher than today by": "Più alto di oggi di",
-  "Potential saving a year": "Risparmio potenziale annuo",
+  "Potential saving, on the volume of the last 12 months": "Risparmio potenziale, sul volume degli ultimi 12 mesi",
   "Against {current}, the last price you paid. A potential saving, on the volume of the last 12 months: nothing is saved until an invoice says so.":
     "Rispetto a {current}, l'ultimo prezzo che hai pagato. È un risparmio potenziale, sul volume degli ultimi 12 mesi: niente è risparmiato finché non lo dice una fattura.",
   "It asks for {minimum} at a time, more than the {volume} you buy in a year: the yearly figure cannot be had as it stands.": "Chiede {minimum} per volta, più dei {volume} che compri in un anno: così com'è, la cifra annua non è ottenibile.",

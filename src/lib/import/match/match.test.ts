@@ -75,3 +75,109 @@ describe("matchProduct", () => {
     expect(matchProduct({ name: "PARAFFIN WAX 58/60" }, null, learned)).toMatchObject({ status: "exact", id: "par" });
   });
 });
+
+describe("a supplier's code is not an identity by itself", () => {
+  const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const shared: MatchContext = {
+    suppliers: [
+      { id: "plast", name: "Mock Plast Srl", vatNumber: null },
+      { id: "other", name: "Mock Altro Srl", vatNumber: null },
+    ],
+    supplierAliases: [],
+    products: [
+      { id: "c1050", sku: "CNT-1050", name: "Contenitori per ceri 10.50", description: null, kind: "component" },
+      { id: "c152", sku: "CNT-152", name: "Contenitori per ceri 15/2", description: null, kind: "component" },
+      { id: "par", sku: "PAR-5254", name: "Paraffina 52/54", description: null, kind: "direct_material" },
+      { id: "mine", sku: "MY-1", name: "Fondelli diam 60", description: null, kind: "component" },
+    ],
+    // One code, "CNT", for the whole range: what the real invoices of a supplier look like.
+    productAliases: [
+      { productId: "c1050", normalized: key("CONTENITORI PER CERI 10.50"), supplierId: "plast", alias: "CONTENITORI PER CERI 10.50", supplierSku: "CNT" },
+      { productId: "c152", normalized: key("CONTENITORI PER CERI 15/2"), supplierId: "plast", alias: "CONTENITORI PER CERI 15/2", supplierSku: "CNT" },
+      { productId: "par", normalized: key("PARAFFINA 52/54"), supplierId: "plast", alias: "PARAFFINA 52/54", supplierSku: "PRF" },
+    ],
+    supplierProducts: [
+      { supplierId: "plast", productId: "c1050", supplierSku: "CNT", supplierProductName: "CONTENITORI PER CERI 10.50" },
+      { supplierId: "plast", productId: "c152", supplierSku: "CNT", supplierProductName: "CONTENITORI PER CERI 15/2" },
+      { supplierId: "plast", productId: "par", supplierSku: "PRF", supplierProductName: "PARAFFINA 52/54" },
+    ],
+  };
+
+  it("under a code shared by several products, the description decides which one", () => {
+    expect(matchProduct({ supplierSku: "CNT", description: "CONTENITORI PER CERI 15/2" }, "plast", shared)).toMatchObject({ status: "exact", id: "c152" });
+    expect(matchProduct({ supplierSku: "CNT", description: "CONTENITORI PER CERI 10.50" }, "plast", shared)).toMatchObject({ status: "exact", id: "c1050" });
+  });
+
+  it("a size none of them has is never filed under the first product with that code", () => {
+    const m = matchProduct({ supplierSku: "CNT", description: "CONTENITORI PER CERI 20/2" }, "plast", shared);
+    expect(m.status).toBe("none");
+    expect(m.id).toBeNull();
+    // It is shown next to the products that share the code: a new one of that range, for the user to say.
+    expect(m.related?.map((r) => r.id).sort()).toEqual(["c1050", "c152"]);
+  });
+
+  it("the same size written with other words is proposed, not decided", () => {
+    expect(matchProduct({ supplierSku: "CNT", description: "Contenitore cero 15/2 neutro" }, "plast", shared)).toMatchObject({ status: "probable", id: "c152" });
+  });
+
+  it("a code that names one product still asks when the description states another grade", () => {
+    expect(matchProduct({ supplierSku: "PRF", description: "PARAFFINA 52/54" }, "plast", shared)).toMatchObject({ status: "exact", id: "par" });
+    expect(matchProduct({ supplierSku: "PRF", description: "PARAFFINA 56/58" }, "plast", shared)).toMatchObject({ status: "probable", id: "par", confidence: 0.6 });
+  });
+});
+
+describe("the same words from another supplier", () => {
+  const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const world: MatchContext = {
+    suppliers: [
+      { id: "ser", name: "Mock Cere Spa", vatNumber: null },
+      { id: "new", name: "Mock Nuovo Srl", vatNumber: null },
+    ],
+    supplierAliases: [],
+    products: [
+      { id: "par", sku: "PAR-5254", name: "Paraffina 52/54", description: null, kind: "direct_material" },
+      { id: "own", sku: "OWN-1", name: "Stoppino cerato 30 mm", description: null, kind: "component" },
+    ],
+    productAliases: [{ productId: "par", normalized: key("PARAFFINA 52/54"), supplierId: "ser", alias: "PARAFFINA 52/54" }],
+    supplierProducts: [{ supplierId: "ser", productId: "par", supplierSku: null, supplierProductName: "PARAFFINA 52/54" }],
+  };
+
+  it("are the product when its own supplier writes them", () => {
+    expect(matchProduct({ description: "Paraffina 52/54" }, "ser", world)).toMatchObject({ status: "exact", id: "par" });
+  });
+
+  it("are a proposal to confirm when someone else writes them: an article of another supplier is never filed by itself", () => {
+    expect(matchProduct({ description: "Paraffina 52/54" }, "new", world)).toMatchObject({ status: "probable", id: "par" });
+    expect(matchProduct({ description: "Paraffina 52/54" }, null, world)).toMatchObject({ status: "probable", id: "par" });
+  });
+
+  it("are the product when nobody sells it yet: the user's own entry is known by its name", () => {
+    expect(matchProduct({ description: "Stoppino cerato 30 mm" }, "new", world)).toMatchObject({ status: "exact", id: "own" });
+  });
+});
+
+describe("a product of the same kind that is not the same product", () => {
+  const world: MatchContext = {
+    suppliers: [{ id: "ser", name: "Mock Cere Spa", vatNumber: null }],
+    supplierAliases: [],
+    products: [{ id: "par", sku: "PAR-5254", name: "Paraffina 52/54", description: null, kind: "direct_material" }],
+    productAliases: [],
+    supplierProducts: [{ supplierId: "ser", productId: "par", supplierSku: null, supplierProductName: "PARAFFINA 52/54" }],
+  };
+
+  it("another grade is no match, and is shown next to its family", () => {
+    const m = matchProduct({ description: "Paraffina 54/56" }, "ser", world);
+    expect(m.status).toBe("none");
+    expect(m.related).toEqual([{ id: "par", confidence: 0, reason: "Same kind of product, another grade or size" }]);
+  });
+
+  it("no grade at all is no match either, and says what it could belong with", () => {
+    const m = matchProduct({ description: "Paraffina" }, "ser", world);
+    expect(m.status).toBe("none");
+    expect(m.related?.[0]).toMatchObject({ id: "par", reason: "Same kind of product" });
+  });
+
+  it("something of another kind is next to nothing", () => {
+    expect(matchProduct({ description: "Etichetta adesiva 30x40" }, "ser", world).related).toBeUndefined();
+  });
+});

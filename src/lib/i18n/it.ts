@@ -4,6 +4,7 @@
  * places is translated once (`it.test.ts` checks that two parts never
  * disagree, and that every placeholder survives the translation).
  */
+import { safety } from "./it/safety";
 import { catalog } from "./it/catalog";
 import { categories } from "./it/categories";
 import { dataset } from "./it/dataset";
@@ -23,6 +24,6 @@ import { sourcing } from "./it/sourcing";
 import { suppliers } from "./it/suppliers";
 import { ui } from "./it/ui";
 
-export const PARTS = { engine, imports, ui, catalog, mapper, sourcing, research, dataset, negotiation, suppliers, portfolio, identity, rfq, categories, markets, replies, offers, orders };
+export const PARTS = { engine, imports, ui, catalog, safety, mapper, sourcing, research, dataset, negotiation, suppliers, portfolio, identity, rfq, categories, markets, replies, offers, orders };
 
-export const it = { ...engine, ...imports, ...ui, ...catalog, ...mapper, ...sourcing, ...research, ...dataset, ...negotiation, ...suppliers, ...portfolio, ...identity, ...rfq, ...categories, ...markets, ...replies, ...offers, ...orders };
+export const it = { ...engine, ...imports, ...ui, ...catalog, ...safety, ...mapper, ...sourcing, ...research, ...dataset, ...negotiation, ...suppliers, ...portfolio, ...identity, ...rfq, ...categories, ...markets, ...replies, ...offers, ...orders };

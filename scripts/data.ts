@@ -19,6 +19,7 @@
 import { cpSync, createReadStream, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { createInterface } from "node:readline";
+import { createGunzip } from "node:zlib";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle as drizzlePglite } from "drizzle-orm/pglite";
 import { migrate as migratePglite } from "drizzle-orm/pglite/migrator";
@@ -63,8 +64,11 @@ async function importData() {
   const from = path.resolve(rest.find((a, i) => !a.startsWith("--") && !(rest[i - 1] ?? "").startsWith("--")) ?? "");
   // Where this installation keeps its data: the database, the documents on file and the research files, side by side.
   const dataRoot = path.resolve(flag("--data-root") ?? path.join(root, ".data"));
-  const file = path.join(from, "data.ndjson");
-  if (!existsSync(file) || !statSync(file).isFile()) fail(`No data.ndjson in ${from}: give the folder an export made.`);
+  // An export holds data.ndjson; a backup the app made by itself holds the same file, compressed.
+  const plain = path.join(from, "data.ndjson");
+  const packed = path.join(from, "data.ndjson.gz");
+  const file = existsSync(plain) ? plain : packed;
+  if (!existsSync(file) || !statSync(file).isFile()) fail(`No data.ndjson (or data.ndjson.gz) in ${from}: give the folder of an export or of a backup.`);
   const migrationsFolder = path.join(root, "drizzle");
   let db: DB;
   let close: () => Promise<void>;
@@ -87,7 +91,7 @@ async function importData() {
     where = dir;
   }
   try {
-    const { manifest } = await restore(db, createInterface({ input: createReadStream(file, "utf8"), crlfDelay: Infinity }));
+    const { manifest } = await restore(db, createInterface({ input: file === packed ? createReadStream(file).pipe(createGunzip()) : createReadStream(file, "utf8"), crlfDelay: Infinity }));
     if (!process.env.DATABASE_URL) {
       const files = process.env.FILE_STORAGE_DIR ?? path.join(dataRoot, "files");
       if (existsSync(path.join(from, "files"))) cpSync(path.join(from, "files"), files, { recursive: true });

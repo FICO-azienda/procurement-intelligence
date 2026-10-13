@@ -6,8 +6,7 @@ import {
   productMetrics,
   supplierOrderStats,
   type Dataset,
-  type PurchaseData,
-} from "./analytics";
+  type PurchaseData, coverageOf } from "./analytics";
 
 const AS_OF = "2026-09-30";
 
@@ -185,5 +184,19 @@ describe("minusMonths", () => {
   it("clamps to month end", () => {
     expect(minusMonths("2026-03-31", 1)).toBe("2026-02-28");
     expect(minusMonths("2026-09-30", 12)).toBe("2025-09-30");
+  });
+});
+
+describe("the period the purchases on file span", () => {
+  const on = (...dates: string[]) => dates.map((date) => ({ date }));
+  it("four months of invoices are four months, whatever the window is called", () => {
+    expect(coverageOf(on("2026-05-27", "2026-07-10", "2026-10-01"), "2026-10-14")).toEqual({ from: "2026-05-27", to: "2026-10-01", months: 4, fullYear: false });
+  });
+  it("a history that reaches back a year makes a 12-month figure a year's", () => {
+    expect(coverageOf(on("2025-10-20", "2026-10-01"), "2026-10-14").fullYear).toBe(true);
+    expect(coverageOf(on("2025-12-20", "2026-10-01"), "2026-10-14").fullYear).toBe(false);
+  });
+  it("nothing on file covers nothing", () => {
+    expect(coverageOf([], "2026-10-14")).toEqual({ from: null, to: null, months: 0, fullYear: false });
   });
 });

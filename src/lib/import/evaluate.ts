@@ -69,6 +69,18 @@ export function quoteKey(q: { supplierId: string; date: string; productId: strin
   return [q.supplierId, q.date, q.productId, r4(q.unitPrice)].join("|");
 }
 
+/** One invoice: who issued it and its number, however the number is spaced or cased. */
+export const invoiceKey = (supplierId: string, invoiceReference: string | null | undefined) => `${supplierId}|${ref(invoiceReference)}`;
+
+const fmtQty = (n: number | null) => (n == null ? "—" : n.toLocaleString("it-IT", { maximumFractionDigits: 4 }));
+const fmtPrice = (n: number | null) => (n == null ? "—" : n.toLocaleString("it-IT", { minimumFractionDigits: 2, maximumFractionDigits: 4 }));
+
+/** The catalogue's products a line with no match was read next to (lib/import/match: `related`), named — at most three. */
+function related(match: MatchResult | null, names: Map<string, string>): string | null {
+  const list = (match?.related ?? []).map((r) => names.get(r.id)).filter((n): n is string => !!n);
+  return list.length ? [...new Set(list)].slice(0, 3).join(", ") : null;
+}
+
 /** Two lines are the same line when their invoice line numbers agree — or when one of them has none to compare. */
 const sameLine = (a: number | null | undefined, b: number | null | undefined) => a == null || b == null || a === b;
 
@@ -81,6 +93,16 @@ export function evaluateItems(items: ItemState[], ctx: EvalContext): Map<string,
     existingPurchases.get(key)!.push(p.invoiceLine ?? null);
   }
   const existingQuotes = new Set(ctx.data.quotes.map((q) => quoteKey(q)));
+  // The invoices already on file, each with its lines: a document is recognised by who issued it and its number,
+  // whatever the file that brings it is called.
+  const invoicesOnFile = new Map<string, PurchaseData[]>();
+  for (const p of ctx.data.purchases) {
+    if (!ref(p.invoiceReference)) continue;
+    const key = invoiceKey(p.supplierId, p.invoiceReference);
+    if (!invoicesOnFile.has(key)) invoicesOnFile.set(key, []);
+    invoicesOnFile.get(key)!.push(p);
+  }
+  const names = new Map(ctx.data.products.map((p) => [p.id, p.name]));
   const annualQty = new Map<string, number>();
   const annual = (productId: string) => {
     if (!annualQty.has(productId)) {
@@ -154,7 +176,15 @@ export function evaluateItems(items: ItemState[], ctx: EvalContext): Map<string,
       issues.push(
         item.productMatch?.status === "probable"
           ? { code: "product_probable", severity: "blocking", ...say('"{name}" — confirm the suggested product', { name: label }) }
-          : { code: "product_unmatched", severity: "blocking", ...(label ? say('Unknown product "{name}"', { name: label }) : say("Product missing")) },
+          : {
+              code: "product_unmatched",
+              severity: "blocking",
+              ...(!label
+                ? say("Product missing")
+                : related(item.productMatch, names)
+                  ? say('Unknown product "{name}" — the same kind as {products}, but not the same product: link it only if it truly is one of them', { name: label, products: related(item.productMatch, names)! })
+                  : say('Unknown product "{name}"', { name: label })),
+            },
       );
     }
 
@@ -195,6 +225,34 @@ export function evaluateItems(items: ItemState[], ctx: EvalContext): Map<string,
       }
       if (!seenInFile.has(key)) seenInFile.set(key, []);
       seenInFile.get(key)!.push({ line: item.line, invoiceLine: d.invoiceLine ?? null });
+
+      // The same invoice, already on file. A line of it that is not on file as written is either the same line with
+      // other figures — a conflict, never a second purchase by itself — or a line the first reading did not have.
+      const onFile = item.recordType === "purchase" && ref(d.invoiceReference) ? invoicesOnFile.get(invoiceKey(item.supplierId, d.invoiceReference)) : undefined;
+      if (onFile?.length && !exists && item.duplicateDecision !== "import") {
+        const twinOnFile = onFile.find(
+          (p) =>
+            p.productId === product.id &&
+            (p.invoiceLine != null && d.invoiceLine != null ? p.invoiceLine === d.invoiceLine : p.date === d.date && (r4(p.quantity) === r4(converted.quantity) || r4(p.unitPrice) === r4(converted.unitPrice))),
+        );
+        if (twinOnFile) {
+          issues.push({
+            code: "conflict",
+            severity: "blocking",
+            ...say("Invoice {invoice} already has this line on file with other figures: {onFile}, here {here}. Importing it would count the purchase twice — skip it, or import it only if it is another line", {
+              invoice: d.invoiceReference,
+              onFile: `${fmtQty(twinOnFile.quantity)} × ${fmtPrice(twinOnFile.unitPrice)}`,
+              here: `${fmtQty(converted.quantity)} × ${fmtPrice(converted.unitPrice)}`,
+            }),
+          });
+        } else {
+          issues.push({
+            code: "invoice_on_file",
+            severity: "review",
+            ...say("Invoice {invoice} of this supplier is already on file with {n} lines, and this line is not among them: check that it is not the same purchase written differently", { invoice: d.invoiceReference, n: onFile.length }),
+          });
+        }
+      }
 
       // Price checks (purchases of products only, need a comparable EUR price)
       if (item.recordType === "purchase" && !spend) {

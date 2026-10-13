@@ -72,7 +72,8 @@ export function quote(over: Partial<QuoteData> & Pick<QuoteData, "productId" | "
     moq: null,
     leadTimeDays: null,
     paymentTermsDays: null,
-    incoterm: null,
+    // Delivered to the buyer: a quote is set against the price paid only on that ground (comparison.ts). A test of other terms says so.
+    incoterm: "DAP",
     freightCost: null,
     validUntil: null,
     originalDescription: null,

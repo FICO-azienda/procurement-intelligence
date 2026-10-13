@@ -313,7 +313,7 @@ describe("user decisions", () => {
 describe("which saving represents a product", () => {
   it("prefers a smaller high-confidence saving over a larger medium-confidence one", () => {
     const { a, b, p, purchases } = world();
-    const c = supplier({ name: "Gamma", country: "Turkey" });
+    const c = supplier({ name: "Gamma", country: "Italy" });
     const quotes = [
       quote({ productId: p.id, supplierId: b.id, date: "2026-09-12", unitPrice: 1.49, moq: 5000 }), // fits orders → high
       quote({ productId: p.id, supplierId: c.id, date: "2026-09-18", unitPrice: 1.31, moq: 12000 }), // MOQ above typical order → medium
@@ -487,5 +487,73 @@ describe("scale", () => {
     expect(intel.products).toHaveLength(1000);
     expect(intel.suppliers).toHaveLength(500);
     expect(ms).toBeLessThan(2000);
+  });
+});
+
+describe("what a quoted price may be set against the price paid", () => {
+  const cur = supplier({ name: "Mock Cere Spa", country: "Italy" });
+  const alt = supplier({ name: "Mock Wax Trading", country: "Italy" });
+  const far = supplier({ name: "Mock Petrochem", country: "China" });
+  const par = product({ name: "Paraffina 52/54", unit: "kg", currentSupplierId: cur.id });
+  const paid = [
+    purchase({ productId: par.id, supplierId: cur.id, date: "2026-06-15", quantity: 20_000, unitPrice: 1.52 }),
+    purchase({ productId: par.id, supplierId: cur.id, date: "2026-09-21", quantity: 20_000, unitPrice: 1.48 }),
+  ];
+  const row = (q: Parameters<typeof quote>[0], suppliers = [cur, alt, far], links: Parameters<typeof analyze>[1] = [], home: string | null = "Italy") => {
+    const intel = analyze(dataset({ suppliers, products: [par], purchases: paid, quotes: [quote(q)] }), links, [], AS_OF, undefined, undefined, { homeCountry: home });
+    return { row: intel.products[0].comparison.find((r) => !r.isCurrent)!, intel };
+  };
+
+  it("FOB against a delivered price: not comparable, and nothing is worked out from it", () => {
+    const { row: r, intel } = row({ productId: par.id, supplierId: far.id, date: "2026-10-01", unitPrice: 1.2, incoterm: "FOB" });
+    expect(r).toMatchObject({ comparability: "not", deliveredBasis: false, difference: null, differencePct: null, isLowest: false });
+    expect(r.comparabilityReasons[0]).toBe("NOT COMPARABLE — INSUFFICIENT DATA: quoted FOB: transport to your plant, and what comes with it, is not in the price");
+    expect(intel.opportunities.filter((o) => o.type === "lower_quote")).toEqual([]);
+    expect(intel.totals.potentialSavings).toBe(0);
+  });
+
+  it("every term short of the buyer's door is the same: EXW, FCA, CFR, CIF, CPT, CIP — and no terms at all", () => {
+    for (const incoterm of ["EXW", "FCA", "CFR", "CIF", "CPT", "CIP", null]) {
+      expect(row({ productId: par.id, supplierId: alt.id, date: "2026-10-01", unitPrice: 1.2, incoterm }).row).toMatchObject({ comparability: "not", difference: null, isLowest: false });
+    }
+  });
+
+  it("delivered to the door inside the same customs area is a cost to the plant: compared", () => {
+    for (const incoterm of ["DAP", "DPU", "DDP"]) {
+      const { row: r, intel } = row({ productId: par.id, supplierId: alt.id, date: "2026-10-01", unitPrice: 1.4, incoterm });
+      expect(r).toMatchObject({ comparability: "comparable", deliveredBasis: true, isLowest: true });
+      expect(r.difference).toBeCloseTo(-0.08, 6);
+      expect(intel.opportunities.filter((o) => o.type === "lower_quote")).toHaveLength(1);
+    }
+  });
+
+  it("delivered from across customs is compared only duty paid; with the countries unknown nothing is assumed", () => {
+    expect(row({ productId: par.id, supplierId: far.id, date: "2026-10-01", unitPrice: 1.2, incoterm: "DAP" }).row.comparability).toBe("not");
+    expect(row({ productId: par.id, supplierId: far.id, date: "2026-10-01", unitPrice: 1.2, incoterm: "DDP" }).row.comparability).toBe("comparable");
+    const nowhere = supplier({ name: "Mock Unknown Origin", country: null });
+    const r = row({ productId: par.id, supplierId: nowhere.id, date: "2026-10-01", unitPrice: 1.2, incoterm: "DAP" }, [cur, nowhere]).row;
+    expect(r.comparability).toBe("not");
+    expect(r.comparabilityReasons[0]).toContain("it is not known whether duties are due");
+  });
+
+  it("an offer whose landed cost is complete is a cost to the plant whatever its terms were", () => {
+    const r = row({ productId: par.id, supplierId: far.id, date: "2026-10-01", unitPrice: 1.45, incoterm: "DDP", landed: true, validated: true }).row;
+    expect(r).toMatchObject({ comparability: "comparable", deliveredBasis: true, landed: true });
+  });
+
+  it("a quote written for another grade is another product: 56/58 is not set against 52/54", () => {
+    const other = row({ productId: par.id, supplierId: alt.id, date: "2026-10-01", unitPrice: 1.3, incoterm: "DAP", originalDescription: "Fully refined paraffin 56/58" }).row;
+    expect(other).toMatchObject({ comparability: "not", difference: null, isLowest: false });
+    expect(other.comparabilityReasons[0]).toBe("Another grade or size: quoted for 56/58, you buy 52/54. Not the same product");
+    // The same grade, however it is written, is compared.
+    const same = row({ productId: par.id, supplierId: alt.id, date: "2026-10-01", unitPrice: 1.3, incoterm: "DAP", originalDescription: "Paraffin wax 52-54 fully refined" }).row;
+    expect(same.comparability).toBe("comparable");
+  });
+
+  it("only the user's own word makes another grade comparable — and never a price that is not a cost to the plant", () => {
+    const said = [{ supplierId: alt.id, productId: par.id, supplierSku: null, supplierProductName: null, moq: null, leadTimeDays: null, specs: null, comparabilityOverride: "comparable" as const, comparabilityNote: "tested in production" }];
+    expect(row({ productId: par.id, supplierId: alt.id, date: "2026-10-01", unitPrice: 1.3, incoterm: "DAP", originalDescription: "Paraffina 56/58" }, [cur, alt], said).row).toMatchObject({ comparability: "comparable", overridden: true });
+    const fob = row({ productId: par.id, supplierId: alt.id, date: "2026-10-01", unitPrice: 1.3, incoterm: "FOB", originalDescription: "Paraffina 52/54" }, [cur, alt], said).row;
+    expect(fob).toMatchObject({ comparability: "not", difference: null, specComparability: "comparable" });
   });
 });

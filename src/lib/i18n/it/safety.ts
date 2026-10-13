@@ -1,0 +1,50 @@
+/** Italian for the texts of data protection, of the import's checks against what is on file, and of the period the figures cover. */
+export const safety = {
+  // ---- Data protection
+  "This is your company's data: it cannot be cleared or replaced with the demo data from the app.": "Questi sono i dati della tua azienda: dall'app non si possono cancellare né sostituire con i dati demo.",
+  "Download a full copy of the data": "Scarica una copia completa dei dati",
+  "a single file, as private as the data itself": "un solo file, riservato quanto i dati stessi",
+  "Clear the demo data": "Cancella i dati demo",
+  "Load the demo data": "Carica i dati demo",
+  "Puts the demo data back as it was at the start.": "Riporta i dati demo com'erano all'inizio.",
+  "Example figures to look around with: clear them before loading your own.": "Numeri di esempio per guardarsi intorno: cancellali prima di caricare i tuoi.",
+  "Only a person who manages the company's data can do this.": "Può farlo solo chi gestisce i dati dell'azienda.",
+  "This record is no longer on file.": "Questo record non è più in archivio.",
+  "{name} has {purchases} purchase lines and {quotes} quotes on file: it is part of your history and cannot be deleted.": "{name} ha {purchases} righe di acquisto e {quotes} preventivi in archivio: fa parte del tuo storico e non può essere eliminato.",
+
+  // ---- The import, checked against what is on file
+  "Supplier's product code and description": "Codice e descrizione del fornitore",
+  "Shares this supplier code": "Ha lo stesso codice del fornitore",
+  "Same supplier code, but the description states another size or grade — check that it is this product": "Stesso codice del fornitore, ma la descrizione indica un'altra misura o un altro grado: controlla che sia questo prodotto",
+  "The supplier uses this code for several products: this one has the same size or grade — check": "Il fornitore usa questo codice per più prodotti: questo ha la stessa misura o lo stesso grado — controlla",
+  "The supplier uses this code for several products, and none of them is written this way": "Il fornitore usa questo codice per più prodotti, e nessuno è scritto così",
+  "Written like a product you buy from another supplier — confirm it is the same article": "Scritto come un prodotto che compri da un altro fornitore: conferma che è lo stesso articolo",
+  "Same kind of product, another grade or size": "Stesso tipo di prodotto, altro grado o altra misura",
+  "Same kind of product": "Stesso tipo di prodotto",
+  'Unknown product "{name}" — the same kind as {products}, but not the same product: link it only if it truly is one of them': "Prodotto sconosciuto «{name}»: è dello stesso tipo di {products}, ma non lo stesso prodotto. Collegalo solo se è davvero uno di questi",
+  "Invoice {invoice} already has this line on file with other figures: {onFile}, here {here}. Importing it would count the purchase twice — skip it, or import it only if it is another line": "La fattura {invoice} ha già questa riga in archivio con altri numeri: {onFile}, qui {here}. Importarla conterebbe l'acquisto due volte: saltala, o importala solo se è un'altra riga",
+  "Invoice {invoice} of this supplier is already on file with {n} lines, and this line is not among them: check that it is not the same purchase written differently": "La fattura {invoice} di questo fornitore è già in archivio con {n} righe, e questa riga non è tra quelle: controlla che non sia lo stesso acquisto scritto in un altro modo",
+  "This file contains {n} invoice that is already on file": "Questo file contiene {n} fattura già in archivio",
+  "This file contains {n} invoices that are already on file": "Questo file contiene {n} fatture già in archivio",
+  "Of their lines: {same} are already on file and will not be imported again, {conflicts} are on file with other figures, {extra} are not among the lines on file.": "Delle loro righe: {same} sono già in archivio e non verranno importate di nuovo, {conflicts} sono in archivio con altri numeri, {extra} non sono tra le righe in archivio.",
+  "Nothing of these is imported unless you say so, line by line: importing a line twice counts the purchase twice.": "Niente di tutto questo viene importato se non lo dici tu, riga per riga: importare due volte una riga conta l'acquisto due volte.",
+  "Set this file aside": "Metti da parte questo file",
+  "Confirm: import nothing from this file": "Conferma: non importare nulla da questo file",
+  "Setting aside…": "Metto da parte…",
+  "Set aside: nothing of this file was imported.": "Messo da parte: di questo file non è stato importato nulla.",
+  "Some lines of this file are already imported: it cannot be set aside.": "Alcune righe di questo file sono già importate: non si può mettere da parte.",
+  "This file does not look like a table of purchases or prices: no column holds dates, quantities or amounts. Nothing was read from it.": "Questo file non sembra una tabella di acquisti o di prezzi: nessuna colonna contiene date, quantità o importi. Non ne è stato letto nulla.",
+
+  // ---- What a quoted price can be compared with
+  "NOT COMPARABLE — INSUFFICIENT DATA: {why}": "NON CONFRONTABILE — DATI INSUFFICIENTI: {why}",
+  "the delivery terms are not stated, so it is not known what the price includes": "la resa non è indicata, quindi non si sa che cosa comprenda il prezzo",
+  "quoted {incoterm}: transport to your plant, and what comes with it, is not in the price": "quotato {incoterm}: il trasporto fino al tuo stabilimento, e ciò che lo accompagna, non è nel prezzo",
+  "quoted {incoterm}, but the supplier's country or yours is not on file: it is not known whether duties are due": "quotato {incoterm}, ma il paese del fornitore o il tuo non è in archivio: non si sa se sono dovuti dazi",
+  "quoted {incoterm} from outside your customs area: duties and clearance are not in the price": "quotato {incoterm} da fuori la tua area doganale: dazi e sdoganamento non sono nel prezzo",
+  "Another grade or size: quoted for {theirs}, you buy {ours}. Not the same product": "Altro grado o altra misura: quotato per {theirs}, tu compri {ours}. Non è lo stesso prodotto",
+
+  // ---- The period the figures cover
+  "{n} month of invoices on file": "{n} mese di fatture in archivio",
+  "{n} months of invoices on file": "{n} mesi di fatture in archivio",
+  "from {from} to {to}. Figures for the last 12 months are the sum of this period, not a year's; a yearly figure worked out from it is an estimate, and says so.": "dal {from} al {to}. Le cifre degli ultimi 12 mesi sono la somma di questo periodo, non di un anno; una cifra annua ricavata da qui è una stima, e lo dice.",
+};

@@ -156,6 +156,38 @@ export function windowStart(asOf: string): string {
   return minusMonths(asOf, RULES.windowMonths);
 }
 
+// ---------- What the figures cover ----------
+
+/**
+ * The period the purchases on file span. "Last 12 months" is a window, not a
+ * promise that twelve months of invoices are in it: with four months on file,
+ * a 12-month sum is a four-month sum. Every page that shows such a figure says
+ * so from this (never an annual figure passed off from a shorter history);
+ * what is scaled to a year is an estimate, made and named elsewhere
+ * (lib/dataset/profile.ts).
+ */
+export interface Coverage {
+  /** First and last purchase date on file. Null: no purchases. */
+  from: string | null;
+  to: string | null;
+  /** Whole months spanned, at least 1 when there is a purchase. */
+  months: number;
+  /** The history reaches back a year (eleven months or more): a 12-month figure is a year's. */
+  fullYear: boolean;
+}
+
+export function coverageOf(purchases: { date: string }[], asOf: string): Coverage {
+  if (!purchases.length) return { from: null, to: null, months: 0, fullYear: false };
+  let from = purchases[0].date;
+  let to = purchases[0].date;
+  for (const p of purchases) {
+    if (p.date < from) from = p.date;
+    if (p.date > to) to = p.date;
+  }
+  // The months are those the invoices span; whether a 12-month window is a whole year is judged from today back.
+  return { from, to, months: Math.max(1, Math.round(daysBetween(from, to) / 30.44)), fullYear: daysBetween(from, asOf > to ? asOf : to) >= 335 };
+}
+
 // ---------- Unit helpers ----------
 
 /** Has a known exchange rate, so it can be expressed in EUR. */

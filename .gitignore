@@ -45,3 +45,6 @@ next-env.d.ts
 
 # documents made for the company from its real data (spreadsheets, reports): never published
 /documenti/
+
+# audit and redesign documents: they carry real company data (names, prices, totals) — never published
+/docs/

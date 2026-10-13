@@ -72,7 +72,7 @@ export default async function SuppliersPage() {
               <tr>
                 <Th className="border-t-0">{t("Supplier")}</Th>
                 <Th className="hidden border-t-0 @4xl:table-cell">{t("What you buy")}</Th>
-                <Th className="border-t-0" align="right">{t("Annual spend")}</Th>
+                <Th className="border-t-0" align="right">{t("Spend, last 12 months")}</Th>
                 <Th className="hidden border-t-0 @2xl:table-cell" align="right">
                   {t("Prices this year")} <Hint text={EXPLAIN.supplierWeightedChange} />
                 </Th>

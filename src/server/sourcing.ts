@@ -190,7 +190,10 @@ export async function recordCandidateQuote(db: DB, candidateId: string, v: Quote
       source: "email",
     })
     .returning({ id: quotes.id });
-  if (v.freightPerUnit != null) await db.insert(trueCostScenarios).values({ quoteId: quote.id, freightPerUnit: String(v.freightPerUnit * (v.currency === "EUR" ? 1 : (v.fxRate ?? 1))), freightBasis: "quote" });
+  // The transport the answer states, in euro: its own figure when quoted in euro, converted when a rate is on file — and
+  // left to be stated when the currency is another and no rate is known. Never one for one.
+  const freightRate = v.currency === "EUR" ? 1 : v.fxRate;
+  if (v.freightPerUnit != null && freightRate != null) await db.insert(trueCostScenarios).values({ quoteId: quote.id, freightPerUnit: String(v.freightPerUnit * freightRate), freightBasis: "quote" });
   for (const other of (await db.select().from(supplierCandidates)).filter((x) => companyKey(x.name) === key)) {
     await db.update(supplierCandidates).set({ supplierId, ...(other.id === candidateId ? { status: "quote_received" } : {}), updatedAt: new Date() }).where(eq(supplierCandidates.id, other.id));
   }
@@ -661,11 +664,13 @@ export async function readProductCosts(db: DB, intel: Intel, views: Map<string, 
         leadTimeDays: r.termsFromDefaults ? null : r.leadTimeDays,
         paymentTermsDays: r.termsFromDefaults ? null : r.paymentTermsDays,
         expired: r.expired,
-        comparability: r.comparability,
+        // A nominal price that is not a cost to the plant is not comparable; once its true cost is complete it is judged
+        // on that cost, and only on how far it is the product bought.
+        comparability: cost.complete ? r.specComparability : r.comparability,
         technicalConfirmed,
         inputs,
         cost,
-        opportunity: r.expired ? null : quoteOpportunity(baseline, cost, { annualVolume, technicalConfirmed, moq: r.moq, comparable: r.comparability !== "not" }, t),
+        opportunity: r.expired ? null : quoteOpportunity(baseline, cost, { annualVolume, technicalConfirmed, moq: r.moq, comparable: (cost.complete ? r.specComparability : r.comparability) !== "not" }, t),
       };
     });
     const live = costs.filter((c) => !c.expired && c.comparability !== "not");
@@ -748,6 +753,6 @@ export const getMarketViews = cache(async (): Promise<MarketViews> => {
 export async function readMarketViews(db: DB, t: T = en) {
   const [data, learning, states, sourcing, settings, offers] = await Promise.all([readDataset(db), readLearning(db), readOpportunityStates(db), readSourcing(db), readSettings(db), readComparableOffers(db, t)]);
   const catalogue = bridgeDataset(catalogueOf(data), offers);
-  const intel = analyze(catalogue, learning.supplierProducts, states, todayISO(), undefined, t);
+  const intel = analyze(catalogue, learning.supplierProducts, states, todayISO(), undefined, t, { homeCountry: settings.country });
   return { ...buildViews(intel, purchasingOverview(intel, t), sourcing, settings.country, t), intel, catalogue, data };
 }

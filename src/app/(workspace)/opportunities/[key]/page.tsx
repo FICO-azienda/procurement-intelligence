@@ -130,7 +130,7 @@ export default async function OpportunityPage({ params }: PageProps<"/opportunit
             <Row label={t("Annual volume")} hint={EXPLAIN.annualQuantity}>
               <span className="num">{o.annualQuantity > 0 ? f.quantity(o.annualQuantity, unit) : t("No purchases in 12 months")}</span>
             </Row>
-            <Row label={t("Annual spend")} hint={EXPLAIN.annualSpend}>
+            <Row label={t("Spend, last 12 months")} hint={EXPLAIN.annualSpend}>
               <span className="num">{f.money(o.annualSpend)}</span>
             </Row>
             <Row label={t("Share of total spend")}>

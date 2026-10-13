@@ -110,6 +110,8 @@ export type IssueCode =
   | "new_supplier_for_product"
   | "duplicate"
   | "duplicate_in_file"
+  | "conflict"
+  | "invoice_on_file"
   | "price_increase"
   | "price_decrease"
   | "price_vs_median"

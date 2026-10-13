@@ -1,7 +1,11 @@
 /**
- * The border in front of the app, for when it runs on a server other
- * companies can reach (WORKSPACE_ACCESS=login). On the company's own computer
- * it does nothing.
+ * The border in front of the app.
+ *
+ * On the company's own computer (local mode) the workspace has no sign-in:
+ * it answers only to requests made to this computer's own address, and to
+ * nobody who reaches it by another name.
+ *
+ * On a server other companies can reach (WORKSPACE_ACCESS=login):
  *
  * In login mode nothing of the buyer's workspace answers without a signed-in
  * person of the buyer: no page, no export, no server action. The supplier
@@ -14,12 +18,15 @@
  * whoever handles the request checks the session itself (server/session.ts).
  */
 import { NextResponse, type NextRequest } from "next/server";
-import { WORKSPACE_COOKIE, authSecret, unseal, workspaceAccess } from "@/lib/auth/cookie";
+import { WORKSPACE_COOKIE, authSecret, isLocalAddress, unseal, workspaceAccess } from "@/lib/auth/cookie";
 
 const SIGN_IN = new Set(["/login", "/login/session"]);
 
 export function proxy(request: NextRequest) {
-  if (workspaceAccess() !== "login") return NextResponse.next();
+  if (workspaceAccess() !== "login") {
+    if (isLocalAddress(request.headers.get("host"))) return NextResponse.next();
+    return new NextResponse("This workspace runs on its owner's computer and has no sign-in: it answers only there. To reach it from elsewhere it must run in sign-in mode.", { status: 403 });
+  }
   const { pathname } = request.nextUrl;
   const action = request.headers.has("next-action");
   const portal = pathname === "/portal" || pathname.startsWith("/portal/");

@@ -675,7 +675,7 @@ export function productDecision(p: ProductIntel, ctx: DecisionContext): ProductD
       label: alternativesQuoted ? t("Keep a second supplier qualified") : t("Find and qualify a second supplier"),
       why: [
         { label: t("Bought from"), value: t("one supplier ({supplier})", { supplier: supplierLabel }) },
-        { label: t("Annual spend"), value: t("{amount} · {share} of the total", { amount: f.money(Math.round(metrics.annualSpend)), share }) },
+        { label: t("Spend, last 12 months"), value: t("{amount} · {share} of the total", { amount: f.money(Math.round(metrics.annualSpend)), share }) },
         { label: t("Other suppliers on file"), value: String(alternativesQuoted) },
       ],
     });
@@ -1133,7 +1133,7 @@ export type OverviewSort = "priority" | "spend" | "saving";
 
 export const OVERVIEW_SORTS: { key: OverviewSort; label: Msg }[] = [
   { key: "priority", label: "Priority" },
-  { key: "spend", label: "Annual spend" },
+  { key: "spend", label: "Spend, last 12 months" },
   { key: "saving", label: "Potential saving" },
 ];
 

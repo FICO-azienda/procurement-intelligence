@@ -10,6 +10,7 @@ import { ImportUploader, WriteInWords } from "@/components/import/uploader";
 import { ButtonLink, Disclosure, PageHeader, Table, Td, Th, cx, rowClass } from "@/components/ui";
 import { getDataset, getT } from "@/lib/data";
 import { rich } from "@/lib/i18n/rich";
+import { dataState } from "@/server/data-guard";
 import { inbox, listSessions } from "@/server/imports";
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -156,7 +157,7 @@ export default async function ImportPage() {
                   ? t("The app is empty. Upload your files above — or load the demo data to look around first.")
                   : t("Stored now: {counts}.", { counts })}
             </p>
-            <DataControls counts={counts} />
+            <DataControls counts={counts} state={await dataState(db)} />
           </Disclosure>
         </div>
       </div>

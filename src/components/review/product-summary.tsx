@@ -44,7 +44,7 @@ export async function ProductSummary({ d, columns }: { d: ProductDecision; colum
           )}
           {d.priceTrend.pct != null && <Delta value={d.priceTrend.pct} className="ml-2 text-[13px]" />}
         </Stat>
-        <Stat label={t("Annual spend")}>{d.annualSpend > 0 ? f.money(Math.round(d.annualSpend)) : <span className="text-ink-4">—</span>}</Stat>
+        <Stat label={t("Spend, last 12 months")}>{d.annualSpend > 0 ? f.money(Math.round(d.annualSpend)) : <span className="text-ink-4">—</span>}</Stat>
         <Stat label={showSaving ? t("Potential saving") : d.priceIncreaseCost != null ? t("Cost of the increase") : t("Potential saving")} hint={showSaving ? EXPLAIN.potentialSaving : d.priceIncreaseCost != null ? EXPLAIN.annualImpact : undefined}>
           {showSaving ? (
             <>

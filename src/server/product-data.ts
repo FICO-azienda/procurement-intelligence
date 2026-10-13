@@ -118,7 +118,7 @@ export const getPriorityDataset = cache(async () => {
 /** The same, straight from the database (tests, exports, a write that needs the estimate it replaces). */
 export async function readProfiles(db: DB, productIds?: string[], t: T = en): Promise<Map<string, ProductProfile>> {
   const [data, learning, states, settings, fams] = await Promise.all([readDataset(db), readLearning(db), readOpportunityStates(db), readSettings(db), db.select().from(productFamilies)]);
-  const intel = analyze(catalogueOf(data), learning.supplierProducts, states, todayISO(), undefined, t);
+  const intel = analyze(catalogueOf(data), learning.supplierProducts, states, todayISO(), undefined, t, { homeCountry: settings.country });
   const families = new Map(fams.map((x) => [x.id, { name: x.name }]));
   return profilesFrom(db, { intel, data, learning, families, settings }, productIds ?? priorityProducts(intel).map((p) => p.product.id), t);
 }

@@ -490,7 +490,9 @@ export function negotiate(input: NegotiationInput, t: T = en, cfg: NegotiationCo
   if (!real.length && !input.competition.strong && !input.competition.plausible) better("find_suppliers", t("Run a research for alternative suppliers"));
   if (!real.length) better("first_quote", t("Get one comparable quote"));
   else if (real.length === 1) better("second_quote", t("Get a second comparable quote"));
-  if (nominal.length) better("complete_true_cost", t("Complete the true cost of {names}: freight, duty and the other costs to your door", { names: list(t, nominal.map((a) => a.label)) }));
+  // Also the offers that weigh nothing yet because their price is not a cost to the plant: completing their true cost is what makes them count.
+  const toComplete = input.anchors.filter((a) => a.kind === "quote" && a.basis === "nominal" && a.recent);
+  if (toComplete.length) better("complete_true_cost", t("Complete the true cost of {names}: freight, duty and the other costs to your door", { names: list(t, toComplete.map((a) => a.label)) }));
   const unconfirmed = complete.filter((a) => a.kind === "quote" && !a.technicalConfirmed);
   if (unconfirmed.length) better("confirm_match", t("Confirm that what {names} offered matches your specification", { names: list(t, unconfirmed.map((a) => a.label)) }));
   if (input.spec.readiness === "not_ready") better("describe_product", t("Describe the product in neutral words, with its technical specification"));

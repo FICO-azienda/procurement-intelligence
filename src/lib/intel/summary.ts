@@ -63,8 +63,8 @@ export function productSummary(i: ProductSummaryInput, t: T = en): string[] {
   if (i.annualSpend > 0) {
     out.push(
       i.spendShare > 0
-        ? t("The product represents {amount} annual spend ({share}% of the total).", { amount: k(i.annualSpend), share: abs1(i.spendShare * 100) })
-        : t("The product represents {amount} annual spend.", { amount: k(i.annualSpend) }),
+        ? t("The product represents {amount} of spend in the last 12 months ({share}% of the total).", { amount: k(i.annualSpend), share: abs1(i.spendShare * 100) })
+        : t("The product represents {amount} of spend in the last 12 months.", { amount: k(i.annualSpend) }),
     );
   }
 
@@ -114,7 +114,7 @@ export interface SupplierSummaryInput {
 export function supplierSummary(i: SupplierSummaryInput, t: T = en): string[] {
   const out: string[] = [];
   if (i.annualSpend > 0) {
-    out.push(t("{name} represents {share}% of annual purchasing spend ({amount}).", { name: i.name, share: abs1(i.spendShare * 100), amount: k(i.annualSpend) }));
+    out.push(t("{name} represents {share}% of the spend on catalogue products in the last 12 months ({amount}).", { name: i.name, share: abs1(i.spendShare * 100), amount: k(i.annualSpend) }));
   } else {
     out.push(t("No purchases from {name} in the last 12 months.", { name: i.name }));
   }

@@ -15,6 +15,8 @@ import { StaticDemoGuard } from "@/components/shell/static-demo";
 import { Sidebar } from "@/components/sidebar";
 import { APP_NAME, COMPANY_NAME } from "@/lib/config";
 import { getDataset, getIntel, getSettings, getT } from "@/lib/data";
+import { coverageOf, todayISO } from "@/lib/analytics";
+import * as f from "@/lib/format";
 import { I18nProvider } from "@/lib/i18n/client";
 import { workspaceAccess } from "@/lib/auth/cookie";
 import { attentionCount, inbox } from "@/server/imports";
@@ -92,10 +94,10 @@ async function shell() {
         if (unread > 0) notices.push({ key: "orders-news", text: t.n(unread, "{n} new notification about your orders", "{n} new notifications about your orders"), href: "/orders", todo: false });
       }
     }
-    return { t, review, products, suppliers, categories, notices, company, orders, demo: data.purchases.some((p) => p.source === "demo") };
+    return { t, review, products, suppliers, categories, notices, company, orders, demo: data.purchases.some((p) => p.source === "demo"), coverage: coverageOf(data.purchases, todayISO()) };
   } catch (err) {
     console.error("[shell]", err);
-    return { t, review: 0, products: [], suppliers: [], categories: [], notices: [], orders: null, company: { companyName: COMPANY_NAME, country: null, vatNumber: null, userName: null, language: t.locale, configured: false }, demo: false };
+    return { t, review: 0, products: [], suppliers: [], categories: [], notices: [], orders: null, coverage: null, company: { companyName: COMPANY_NAME, country: null, vatNumber: null, userName: null, language: t.locale, configured: false }, demo: false };
   }
 }
 
@@ -154,6 +156,14 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
                 {signIn && <SignOut />}
               </div>
               {/* A size container: tables choose their columns from the room they really have, sidebar or not. */}
+              {/* What every "last 12 months" figure really covers, said once and on every page, while the history is shorter than a year. */}
+              {s.coverage?.from && !s.coverage.fullYear && !s.demo && (
+                <p role="note" className="mx-auto max-w-[1200px] px-4 pt-4 text-[12.5px] text-ink-3 sm:px-8 lg:px-10 print:hidden">
+                  <span className="font-medium text-ink-2">{t.n(s.coverage.months, "{n} month of invoices on file", "{n} months of invoices on file", { n: s.coverage.months })}</span>
+                  {" · "}
+                  {t("from {from} to {to}. Figures for the last 12 months are the sum of this period, not a year's; a yearly figure worked out from it is an estimate, and says so.", { from: f.date(s.coverage.from), to: f.date(s.coverage.to) })}
+                </p>
+              )}
               <div className="@container mx-auto max-w-[1200px] px-4 pt-6 pb-16 sm:px-8 md:pt-8 lg:px-10">{children}</div>
             </main>
           </div>

@@ -30,6 +30,19 @@ export const authSecret = (): string | null => {
   return s && s.length >= 32 ? s : null;
 };
 
+/**
+ * In local mode the workspace has no sign-in, so it must answer only to the computer it runs on. A request is taken
+ * as local when the address it was made to is this computer's own name (localhost, 127.0.0.1, ::1, *.localhost) or
+ * one the owner listed in WORKSPACE_HOSTS. The address is what a browser typed: this stops a page opened from another
+ * machine and a foreign site pointed here; the real lock is the server listening on 127.0.0.1 only (package.json).
+ */
+export function isLocalAddress(host: string | null | undefined, extra: string | undefined = process.env.WORKSPACE_HOSTS): boolean {
+  const name = (host ?? "").trim().toLowerCase().replace(/:\d+$/, "").replace(/^\[(.*)\]$/, "$1");
+  if (!name) return false;
+  if (name === "localhost" || name === "127.0.0.1" || name === "::1" || name.endsWith(".localhost")) return true;
+  return (extra ?? "").split(",").map((h) => h.trim().toLowerCase()).filter(Boolean).includes(name);
+}
+
 const sign = (value: string, secret: string) => createHmac("sha256", secret).update(value).digest("base64url");
 
 /** A session token with its expiry and a signature over both: what the workspace cookie holds in login mode. */

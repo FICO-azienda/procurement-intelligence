@@ -6,6 +6,7 @@
  */
 import type { DB } from "./index";
 import { getStorage } from "../lib/storage";
+import { mustBeDisposable } from "../server/data-guard";
 import {
   documents,
   importItems,
@@ -308,8 +309,13 @@ export async function seedDemo(db: DB) {
   });
 }
 
-/** Deletes every record and stored file. Used by "Clear all data" before loading real data. */
-export async function clearAll(db: DB) {
+/**
+ * Deletes every record and stored file: what "Clear all data" does to the demo before real data is loaded. A company's
+ * own data is never cleared this way: the call is refused unless the caller says, in so many words, that this is what
+ * it means (a test on a database of its own, a script run with its flag after a backup).
+ */
+export async function clearAll(db: DB, opts: { includingRealData?: boolean } = {}) {
+  if (!opts.includingRealData) await mustBeDisposable(db);
   await db.transaction(async (tx) => {
     await tx.delete(opportunities);
     // The replies to requests are purchasing data too — and private: none survives a clean start. Their companies take conversations, offers, messages and documents with them.

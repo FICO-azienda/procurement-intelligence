@@ -105,7 +105,7 @@ export default async function SupplierPage({ params }: PageProps<"/suppliers/[id
 
       {/* The supplier in four numbers */}
       <section aria-label={t("Key figures")} className="mb-6 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-rule bg-rule xl:grid-cols-4">
-        <Figure label={t("Annual spend")} value={f.money(Math.round(m.annualSpend))} note={si.spendShare > 0 ? t("{pct}% of what you buy", { pct: f.number(si.spendShare * 100, 0) }) : t("No purchases in 12 months")} />
+        <Figure label={t("Spend, last 12 months")} value={f.money(Math.round(m.annualSpend))} note={si.spendShare > 0 ? t("{pct}% of what you buy", { pct: f.number(si.spendShare * 100, 0) }) : t("No purchases in 12 months")} />
         <Figure label={t("Products")} value={String(m.productIds.length)} note={m.quotedProductIds.length ? t("{n} with a quote on file", { n: m.quotedProductIds.length }) : t("bought from this supplier")} />
         <Figure
           label={t("Price movement")}
@@ -219,7 +219,7 @@ export default async function SupplierPage({ params }: PageProps<"/suppliers/[id
       <Section className="mb-6" title={t("The whole relationship")} description={t("Everything you buy from this company, over every name it is known by: what the leverage on each of its products is read from.")}>
         <dl className="grid gap-x-8 gap-y-2 text-[13px] @2xl:grid-cols-2">
           {[
-            [t("Total spend, last 12 months"), f.money(Math.round(relationship.totalSpend))],
+            [t("Spend on catalogue products, last 12 months"), f.money(Math.round(relationship.totalSpend))],
             [t("Historical spend on file"), relationship.firstPurchase ? t("{amount} since {date}", { amount: f.money(Math.round(relationship.historicalSpend)), date: f.date(relationship.firstPurchase) }) : "—"],
             [t("Products purchased"), String(relationship.products.length)],
             [t("Categories bought"), lev ? `${lev.facts.groups.length} (${lev.facts.groups.map((g) => (g.label ? t(g.label) : g.name)).join(", ")})` : "—"],

@@ -159,7 +159,8 @@ export function missingInformation(row: ComparisonRow, current: ComparisonRow | 
         : t("Shorter payment terms ({offer} days vs {current} days): financing cost not included", { offer: row.paymentTermsDays, current: current.paymentTermsDays }),
     );
   }
-  out.push(t("Landed cost not calculated"));
+  // An offer read with its landed cost complete has it: only a nominal price is still missing one.
+  if (!row.landed) out.push(t("Landed cost not calculated"));
   return out;
 }
 
@@ -362,8 +363,8 @@ export function findOpportunities(i: OpportunityInput, cfg: IntelConfig = INTEL_
       factors: [],
       comparability: null,
       reason: quoted
-        ? t.n(quoted, "Single source for {pct} of annual spend — {n} alternative quote on file", "Single source for {pct} of annual spend — {n} alternative quotes on file", { pct: pctFmt(i.spendShare * 100) })
-        : t("Single source for {pct} of annual spend — no alternative quotes", { pct: pctFmt(i.spendShare * 100) }),
+        ? t.n(quoted, "Single source for {pct} of spend — {n} alternative quote on file", "Single source for {pct} of spend — {n} alternative quotes on file", { pct: pctFmt(i.spendShare * 100) })
+        : t("Single source for {pct} of spend — no alternative quotes", { pct: pctFmt(i.spendShare * 100) }),
       negotiation: false,
       missing: quoted ? [] : [t("Quotes from alternative suppliers")],
     });

@@ -88,12 +88,14 @@ export async function restore(db: DB, lines: Iterable<string> | AsyncIterable<st
       await tx.execute(sql`insert into ${sql.raw(`"${table}"`)} select * from jsonb_populate_recordset(null::${sql.raw(`"${table}"`)}, ${rows}::jsonb)`);
     }
     if (!manifest) throw new TransferError("The file is empty.");
+    // Counted before anything is kept: a transfer that does not match is undone with the transaction, and the target stays empty.
+    const arrived = await manifestOf(tx as unknown as DB);
+    const expected: TransferManifest = manifest;
+    const wrong = Object.keys(expected.tables).filter((t) => (arrived.tables[t] ?? -1) !== expected.tables[t]);
+    if (wrong.length || arrived.purchases.total !== expected.purchases.total) {
+      throw new TransferError(`The data that arrived is not the data that left: ${wrong.map((t) => `${t} ${arrived.tables[t] ?? 0} instead of ${expected.tables[t]}`).join(", ") || `purchases total ${arrived.purchases.total} instead of ${expected.purchases.total}`}. Nothing was loaded.`);
+    }
   });
   const after = await manifestOf(db);
-  const expected = manifest!;
-  const wrong = Object.keys(expected.tables).filter((t) => (after.tables[t] ?? -1) !== expected.tables[t]);
-  if (wrong.length || after.purchases.total !== expected.purchases.total) {
-    throw new TransferError(`The data that arrived is not the data that left: ${wrong.map((t) => `${t} ${after.tables[t] ?? 0} instead of ${expected.tables[t]}`).join(", ") || `purchases total ${after.purchases.total} instead of ${expected.purchases.total}`}.`);
-  }
-  return { manifest: expected, loaded: after.tables };
+  return { manifest: manifest!, loaded: after.tables };
 }

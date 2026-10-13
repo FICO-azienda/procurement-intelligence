@@ -239,13 +239,22 @@ export function DeleteButton({
   note,
   label,
 }: {
-  onConfirm: () => void | Promise<void>;
+  /** May answer with a refusal (`{ ok: false, error }`): it is then shown, and nothing was deleted. */
+  onConfirm: () => void | Promise<void | { ok: boolean; error?: string }>;
   note?: string;
   label?: string;
 }) {
   const t = useT();
   const [armed, setArmed] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [refused, setRefused] = useState<string | null>(null);
+  if (refused) {
+    return (
+      <p role="alert" className="min-w-0 text-[12.5px] text-up">
+        {refused}
+      </p>
+    );
+  }
   if (!armed) {
     return (
       <button type="button" onClick={() => setArmed(true)} className={buttonClass("ghost")}>
@@ -261,7 +270,8 @@ export function DeleteButton({
         onClick={async () => {
           setBusy(true);
           try {
-            await onConfirm();
+            const res = await onConfirm();
+            if (res && !res.ok) setRefused(res.error ?? t("Something went wrong."));
           } finally {
             setBusy(false);
           }

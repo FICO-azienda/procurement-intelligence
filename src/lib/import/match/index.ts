@@ -2,8 +2,9 @@
  * Supplier and product matching.
  *
  * Results:
- *   exact    → certain (same VAT/SKU/supplier code, a confirmed alias, same
- *              normalized name). Used without asking.
+ *   exact    → certain (same VAT/SKU, the supplier's code when it names one
+ *              product and the description does not say otherwise, a
+ *              description this supplier wrote before). Used without asking.
  *   probable → a suggestion with a confidence. The user confirms or corrects,
  *              and the confirmation is saved as an alias (the system learns).
  *   none     → nothing credible. The user picks one or creates a new record.
@@ -35,6 +36,11 @@ export interface MatchResult {
   reason: Msg;
   /** Other plausible candidates, best first. */
   alternatives: Candidate[];
+  /**
+   * Products of the same kind that are not this one: another grade or size, or the same thing with no grade said.
+   * Never a match — what the line is shown next to, so that a new product is not created without seeing its family.
+   */
+  related?: Candidate[];
 }
 
 export interface MatchContext {
@@ -45,7 +51,7 @@ export interface MatchContext {
   products: { id: string; sku: string; name: string; description: string | null; kind?: string | null }[];
   /** `supplierId`: who writes the product this way (absent on aliases saved before suppliers were recorded). */
   /** `alias`: the description as written, when on file — where the supplier's own codes can still be read. */
-  productAliases: { productId: string; normalized: string; supplierId?: string | null; alias?: string | null }[];
+  productAliases: { productId: string; normalized: string; supplierId?: string | null; alias?: string | null; supplierSku?: string | null }[];
   supplierProducts: { supplierId: string; productId: string; supplierSku: string | null; supplierProductName: string | null }[];
 }
 
@@ -185,21 +191,50 @@ export function matchProduct(input: ProductInput, supplierId: string | null, ctx
     if (bySku) return exact(bySku.id, "Same SKU");
   }
 
-  // 2. The supplier's own code
+  const texts = [input.name, input.description].map((t) => tidy(t)).filter(Boolean);
+
+  // 2. The supplier's own code. A code is not an identity by itself: one supplier can use the same code for a whole
+  //    range ("CLA" for altar candles of every size). It settles the product only when, for this supplier, it names
+  //    one product and the description does not state another size or grade; otherwise the description decides, or
+  //    the user is asked.
   const supplierSku = codeKey(input.supplierSku);
   if (supplierSku) {
     const links = ctx.supplierProducts.filter((sp) => codeKey(sp.supplierSku) === supplierSku);
-    const own = supplierId ? links.find((sp) => sp.supplierId === supplierId) : undefined;
-    if (own) return exact(own.productId, "Supplier's product code");
+    const own = new Set(supplierId ? links.filter((sp) => sp.supplierId === supplierId).map((sp) => sp.productId) : []);
+    // The codes kept with each description this supplier wrote say the same thing, also where the link kept only one.
+    if (supplierId) for (const a of ctx.productAliases) if (a.supplierId === supplierId && codeKey(a.supplierSku) === supplierSku) own.add(a.productId);
+    const keys = new Set(texts.map((text) => productKey(text)));
+    /** This supplier wrote this very description for the product before. */
+    const written = (id: string) => ctx.productAliases.some((a) => a.productId === id && a.supplierId === supplierId && keys.has(a.normalized)) || keys.has(productKey(product(id)?.name));
+    if (own.size === 1) {
+      const [id] = [...own];
+      if (!inCatalogue(id) || !texts.length || written(id) || !otherSpec(texts[0], id, supplierId, input.supplierSku, ctx)) return exact(id, "Supplier's product code");
+      return { status: "probable", id, confidence: 0.6, reason: "Same supplier code, but the description states another size or grade — check that it is this product", alternatives: [] };
+    }
+    if (own.size > 1) {
+      const named = [...own].filter(written);
+      if (named.length === 1) return exact(named[0], "Supplier's product code and description");
+      const fitting = [...own].filter((id) => inCatalogue(id) && texts.length > 0 && sameSpec(texts[0], id, supplierId, input.supplierSku, ctx));
+      const shared = [...own].filter(inCatalogue).map((id) => ({ id, confidence: 0.5, reason: "Shares this supplier code" as Msg }));
+      if (fitting.length === 1) return { status: "probable", id: fitting[0], confidence: 0.75, reason: "The supplier uses this code for several products: this one has the same size or grade — check", alternatives: shared.filter((c) => c.id !== fitting[0]).slice(0, 3) };
+      // Several products under one code and none written this way: a question, or a new product of that range — never the first one found.
+      if (shared.length) return { ...none(shared.slice(0, 3)), reason: "The supplier uses this code for several products, and none of them is written this way", related: shared.slice(0, 5) };
+    }
     // The same code at another supplier is a clue only for products: spend items carry codes that mean nothing ("FOB", "3").
     const ids = [...new Set(links.map((l) => l.productId).filter(inCatalogue))];
-    if (ids.length === 1) {
+    if (!own.size && ids.length === 1) {
       return { status: "probable", id: ids[0], confidence: 0.85, reason: "Same code used by another supplier", alternatives: [] };
     }
   }
 
-  const texts = [input.name, input.description].map((t) => tidy(t)).filter(Boolean);
   if (!texts.length) return none();
+  /** A product this supplier already sells, or one no supplier is tied to yet (the user's own entry): its name is its identity. */
+  const ours = (id: string) => {
+    const sellers = new Set([...ctx.supplierProducts.filter((sp) => sp.productId === id).map((sp) => sp.supplierId), ...ctx.productAliases.filter((a) => a.productId === id && a.supplierId).map((a) => a.supplierId as string)]);
+    return sellers.size === 0 || (!!supplierId && sellers.has(supplierId));
+  };
+  /** The same words from someone else: likely the same product, but an article of another supplier is confirmed by a person, never filed by itself. */
+  const elsewhereMatch = (id: string): MatchResult => ({ status: "probable", id, confidence: 0.85, reason: "Written like a product you buy from another supplier — confirm it is the same article", alternatives: [] });
 
   // 3. Known alias or same normalized name
   for (const text of texts) {
@@ -207,11 +242,11 @@ export function matchProduct(input: ProductInput, supplierId: string | null, ctx
     const aliases = ctx.productAliases.filter((a) => a.normalized === key);
     const own = aliases.find((a) => a.supplierId != null && a.supplierId === supplierId);
     if (own) return exact(own.productId, "Recognised from a previous confirmation");
-    // Written the same way by someone else: the same product, when everyone who writes it means one product.
+    // Written the same way by someone else: one product when everyone who writes it means one — the user's own, or to confirm.
     const elsewhere = [...new Set(aliases.map((a) => a.productId).filter(inCatalogue))];
-    if (elsewhere.length === 1) return exact(elsewhere[0], "Recognised from a previous confirmation");
+    if (elsewhere.length === 1) return ours(elsewhere[0]) ? exact(elsewhere[0], "Recognised from a previous confirmation") : elsewhereMatch(elsewhere[0]);
     const byName = ctx.products.find((p) => productKey(p.name) === key && isStrategic(p.kind));
-    if (byName) return exact(byName.id, "Same name");
+    if (byName) return ours(byName.id) ? exact(byName.id, "Same name") : elsewhereMatch(byName.id);
     const byLink = supplierId
       ? ctx.supplierProducts.find((sp) => sp.supplierId === supplierId && productKey(sp.supplierProductName) === key)
       : undefined;
@@ -280,7 +315,36 @@ export function matchProduct(input: ProductInput, supplierId: string | null, ctx
       if (score > 0) cands.push({ id: a.productId, confidence: score, reason: "Similar to a known alias" });
     }
   }
-  return fromCandidates(cands);
+  const found = fromCandidates(cands);
+  if (found.status !== "none") return found;
+  // Nothing to tie it to. What it is shown next to: the catalogue's products of the same kind — another grade or size
+  // (never the same product), or the same thing where one of the two says no grade.
+  const related: Candidate[] = [];
+  if (mine.subKey) {
+    for (const c of catalogueIdentities(ctx)) {
+      if (c.identity.subKey !== mine.subKey || related.some((r) => r.id === c.id)) continue;
+      related.push({ id: c.id, confidence: 0, reason: otherGrade.has(c.id) ? "Same kind of product, another grade or size" : "Same kind of product" });
+    }
+  }
+  return related.length ? { ...found, related: related.slice(0, 5) } : found;
+}
+
+/** What the catalogue knows a product as — its name and every description on file — read for what each says. */
+function identitiesOf(productId: string, ctx: MatchContext) {
+  return catalogueIdentities(ctx).filter((c) => c.id === productId).map((c) => c.identity);
+}
+const lineIdentity = (text: string, supplierId: string | null, supplierSku: string | null | undefined, ctx: MatchContext) =>
+  identityOf(text, { names: supplierId ? ctx.suppliers.filter((s) => s.id === supplierId).map((s) => s.name) : [], skus: [supplierSku] });
+/** The description states sizes or grades, and none of the product's own descriptions states the same ones. */
+function otherSpec(text: string, productId: string, supplierId: string | null, supplierSku: string | null | undefined, ctx: MatchContext): boolean {
+  const mine = lineIdentity(text, supplierId, supplierSku, ctx);
+  const known = identitiesOf(productId, ctx).filter((k) => k.numbers.length);
+  return mine.numbers.length > 0 && known.length > 0 && !known.some((k) => sameNumbers(mine.numbers, k.numbers));
+}
+/** The description states sizes or grades, and one of the product's own descriptions states exactly those. */
+function sameSpec(text: string, productId: string, supplierId: string | null, supplierSku: string | null | undefined, ctx: MatchContext): boolean {
+  const mine = lineIdentity(text, supplierId, supplierSku, ctx);
+  return mine.numbers.length > 0 && identitiesOf(productId, ctx).some((k) => sameNumbers(mine.numbers, k.numbers));
 }
 
 /** Code-like chunks of a text, compacted: "Art. PAR 5860 paraffina" → ["PAR5860", …]. */

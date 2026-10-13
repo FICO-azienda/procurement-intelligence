@@ -53,7 +53,7 @@ export default async function OverviewPage() {
               href="/report"
               icon={Coins}
               tone="info"
-              label={t("Annual spend")}
+              label={t("Spend, last 12 months")}
               hint={EXPLAIN.annualSpend}
               value={f.money(Math.round(tot.annualSpend))}
               note={spend.other !== 0 ? t("on catalogue products · {total} with all other spend", { total: f.money(Math.round(spend.total)) }) : undefined}

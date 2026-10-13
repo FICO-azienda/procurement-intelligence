@@ -204,7 +204,7 @@ export default async function ProductSourcingPage({ params }: PageProps<"/sourci
             ),
             h.latest ? `${h.latest.supplierName ?? ""} · ${f.date(h.latest.date)}` : t("No purchase price on record yet."),
           )}
-          {figure(t("Annual spend"), <span className="num">{f.money(Math.round(h.annualSpend))}</span>, h.annualQuantity > 0 ? `${f.number(h.annualQuantity, 0)} ${unit} ${t("in 12 months")}` : null)}
+          {figure(t("Spend, last 12 months"), <span className="num">{f.money(Math.round(h.annualSpend))}</span>, h.annualQuantity > 0 ? `${f.number(h.annualQuantity, 0)} ${unit} ${t("in 12 months")}` : null)}
           {figure(
             t("Price history"),
             h.low && h.high ? <span className="num">{rangeText(h.low.price, h.high.price, unit)}</span> : "—",

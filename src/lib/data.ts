@@ -234,10 +234,10 @@ export const getOpportunityStates = cache(async () => {
  * services and the rest of the company's spend are counted by `getSpend()`.
  */
 export const getIntel = cache(async (): Promise<Intel> => {
-  const [data, learning, states, t] = await Promise.all([getDataset(), getLearning(), getOpportunityStates(), getT()]);
+  const [data, learning, states, t, company] = await Promise.all([getDataset(), getLearning(), getOpportunityStates(), getT(), getSettings()]);
   // The offers that passed every check are read as quotes (lib/replies/bridge.ts): read, never copied.
   const catalogue = bridgeDataset(catalogueOf(data), await getComparableOffers());
-  const intel = analyze(catalogue, learning.supplierProducts, states, todayISO(), undefined, t);
+  const intel = analyze(catalogue, learning.supplierProducts, states, todayISO(), undefined, t, { homeCountry: company.country });
   if (catalogue !== data) {
     // A supplier is who the company pays: its spend, dates and status count every purchase, not only the catalogue's.
     const full = new Map(data.suppliers.map((s) => [s.id, supplierMetrics(s, data, intel.asOf)]));

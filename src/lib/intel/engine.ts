@@ -22,8 +22,7 @@ import {
   type QuoteData,
   type SupplierData,
   type SupplierMetrics,
-  type SupplierOrderStats,
-} from "../analytics";
+  type SupplierOrderStats, coverageOf, type Coverage } from "../analytics";
 import { en, type T } from "../i18n";
 import { compareSuppliers, type ComparisonRow, type SupplierLink } from "./comparison";
 import { INTEL_CONFIG, type IntelConfig } from "./config";
@@ -100,6 +99,8 @@ export interface SupplierIntel {
 
 export interface Intel {
   asOf: string;
+  /** The period the purchases on file span: what every "last 12 months" figure really covers. */
+  coverage: Coverage;
   config: IntelConfig;
   products: ProductIntel[];
   suppliers: SupplierIntel[];
@@ -149,6 +150,8 @@ export function analyze(
   cfg: IntelConfig = INTEL_CONFIG,
   /** The language of every sentence the engine writes (reasons, summaries). Never changes a number. */
   t: T = en,
+  /** What the engine is told about the buyer: its country says whether a price quoted "delivered" still has customs to pay. */
+  buyer: { homeCountry?: string | null } = {},
 ): Intel {
   const purchasesByProduct = groupBy(data.purchases, (p) => p.productId);
   const purchasesBySupplier = groupBy(data.purchases, (p) => p.supplierId);
@@ -190,6 +193,7 @@ export function analyze(
         currentPrice: price.current?.price ?? null,
         typicalOrderQuantity,
         asOf,
+        homeCountry: buyer.homeCountry,
       },
       cfg,
       t,
@@ -338,6 +342,8 @@ export function analyze(
 
   return {
     asOf,
+
+    coverage: coverageOf(data.purchases, asOf),
     config: cfg,
     products,
     suppliers,

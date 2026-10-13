@@ -238,6 +238,12 @@ export async function createUpload(
         const knownProducts = await db.select({ name: products.name }).from(products);
         columns = inferByContent(table.headers, table.rows, columns, { suppliers: known.map((x) => x.name), products: knownProducts.map((x) => x.name) });
       }
+      // A table of purchases or prices has, at the very least, a date or an amount in one of its columns. A file with
+      // neither — notes, a letter, a "read me" — is not left waiting for columns it does not have.
+      const fields = new Set(Object.values(columns));
+      if (!["purchase_date", "quantity", "unit_price", "total"].some((f) => fields.has(f as never))) {
+        throw new ImportError("This file does not look like a table of purchases or prices: no column holds dates, quantities or amounts. Nothing was read from it.");
+      }
       const mapping: MappingInfo = { columns, recordType: guessRecordType(table), defaultCurrency: "EUR" };
       const extraction: SpreadsheetExtraction = {
         type: "spreadsheet",
@@ -833,8 +839,9 @@ export async function acknowledge(db: DB, target: { itemId: string } | { session
     await db.update(importItems).set({ acknowledged: true }).where(eq(importItems.id, target.itemId));
     await refreshSession(db, item.sessionId);
   } else {
-    // Only lines whose remaining problems are review flags (nothing blocking).
-    const items = (await openItems(db, target.sessionId)).filter((i) => !(i.issues as Issue[]).some((x) => x.severity === "blocking"));
+    // Only lines whose remaining problems are review flags (nothing blocking) — and never, in bulk, a line of an
+    // invoice that is already on file: adding to an invoice already imported is decided line by line.
+    const items = (await openItems(db, target.sessionId)).filter((i) => !(i.issues as Issue[]).some((x) => x.severity === "blocking" || x.code === "invoice_on_file"));
     if (items.length) await db.update(importItems).set({ acknowledged: true }).where(inArray(importItems.id, items.map((i) => i.id)));
     await refreshSession(db, target.sessionId);
   }
@@ -900,6 +907,7 @@ export async function approveSession(db: DB, sessionId: string): Promise<{ impor
   if (!ready.length) return { imported: 0, ...error("No lines are ready to import yet.") };
 
   const touched = new Set<string>();
+  let written = 0;
   await db.transaction(async (tx) => {
     for (const item of ready) {
       const d = item.data as CurrentData;
@@ -983,6 +991,7 @@ export async function approveSession(db: DB, sessionId: string): Promise<{ impor
         product.currentSupplierId = item.supplierId;
       }
       await tx.update(importItems).set({ status: "imported", updatedAt: new Date() }).where(eq(importItems.id, item.id));
+      written++;
       if (!spend) touched.add(product.id); // price changes are watched on products only
     }
   });
@@ -994,7 +1003,8 @@ export async function approveSession(db: DB, sessionId: string): Promise<{ impor
   await db.update(importSessions).set({ summary }).where(eq(importSessions.id, sessionId));
   // Other imports' price checks now compare against the new history.
   await rematchOpenSessions(db, sessionId);
-  return { imported: ready.length, summary };
+  // What was really written: a ready line whose product is no longer listed, or whose unit cannot be converted, is not counted.
+  return { imported: written, summary };
 }
 
 async function buildSummary(db: DB, sessionId: string, before: Dataset, after: Dataset, touched: Set<string>): Promise<ImportSummary> {
@@ -1036,6 +1046,23 @@ async function buildSummary(db: DB, sessionId: string, before: Dataset, after: D
     priceChanges,
     increaseImpact: priceChanges.filter((c) => c.pct > 0).reduce((s, c) => s + c.annualImpact, 0),
   };
+}
+
+/**
+ * Sets a file aside for good: nothing of it is imported, its lines are marked as skipped, and it leaves the list of
+ * the files waiting. Only for a file of which nothing was imported yet. The file itself stays in the archive.
+ */
+const SET_ASIDE: Msg = "Set aside: nothing of this file was imported.";
+export async function discardSession(db: DB, sessionId: string): Promise<{ error?: string }> {
+  const session = await getSession(db, sessionId);
+  if (!session) return error("Import not found.");
+  const items = await getSessionItems(db, sessionId);
+  if (items.some((i) => i.status === "imported")) return error("Some lines of this file are already imported: it cannot be set aside.");
+  await db.transaction(async (tx) => {
+    await tx.update(importItems).set({ status: "skipped", updatedAt: new Date() }).where(eq(importItems.sessionId, sessionId));
+    await tx.update(importSessions).set({ status: "completed", completedAt: new Date(), errorMessage: SET_ASIDE, recordsReview: 0, recordsRejected: items.length, updatedAt: new Date() }).where(eq(importSessions.id, sessionId));
+  });
+  return {};
 }
 
 // ======================= Starting over =======================

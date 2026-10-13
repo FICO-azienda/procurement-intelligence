@@ -27,7 +27,7 @@ export function quickFilters(cfg: IntelConfig = INTEL_CONFIG, t: T = en): { key:
 export type SortKey = "spend" | "change" | "saving" | "last" | "suppliers" | "name";
 
 export const SORTS: { key: SortKey; label: Msg }[] = [
-  { key: "spend", label: "Annual spend" },
+  { key: "spend", label: "Spend, last 12 months" },
   { key: "change", label: "Price change" },
   { key: "saving", label: "Potential saving" },
   { key: "last", label: "Last purchase" },
