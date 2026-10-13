@@ -509,6 +509,23 @@ L'app non ha ancora utenti e organizzazioni: i dati stanno sul computer di chi l
 
 Codice: `src/lib/replies/` (`match.ts`, `offers.ts`, `landed.ts`, `rows.ts`), `src/server/replies.ts`, `src/server/audit.ts`, `src/server/destinations.ts`.
 
+## Dalle offerte ai confronti (ponte con Confronto, Negoziazione e Strategia)
+
+Un'offerta ricevuta entra in Confronto, nella vista di mercato, nella Negoziazione e nella Strategia **solo quando supera tutti i controlli**: è associata a un prodotto, una persona ne ha validato l'equivalenza tecnica con una motivazione, non è scaduta, è nell'unità del prodotto e il suo costo a destino è completo.
+
+- **Letta, mai copiata**: non viene scritta alcuna riga in preventivi o fornitori. L'offerta resta l'unica fonte: nel momento in cui scade, viene sostituita, perde l'associazione o la validazione, esce da tutti i moduli insieme.
+- **Ciò che entra è il costo a destino in euro**, con trasporto, dazi e sdoganamento già dentro: non viene aggiunto altro. Il prezzo come quotato (valuta e resa originali) resta sull'offerta.
+- **L'azienda non diventa un fornitore**: compare nei confronti come azienda che ha risposto a una richiesta, non nell'elenco fornitori.
+- Tutto il resto resta nella scheda prodotto tra le offerte «da verificare», fuori da ogni classifica.
+
+Sulla pagina di un'offerta: prodotto suggerito con le due specifiche a confronto, e tre azioni — **Associa come possibile alternativa**, **Non è lo stesso prodotto**, **Richiedi ulteriori informazioni**. Associare non significa dichiarare equivalente: associazione e compatibilità tecnica sono mostrate separate. Per un'offerta scaduta: **Richiedi prezzo aggiornato**. Le richieste vengono annotate come prossima azione della conversazione: l'app non invia nulla.
+
+**Cambi valutari**: sul costo a destino, «Usa il cambio di riferimento ufficiale di quel giorno» prende il cambio BCE della data indicata, lo propone come stima da controllare e lo conserva con l'offerta (valore, data, fonte). Senza un cambio datato il confronto resta incompleto; il prezzo originale non viene mai sostituito.
+
+**Documenti**: copia caricata (unica «in archivio»), link o solo nome («documento non ancora acquisito»); data di ricezione, origine, prodotto a cui si riferisce, verifica da parte di una persona. Lo stesso file caricato due volte è un solo documento; versioni diverse restano entrambe.
+
+Codice: `src/lib/replies/bridge.ts`, `readComparableOffers` e `requestFromSupplier` in `src/server/replies.ts`, `src/server/fx.ts`.
+
 ## Aziende, persone e accesso
 
 Un'installazione è lo **spazio di lavoro di un'azienda acquirente** (tutto ciò che c'era: `src/app/(workspace)`) più un **portale fornitori** (`src/app/(outside)/portal`), che ha una cornice propria e non legge nulla dello spazio di lavoro.

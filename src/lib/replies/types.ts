@@ -89,8 +89,32 @@ export interface ReplyDocument {
   url: string | null;
   /** The copy on file. Null: only a name or a link — which is not a copy. */
   documentId: string | null;
+  /** The buyer's product it is about, when it is about one. */
+  productId: string | null;
+  receivedOn: string | null;
+  origin: DocumentOrigin | null;
+  /** When a person checked it is what it says, and who. Null: not checked. */
+  verifiedAt: string | null;
+  verifiedBy: string | null;
   note: string | null;
 }
+
+/** How a document came. */
+export const DOCUMENT_ORIGINS = ["email", "supplier_site", "handed_over", "other"] as const;
+export type DocumentOrigin = (typeof DOCUMENT_ORIGINS)[number];
+export const isDocumentOrigin = (v: unknown): v is DocumentOrigin => typeof v === "string" && (DOCUMENT_ORIGINS as readonly string[]).includes(v);
+export const DOCUMENT_ORIGIN_LABEL: Record<DocumentOrigin, Msg> = {
+  email: "Attached to an email",
+  supplier_site: "Downloaded from the company's site",
+  handed_over: "Handed over or sent by other means",
+  other: "Other|origin",
+};
+/** What each availability means to whoever looks for the document. */
+export const AVAILABILITY_LABEL: Record<"stored" | "link" | "named", Msg> = {
+  stored: "Copy on file",
+  link: "Document not acquired yet: only a link",
+  named: "Document not acquired yet: only its name",
+};
 
 /** Whether the document itself is on file, only reachable through a link, or only named. */
 export const availabilityOf = (d: Pick<ReplyDocument, "documentId" | "url">): "stored" | "link" | "named" => (d.documentId ? "stored" : d.url ? "link" : "named");

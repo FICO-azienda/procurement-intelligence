@@ -1,3 +1,4 @@
+import { offerIdOf } from "@/lib/replies/bridge";
 import Link from "next/link";
 import { AlertTriangle, Check } from "lucide-react";
 import type { ProductData, QuoteData } from "@/lib/analytics";
@@ -154,6 +155,8 @@ export async function SupplierComparison({ product, columns, rows, quotes }: { p
             (c) => {
               const row = rows.find((r) => r.supplier.id === c.supplierId);
               const quote = row?.kind === "quote" ? quotes.find((q) => q.id === row.recordId) : undefined;
+              // A cost worked out from a reply to a request: its page is the offer's, and it is changed there.
+              const offerId = offerIdOf(row?.recordId);
               return (
                 <details className="group text-[12.5px] font-normal">
                   <summary className="cursor-pointer list-none font-medium text-ledger select-none hover:underline [&::-webkit-details-marker]:hidden">
@@ -165,7 +168,7 @@ export async function SupplierComparison({ product, columns, rows, quotes }: { p
                       <div>{t("As quoted: {price}", { price: `${f.price(c.quotedPrice, c.currency)}/${unit}` })}</div>
                     )}
                     <div>{t(c.kind === "quote" ? "Quoted on {date}" : "Paid on {date}", { date: f.date(c.date) })}</div>
-                    {c.incoterm && <div>Incoterm {c.incoterm}</div>}
+                    {offerId ? <div>{t("Cost at your plant: transport, duties and clearance are in it.")}</div> : c.incoterm && <div>Incoterm {c.incoterm}</div>}
                     {row?.source && (
                       <div>
                         <SourceTag source={row.source} doc={row.sourceDoc} />
@@ -182,7 +185,12 @@ export async function SupplierComparison({ product, columns, rows, quotes }: { p
                     {row && !c.isCurrent && row.comparabilityReasons.length > 0 && <div className="text-ink-3">{row.comparabilityReasons.join(" · ")}</div>}
                     <div className="flex flex-wrap items-center gap-1 pt-1">
                       {quote && <QuoteDialog quote={quote} trigger={{ label: t("Edit quote"), size: "sm", variant: "ghost" }} />}
-                      {row && !c.isCurrent && (
+                      {offerId && (
+                        <Link href={`/sourcing/replies/offers/${offerId}`} className="font-medium text-ledger hover:underline">
+                          {t("Open the offer it comes from")}
+                        </Link>
+                      )}
+                      {row && !c.isCurrent && !offerId && (
                         <OfferDialog
                           supplierId={c.supplierId}
                           supplierName={c.supplierName}

@@ -18,10 +18,15 @@ import type { Actor } from "@/lib/replies/types";
 import { correctAttribution, readAudit } from "./audit";
 import { readDestinations, saveDestination } from "./destinations";
 import {
-  ReplyError, addReplyDocument, checkReplies, decideCompanyLink, decideOffer, declineSuggestion, importReplies, linkOffer, readOffer, readProductOffers, readReplies, saveLanded, setOfferCompatibility, unlinkOffer,
+  ReplyError, addReplyDocument, checkReplies, decideCompanyLink, decideOffer, declineSuggestion, candidateKey, importReplies, linkOffer, readComparableOffers, readOffer, readProductOffers, readReplies, readReplyPointers, requestFromSupplier, verifyReplyDocument, saveLanded, setOfferCompatibility, unlinkOffer,
   updateReplyCompany, updateReplyThread,
 } from "./replies";
 import { readSettings } from "@/lib/data";
+import { offerIdOf, replyCompanyIdOf } from "@/lib/replies/bridge";
+import { purchasingOverview } from "@/lib/intel/decision";
+import { readNegotiations } from "./negotiation";
+import { readPortfolioScope } from "./portfolio";
+import { markRequestsSent, readMarketViews, readProductCosts } from "./sourcing";
 
 let db: DB;
 const FILE = "mock-replies.json";
@@ -302,6 +307,71 @@ describe("an offer and one of the buyer's products", () => {
   });
 });
 
+describe("the bridge to Compare, negotiation and strategy", () => {
+  const row = async () => (await readMarketViews(db)).intel.products.find((p) => p.product.id === ids.paraffin)!.comparison.find((r) => !r.isCurrent) ?? null;
+
+  it("an offer that passed every check is read as a quote by all of them — and nothing is written", async () => {
+    const before = await counts();
+    const [offer] = await readComparableOffers(db);
+    expect(await readComparableOffers(db)).toHaveLength(1);
+    expect(offer).toMatchObject({ productId: ids.paraffin, productName: "MOCK SAME 58/60", landedPerUnit: 1.46, estimated: true, supplierId: null, quoted: "1.45 EUR/kg DAP Mocktown" });
+
+    // Compare, the product's page, the market view: one more row, on the cost to the plant.
+    const views = await readMarketViews(db);
+    const r = (await row())!;
+    expect(r).toMatchObject({ kind: "quote", price: 1.46, currency: "EUR", priceEUR: 1.46, comparability: "comparable", source: "rfq_reply", expired: false, landed: true, validated: true });
+    // What is in the cost is not listed as still to assess, and what a person validated is not "not compared".
+    const flags = purchasingOverview(views.intel).products.find((d) => d.productId === ids.paraffin)!.alternatives.find((a) => a.supplierId === r.supplier.id)!.flags;
+    expect(flags.filter((x) => x.tone === "warn").map((x) => x.key)).not.toEqual(expect.arrayContaining(["import", "specs_unknown", "freight"]));
+    expect(flags.filter((x) => x.tone === "ok").map((x) => x.key)).toEqual(expect.arrayContaining(["delivered", "specs_match"]));
+    expect(r.difference).toBeCloseTo(-0.14, 6);
+    expect(offerIdOf(r.recordId)).toBe(offer.offerId);
+    // The company is carried as itself — a company that answered, not a supplier on file.
+    expect(replyCompanyIdOf(r.supplier.id)).toBe(offer.company.id);
+    expect(r.supplier.name).toBe("Mock Wax Kimya A.Ş.");
+
+    // Negotiation and strategy read the same row, on true cost, with the equivalence a person validated.
+    const cost = (await readProductCosts(db, views.intel, views.views)).get(ids.paraffin)!.quotes[0];
+    expect(cost).toMatchObject({ quoteId: r.recordId, technicalConfirmed: true, cost: { perUnit: 1.46, missing: [] }, opportunity: { level: "validated" } });
+    const anchor = (await readNegotiations(db, undefined, [ids.paraffin])).get(ids.paraffin)!.anchors.find((a) => a.kind === "quote")!;
+    expect(anchor).toMatchObject({ dataClass: "real_quote", label: "Mock Wax Kimya A.Ş.", basis: "true_cost", value: 1.46, technicalConfirmed: true });
+    const option = (await readPortfolioScope(db, 10)).input.products.find((p) => p.id === ids.paraffin)!.options.find((o) => !o.current)!;
+    expect(option).toMatchObject({ name: "Mock Wax Kimya A.Ş.", evidence: "true_cost", unitCost: 1.46, level: "validated", known: false });
+
+    // Read, never copied: no quote, no supplier, no candidate was written, and the catalogue on file does not hold them.
+    expect(await counts()).toEqual(before);
+    expect(views.data.quotes).toEqual([]);
+    expect(views.data.suppliers.some((x) => replyCompanyIdOf(x.id))).toBe(false);
+  });
+
+  it("an offer leaves every comparison the instant it stops being comparable", async () => {
+    const [offer] = await readComparableOffers(db);
+    // No longer validated by a person…
+    await setOfferCompatibility(db, offer.offerId, { compatibility: "possible", note: "To be tested again" }, ME);
+    expect(await readComparableOffers(db)).toEqual([]);
+    expect(await row()).toBeNull();
+    await setOfferCompatibility(db, offer.offerId, { compatibility: "validated", note: "Sample tested in production, 02/04" }, ME);
+    expect(await row()).not.toBeNull();
+    // …past its date…
+    await db.update(schema.rfqOffers).set({ validUntil: "2020-01-01" }).where(eq(schema.rfqOffers.id, offer.offerId));
+    expect(await readComparableOffers(db)).toEqual([]);
+    expect(await row()).toBeNull();
+    await db.update(schema.rfqOffers).set({ validUntil: "2099-12-31" }).where(eq(schema.rfqOffers.id, offer.offerId));
+    // …or with its cost to the plant no longer whole.
+    await saveLanded(db, offer.offerId, { input: { duty: { amount: 0, per: "percent", status: "confirmed", source: "A.TR certificate", date: "2026-04-02" } } }, ME);
+    expect(await readComparableOffers(db)).toEqual([]);
+    await saveLanded(db, offer.offerId, { input: { duty: { amount: 0, per: "percent", status: "confirmed", source: "A.TR certificate", date: "2026-04-02" }, clearance: { amount: 0.01, per: "unit", currency: "EUR", status: "estimated", source: "forwarder", date: "2026-04-02" } } }, ME);
+    expect(await readComparableOffers(db)).toHaveLength(1);
+  });
+
+  it("offers short of comparable never cross: not the other grade, not the one in dollars with no rate", async () => {
+    const crossed = (await readComparableOffers(db)).map((o) => o.productName);
+    expect(crossed).toEqual(["MOCK SAME 58/60"]);
+    const p = (await readProductOffers(db, ids.paraffin))!;
+    expect(p.toVerify.length + p.otherGrades.length).toBeGreaterThan(0);
+  });
+});
+
 describe("who did what", () => {
   it("says a file's doing is the file's, a person's is the person's, an assistant's is the assistant's (TEST G)", async () => {
     const wax = await company("Mock Wax Kimya A.Ş.");
@@ -363,6 +433,80 @@ describe("documents and destinations", () => {
     await saveDestination(db, { id: second, isDefault: true }, ME);
     expect((await readSettings(db)).deliveryPlace).toBe("Otherville");
     await saveDestination(db, { id: town.id, isDefault: true }, ME);
+  });
+});
+
+describe("asking, checking, putting off", () => {
+  it("what to ask a company is written on the offer and on its conversation — and nothing is sent", async () => {
+    const wax = await company("Mock Wax Kimya A.Ş.");
+    const all = wax.threads.flatMap((th) => th.offers);
+    const hard = all.find((o) => o.productName === "MOCK HARD")!;
+    await expect(requestFromSupplier(db, hard.id, { kind: "information", what: "  " }, ME)).rejects.toThrow(/what to ask/);
+    await expect(requestFromSupplier(db, hard.id, { kind: "information", what: "Data sheet" }, ME)).rejects.toThrow(/which of your products/);
+    await requestFromSupplier(db, hard.id, { kind: "information", productId: ids.paraffin, what: "Data sheet with oil content", followUpOn: "2026-11-02" }, AI);
+    const page = (await readOffer(db, hard.id))!;
+    // Tied to the product and waiting for specifications: an association, not an equivalence.
+    expect(page.offer).toMatchObject({ productId: ids.paraffin, compatibility: "awaiting_specs", compatibilityNote: "Data sheet with oil content" });
+    expect(page.thread).toMatchObject({ nextAction: "Ask the company: Data sheet with oil content", followUpOn: "2026-11-02" });
+    expect(page.thread.missing).toContain("Data sheet with oil content");
+    expect((await readAudit(db, [{ entity: "rfq_thread", ids: [page.thread.id] }])).find((e) => e.field === "nextAction")).toMatchObject({ actorType: "ai" });
+    // An offer whose equivalence a person validated is not put back in doubt by a request.
+    const [validated] = await readComparableOffers(db);
+    await expect(requestFromSupplier(db, validated.offerId, { kind: "information", what: "Anything" }, ME)).rejects.toThrow(/was validated/);
+    // A price to renew changes nothing of what was said about the product.
+    await requestFromSupplier(db, validated.offerId, { kind: "price", what: "20,000 kg DAP Mocktown" }, ME);
+    expect((await readOffer(db, validated.offerId))!).toMatchObject({ offer: { compatibility: "validated" }, thread: { nextAction: "Ask for an updated price: 20,000 kg DAP Mocktown" } });
+    await unlinkOffer(db, hard.id, ME);
+  });
+
+  it("only a copy on file can be marked as checked, with who checked it and when", async () => {
+    const thread = (await company("Mock Wax Kimya A.Ş.")).threads[0];
+    const named = thread.documents.find((d) => !d.documentId && !d.url)!;
+    const stored = thread.documents.find((d) => d.documentId)!;
+    await expect(verifyReplyDocument(db, named.id, true, ME)).rejects.toThrow(/copy on file/);
+    await verifyReplyDocument(db, stored.id, true, ME);
+    expect((await company("Mock Wax Kimya A.Ş.")).threads[0].documents.find((d) => d.id === stored.id)).toMatchObject({ verifiedBy: "Mock User" });
+    await verifyReplyDocument(db, stored.id, false, ME);
+    expect((await company("Mock Wax Kimya A.Ş.")).threads[0].documents.find((d) => d.id === stored.id)).toMatchObject({ verifiedAt: null, verifiedBy: null });
+  });
+
+  it("a document says when it came, how, and which product it is about", async () => {
+    const [validated] = await readComparableOffers(db);
+    const thread = (await company("Mock Wax Kimya A.Ş.")).threads.find((th) => th.offers.some((o) => o.id === validated.offerId))!;
+    const id = await addReplyDocument(db, thread.id, { offerId: validated.offerId, kind: "certificate", name: "CoA mock.pdf", receivedOn: "2026-04-01", origin: "email", file: { name: "coa.pdf", bytes: new TextEncoder().encode("mock coa v1"), mimeType: "application/pdf" } }, ME);
+    // Another version of the same document is another file: both are kept.
+    const second = await addReplyDocument(db, thread.id, { offerId: validated.offerId, kind: "certificate", name: "CoA mock.pdf", receivedOn: "2026-05-01", origin: "made up", file: { name: "coa.pdf", bytes: new TextEncoder().encode("mock coa v2"), mimeType: "application/pdf" } }, ME);
+    expect(second).not.toBe(id);
+    const docs = (await company("Mock Wax Kimya A.Ş.")).threads.find((th) => th.id === thread.id)!.documents.filter((d) => d.kind === "certificate");
+    expect(docs.map((d) => [d.receivedOn, d.origin, d.productId, !!d.documentId])).toEqual([["2026-04-01", "email", ids.paraffin, true], ["2026-05-01", null, ids.paraffin, true]]);
+  });
+
+  it("a resemblance can be put off: it stays an open question, and the records stay as they are", async () => {
+    const hobby = await company("Mock Hobby Shop");
+    await decideCompanyLink(db, hobby.id, { where: "directory", id: ids.look }, "later", ME);
+    expect((await company("Mock Hobby Shop")).elsewhere).toMatchObject([{ where: "directory", certain: false, decided: "later" }]);
+    expect((await readDirectory(db, "plastic_candle_containers")).find((r) => r.id === ids.look)!.links).toMatchObject({ rfq: "none", replyId: null });
+    await decideCompanyLink(db, hobby.id, { where: "directory", id: ids.look }, null, ME);
+  });
+
+  it("a candidate and a supplier lead back to the company's answers, when they are the same company", async () => {
+    const pointers = await readReplyPointers(db);
+    const wicks = await company("Mock Wicks GmbH");
+    expect(pointers.candidates.get(candidateKey(ids.wick, "Mock Wicks"))).toMatchObject({ replyId: wicks.id, name: "Mock Wicks GmbH" });
+    expect(pointers.candidates.get(candidateKey(ids.paraffin, "Mock Wicks"))).toBeUndefined();
+    // Nobody among the suppliers on file answered: nothing points there.
+    expect(pointers.suppliers.size).toBe(0);
+  });
+
+  it("a request keeps the destination it named, whatever the company's destinations become", async () => {
+    const [candidate] = await db.select().from(schema.supplierCandidates);
+    await markRequestsSent(db, [{ supplierName: candidate.name, candidateIds: [candidate.id], productIds: [ids.wick], destination: "Otherville" }], "request", "2026-10-01");
+    const [town] = await readDestinations(db);
+    await saveDestination(db, { id: town.id, city: "Renamed Town" }, ME);
+    expect((await db.select().from(schema.rfqRequests)).map((r) => r.destination)).toEqual(["Otherville"]);
+    await saveDestination(db, { id: town.id, city: "Mocktown" }, ME);
+    await db.delete(schema.rfqRequests);
+    await db.update(schema.supplierCandidates).set({ status: candidate.status }).where(eq(schema.supplierCandidates.id, candidate.id));
   });
 });
 

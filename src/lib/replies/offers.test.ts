@@ -159,3 +159,20 @@ describe("privacy", () => {
     expect(publicOnly([offer(), offer({ id: "o2" })].map((o) => ({ ...o, dataClass: OFFER_DATA_CLASS })))).toEqual([]);
   });
 });
+describe("a cost to the plant that is not whole", () => {
+  const fob = { unitPrice: 1.2, currency: "USD", quantity: 20000, incoterm: "FOB", destination: "Mock Port" };
+  const ctx = { customs: true, destinationCity: "Mocktown" };
+  it("says what is known so far and what it leaves out — a partial figure, never a total", () => {
+    const l = landedCost(fob, { fx: { rate: 0.9, date: "2026-10-10", source: "Mock reference rate", status: "estimated" }, freight: { amount: 2000, per: "shipment", currency: "EUR", status: "estimated", source: "forwarder", date: "2026-10-10", note: null } }, ctx);
+    expect(l.complete).toBe(false);
+    expect(l.total).toBeNull();
+    expect(l.partial).toMatchObject({ includes: ["goods", "freight"], excludes: ["insurance", "duty", "clearance", "inland"] });
+    expect(l.partial!.perUnit).toBeCloseTo(1.18, 6);
+  });
+  it("has no partial figure without the goods in euro, and none once the cost is whole", () => {
+    expect(landedCost(fob, {}, ctx).partial).toBeNull();
+    const whole = landedCost({ unitPrice: 1.45, currency: "EUR", quantity: 20000, incoterm: "DAP", destination: "Mocktown" }, {}, { customs: false, destinationCity: "Mocktown" });
+    expect(whole).toMatchObject({ complete: true, partial: null });
+  });
+});
+

@@ -11,6 +11,7 @@
  * stated is not a quote on one of the buyer's products, and neither becomes
  * one by itself. Nothing is sent, and nothing leaves the account.
  */
+import type { BridgeOffer } from "@/lib/replies/bridge";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
@@ -28,7 +29,7 @@ import { groupOf, lineKey, offerState, shortfallsOf, supersededIds, type OfferGr
 import { elsewhereOf, planReplies, type CompanyDecision, type Elsewhere, type Records, type ReplyPlan, type StoredCompany } from "@/lib/replies/plan";
 import { parseReplyFile } from "@/lib/replies/read";
 import {
-  COMPANY_FIELDS, THREAD_FIELDS, isCompatibility, isDocumentKind, isMessageKind, isReplyStatus,
+  COMPANY_FIELDS, THREAD_FIELDS, isCompatibility, isDocumentKind, isDocumentOrigin, isMessageKind, isReplyStatus,
   type Actor, type CompanyField, type Compatibility, type DocumentKind, type MessageKind, type ReplyCompany, type ReplyDocument, type ReplyMessage, type ReplyOffer, type ReplyStatus, type ReplyThread, type ThreadField,
 } from "@/lib/replies/types";
 import { crossesCustoms } from "@/lib/sourcing/regions";
@@ -102,7 +103,10 @@ const toMessage = (r: typeof rfqMessages.$inferSelect): ReplyMessage => ({
   summary: r.summary, reference: r.reference, attachments: r.attachments, source: r.source === "manual" || r.source === "assistant" ? r.source : "file",
 });
 
-const toDocument = (r: typeof rfqDocuments.$inferSelect): ReplyDocument => ({ id: r.id, threadId: r.threadId, offerId: r.offerId, kind: isDocumentKind(r.kind) ? r.kind : "other", name: r.name, url: r.url, documentId: r.documentId, note: r.note });
+const toDocument = (r: typeof rfqDocuments.$inferSelect): ReplyDocument => ({
+  id: r.id, threadId: r.threadId, offerId: r.offerId, kind: isDocumentKind(r.kind) ? r.kind : "other", name: r.name, url: r.url, documentId: r.documentId, productId: r.productId, receivedOn: r.receivedOn,
+  origin: isDocumentOrigin(r.origin) ? r.origin : null, verifiedAt: r.verifiedAt?.toISOString() ?? null, verifiedBy: r.verifiedBy, note: r.note,
+});
 
 async function readThreads(db: DB): Promise<ReplyThread[]> {
   const [threads, offers, messages, docs] = await Promise.all([
@@ -150,7 +154,7 @@ async function readDecisions(db: DB): Promise<Map<string, CompanyDecision[]>> {
   const out = new Map<string, CompanyDecision[]>();
   for (const r of await db.select().from(companyLinks).where(eq(companyLinks.aKind, "reply"))) {
     if (r.bKind !== "supplier" && r.bKind !== "candidate" && r.bKind !== "directory") continue;
-    if (r.relation !== "same" && r.relation !== "group" && r.relation !== "different") continue;
+    if (r.relation !== "same" && r.relation !== "group" && r.relation !== "different" && r.relation !== "later") continue;
     out.set(r.aId, [...(out.get(r.aId) ?? []), { where: r.bKind, id: r.bId, relation: r.relation }]);
   }
   return out;
@@ -486,7 +490,7 @@ export async function saveLanded(db: DB, offerId: string, v: { input: unknown; d
  * here is a copy on file — a link to a message is a way to it while the
  * message is there. The same file uploaded twice is one document.
  */
-export async function addReplyDocument(db: DB, threadId: string, v: { offerId?: string | null; kind: DocumentKind; name: string; url?: string | null; note?: string | null; file?: { name: string; bytes: Uint8Array; mimeType: string | null } | null }, actor: Actor, t: T = en): Promise<string> {
+export async function addReplyDocument(db: DB, threadId: string, v: { offerId?: string | null; productId?: string | null; receivedOn?: string | null; origin?: string | null; kind: DocumentKind; name: string; url?: string | null; note?: string | null; file?: { name: string; bytes: Uint8Array; mimeType: string | null } | null }, actor: Actor, t: T = en): Promise<string> {
   const [thread] = await db.select({ id: rfqThreads.id }).from(rfqThreads).where(eq(rfqThreads.id, threadId));
   if (!thread) throw new ReplyError(t("This conversation is no longer on file."));
   const name = clean(v.name) ?? clean(v.file?.name);
@@ -507,7 +511,13 @@ export async function addReplyDocument(db: DB, threadId: string, v: { offerId?: 
     if (same) return same.id;
   }
   return db.transaction(async (tx) => {
-    const [row] = await tx.insert(rfqDocuments).values({ threadId, offerId: v.offerId ?? null, kind: v.kind, name, url, documentId, note: clean(v.note) }).returning({ id: rfqDocuments.id });
+    // A document of an offer is about the product the offer is tied to, unless another one is said.
+    const tied = v.offerId ? (await tx.select({ productId: rfqOffers.productId }).from(rfqOffers).where(eq(rfqOffers.id, v.offerId)))[0]?.productId ?? null : null;
+    const receivedOn = /^\d{4}-\d{2}-\d{2}$/.test(v.receivedOn ?? "") ? v.receivedOn! : null;
+    const [row] = await tx
+      .insert(rfqDocuments)
+      .values({ threadId, offerId: v.offerId ?? null, productId: v.productId ?? tied, receivedOn, origin: isDocumentOrigin(v.origin) ? v.origin : null, kind: v.kind, name, url, documentId, note: clean(v.note) })
+      .returning({ id: rfqDocuments.id });
     await logEvents(tx as unknown as DB, actor, [{ action: "add_document", entity: "rfq_thread", entityId: threadId, field: v.kind, newValue: name, note: documentId ? "copy on file" : url ? "link only" : "named only", source: "ui" }]);
     return row.id;
   });
@@ -542,6 +552,79 @@ export async function decideCompanyLink(db: DB, replyId: string, other: { where:
     await logEvents(tx as unknown as DB, actor, [{ action: "company_link", entity: "rfq_supplier", entityId: replyId, field: `${other.where}:${other.id}`, oldValue: before?.relation ?? null, newValue: relation, source: "ui" }]);
   });
 }
+
+/** A person checked a document — the right company, the right article, the right version — or takes the check back. Who and when are kept. */
+export async function verifyReplyDocument(db: DB, id: string, verified: boolean, actor: Actor, t: T = en): Promise<void> {
+  const [row] = await db.select().from(rfqDocuments).where(eq(rfqDocuments.id, id));
+  if (!row) throw new ReplyError(t("This document is no longer on file."));
+  // A name or a link is not the document: there is nothing to check until a copy is on file.
+  if (verified && !row.documentId) throw new ReplyError(t("Only a document with a copy on file can be marked as checked: a name or a link is not the document."));
+  if (verified === (row.verifiedAt != null)) return;
+  await db.transaction(async (tx) => {
+    await tx.update(rfqDocuments).set({ verifiedAt: verified ? new Date() : null, verifiedBy: verified ? actor.id : null }).where(eq(rfqDocuments.id, id));
+    await logEvents(tx as unknown as DB, actor, [{ action: verified ? "verify_document" : "unverify_document", entity: "rfq_thread", entityId: row.threadId, field: row.kind, newValue: row.name, source: "ui" }]);
+  });
+}
+
+/**
+ * Something is to be asked of the company before the offer can go further:
+ * more information to judge whether it is the product (the offer is then tied
+ * to that product as "awaiting specifications", with what is needed as the
+ * reason), or a price that is still valid. What to ask is written on the
+ * conversation — what is missing, the next action, when to come back to it.
+ * Nothing is sent: the person writes to the company themselves.
+ */
+export async function requestFromSupplier(db: DB, offerId: string, v: { kind: "information" | "price"; productId?: string | null; what: string; followUpOn?: string | null }, actor: Actor, t: T = en): Promise<void> {
+  const row = await offerRow(db, offerId, t);
+  const what = clean(v.what);
+  if (!what) throw new ReplyError(t("Say what to ask."));
+  const followUpOn = /^\d{4}-\d{2}-\d{2}$/.test(v.followUpOn ?? "") ? v.followUpOn! : null;
+  const productId = v.kind === "information" ? (v.productId ?? row.productId) : null;
+  if (v.kind === "information" && !productId) throw new ReplyError(t("Say for which of your products the information is needed."));
+  if (v.kind === "information" && row.compatibility === "validated") throw new ReplyError(t("This offer's equivalence was validated: change that first, with the reason, if it is in doubt again."));
+  const [thread] = await db.select().from(rfqThreads).where(eq(rfqThreads.id, row.threadId));
+  if (productId && productId !== row.productId) await linkOffer(db, offerId, productId, { compatibility: "awaiting_specs", note: what }, actor, t);
+  else if (productId) await setOfferCompatibility(db, offerId, { compatibility: "awaiting_specs", note: what }, actor, t);
+  const missing = thread.missing?.includes(what) ? thread.missing : [thread.missing, what].filter(Boolean).join("\n");
+  const nextAction = v.kind === "price" ? t("Ask for an updated price: {what}", { what }) : t("Ask the company: {what}", { what });
+  await db.transaction(async (tx) => {
+    await tx.update(rfqThreads).set({ missing, nextAction, followUpOn: followUpOn ?? thread.followUpOn, confirmed: [...new Set([...(thread.confirmed ?? []), "missing", "nextAction"])], updatedAt: new Date() }).where(eq(rfqThreads.id, thread.id));
+    await logEvents(tx as unknown as DB, actor, [
+      { action: "update", entity: "rfq_thread", entityId: thread.id, field: "nextAction", oldValue: thread.nextAction, newValue: nextAction, source: "ui", note: `offer ${offerId}` },
+      ...(followUpOn && followUpOn !== thread.followUpOn ? [{ action: "update", entity: "rfq_thread", entityId: thread.id, field: "followUpOn", oldValue: thread.followUpOn, newValue: followUpOn, source: "ui" }] : []),
+    ]);
+  });
+}
+
+/** Where a company of the buyer's other records leads back to: its reply card. */
+export interface ReplyPointer {
+  replyId: string;
+  name: string;
+  offers: number;
+}
+
+/**
+ * The way back from a supplier or a candidate to the company's answers, when
+ * they are the same company — by what identifies it, or because a person said
+ * so. Derived each time from the replies: nothing is stored on either record.
+ */
+export async function readReplyPointers(db: DB, t: T = en): Promise<{ suppliers: Map<string, ReplyPointer[]>; candidates: Map<string, ReplyPointer> }> {
+  const suppliersOut = new Map<string, ReplyPointer[]>();
+  const candidatesOut = new Map<string, ReplyPointer>();
+  for (const company of await readReplies(db, t)) {
+    const pointer: ReplyPointer = { replyId: company.id, name: company.name, offers: company.threads.reduce((n, th) => n + th.offers.length, 0) };
+    for (const e of company.elsewhere) {
+      if (!(e.decided === "same" || (e.certain && e.decided == null))) continue;
+      if (e.where === "supplier") suppliersOut.set(e.id, [...(suppliersOut.get(e.id) ?? []), pointer]);
+      // A candidate is a company proposed for a product: the same company on two products is two candidates.
+      if (e.where === "candidate") for (const p of e.products) candidatesOut.set(candidateKey(p.id, e.name), pointer);
+    }
+  }
+  return { suppliers: suppliersOut, candidates: candidatesOut };
+}
+
+/** How a candidate is looked up among the pointers: its product and its company's name, however a document wrote it. */
+export const candidateKey = (productId: string, name: string) => `${productId}|${companyKey(name)}`;
 
 // ---------------- What the offers mean for a product ----------------
 
@@ -661,6 +744,46 @@ export async function readProductOffers(db: DB, productId: string, t: T = en): P
       if (thread.offers.length && !candidate) continue;
       if (thread.status === "not_suitable") out.notSuitable += 1;
       else out.awaitingPrice.push({ company: { id: company.id, name: company.name, country: company.country }, thread: { id: thread.id, status: thread.status, nextAction: thread.nextAction, followUpOn: thread.followUpOn, missing: thread.missing, categories: thread.categories }, basis: candidate ? "candidate" : "category" });
+    }
+  }
+  return out;
+}
+
+/**
+ * The offers that passed every check, for the analysis to read as quotes
+ * (lib/replies/bridge.ts). Worked out each time from the offers themselves:
+ * nothing is stored, so an offer that expires or loses its validation is no
+ * longer here the next time anything is read.
+ */
+export async function readComparableOffers(db: DB, t: T = en): Promise<BridgeOffer[]> {
+  const w = await readWorld(db, t);
+  const out: BridgeOffer[] = [];
+  for (const company of w.companies) {
+    // The supplier on file this company is: by what identifies it, or because a person said they are one company.
+    const same = company.elsewhere.find((e) => e.where === "supplier" && (e.decided === "same" || (e.certain && e.decided == null)));
+    for (const thread of company.threads) {
+      const superseded = supersededIds(thread.offers);
+      for (const offer of thread.offers) {
+        const product = offer.productId ? w.products.find((p) => p.id === offer.productId) : null;
+        if (!product) continue;
+        const view = viewOf(w, company, thread, offer, product, superseded, t);
+        if (!view || view.group !== "comparable" || view.landed.total == null) continue;
+        out.push({
+          offerId: offer.id,
+          productId: product.id,
+          company: { id: company.id, name: company.name, country: company.country, email: company.email, website: company.website },
+          supplierId: same?.id ?? null,
+          productName: [offer.productName, offer.grade].filter(Boolean).join(" "),
+          landedPerUnit: view.landed.total,
+          estimated: view.landed.estimated,
+          date: view.receivedOn ?? offer.createdAt.slice(0, 10),
+          validUntil: offer.validUntil,
+          quantity: offer.quantity,
+          moq: offer.moq,
+          paymentTerms: offer.paymentTerms,
+          quoted: `${offer.unitPrice} ${offer.currency}/${offer.unit}${offer.incoterm ? ` ${offer.incoterm}` : ""}${offer.destination ? ` ${offer.destination}` : ""}`,
+        });
+      }
     }
   }
   return out;

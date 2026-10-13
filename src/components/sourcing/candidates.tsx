@@ -46,6 +46,8 @@ export interface CandidateVM {
   minimumOrder: string | null;
   /** The supplier on file it became. */
   supplierId: string | null;
+  /** Its reply card, when the company answered a request for quotation. Null: no answer on file. */
+  replyId?: string | null;
   /** Where it stands before anyone is contacted, and why. */
   stage: FunnelStage;
   stageReason: string;
@@ -193,6 +195,11 @@ export function CandidateBoard({
                   <div className="min-w-[200px] flex-1">
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                       <span className="text-[14.5px] font-semibold">{c.name}</span>
+                      {c.replyId && (
+                        <Link href={`/sourcing/replies/${c.replyId}`} className="text-[12.5px] font-medium text-ledger hover:underline">
+                          {t("answered a request: open the reply")}
+                        </Link>
+                      )}
                       <StagePill stage={c.stage} />
                       <span className={cx("text-[12px] font-medium", c.contactValue === "high" ? "text-down" : "text-ink-3")}>{t(CONTACT_VALUE_LABEL[c.contactValue])}</span>
                     </div>

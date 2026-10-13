@@ -1,3 +1,5 @@
+import { candidateKey, readReplyPointers } from "@/server/replies";
+import { readDestinations } from "@/server/destinations";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
@@ -50,6 +52,8 @@ export async function generateMetadata({ params }: PageProps<"/sourcing/[id]">):
 export default async function ProductSourcingPage({ params }: PageProps<"/sourcing/[id]">) {
   const { id } = await params;
   const [{ views, requests }, data, settings, research, intel, t] = await Promise.all([getMarketViews(), getDataset(), getSettings(), getResearch(), getIntel(), getT()]);
+  // The destinations a request can name besides the default one.
+  const places = (await readDestinations(await getDb())).map((d) => (d.province ? `${d.city} (${d.province})` : d.city));
   const v = views.get(id);
   const product = data.products.find((p) => p.id === id);
   if (!v || !product) notFound();
@@ -80,6 +84,7 @@ export default async function ProductSourcingPage({ params }: PageProps<"/sourci
   const costs = (await readProductCosts(db, intel, views, t)).get(id) ?? null;
   const negotiation = (await getNegotiations([id])).get(id) ?? null;
   const ranked = new Map(v.candidates.map((r) => [r.candidate.id, r]));
+  const pointers = await readReplyPointers(await getDb(), t);
   const candidates: CandidateVM[] = v.screening.all.map((x) => {
     const c = x.candidate;
     const r = ranked.get(c.id)!;
@@ -88,6 +93,7 @@ export default async function ProductSourcingPage({ params }: PageProps<"/sourci
     return {
       id: c.id,
       name: c.name,
+      replyId: pointers.candidates.get(candidateKey(id, c.name))?.replyId ?? null,
       country: c.country ? countryName(c.country, t.locale) : null,
       flag: flagOf(c.country),
       website: c.website,
@@ -368,7 +374,7 @@ export default async function ProductSourcingPage({ params }: PageProps<"/sourci
             candidates={candidates}
             counts={v.screening.counts}
             line={line}
-            context={{ deliveryCountry: home, deliveryPlace: settings.deliveryPlace, companyName: settings.companyName, userName: settings.userName }}
+            context={{ deliveryCountry: home, deliveryPlace: settings.deliveryPlace, places, companyName: settings.companyName, userName: settings.userName }}
             language={t.locale}
             firstRound={v.materiality === "focus"}
             readiness={spec.readiness}

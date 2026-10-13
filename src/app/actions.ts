@@ -47,10 +47,11 @@ import { keepEstimateHistory, saveJudgement } from "@/server/negotiation";
 import { SupplierMergeError, autoMergeSuppliers, canonicalSupplierId, keepSuppliersResolved, keepSuppliersSeparate, matchOf, mergeSuppliers, undoSupplierMerge } from "@/server/suppliers";
 import { isVariantBy } from "@/lib/catalog/macro";
 import {
-  ReplyError, addReplyDocument, checkReplies, decideCompanyLink, decideOffer, declineSuggestion, importReplies, keepReplyFile, linkOffer, listReplyFiles, readReplyFile, removeReplyDocument, saveLanded,
-  setOfferCompatibility, unlinkOffer, updateReplyCompany, updateReplyThread, type ThreadUpdate,
+  ReplyError, addReplyDocument, checkReplies, decideCompanyLink, decideOffer, declineSuggestion, importReplies, keepReplyFile, linkOffer, listReplyFiles, readReplyFile, removeReplyDocument, requestFromSupplier, saveLanded,
+  setOfferCompatibility, unlinkOffer, updateReplyCompany, updateReplyThread, verifyReplyDocument, type ThreadUpdate,
 } from "@/server/replies";
 import { AuditError, correctAttribution } from "@/server/audit";
+import { referenceRate } from "@/server/fx";
 import { DestinationError, removeDestination, saveDestination, type DestinationField } from "@/server/destinations";
 import { summarise, type PlanSummary } from "@/lib/replies/plan";
 import { isActorType, isCompatibility, isDocumentKind, type Actor, type CompanyField } from "@/lib/replies/types";
@@ -637,7 +638,7 @@ export async function deleteBenchmarkAction(id: string): Promise<SourcingResult>
 }
 
 /** The user says these requests were sent: who was asked, for what, when. Nothing is sent by the app. */
-export async function markRequestsSentAction(items: { supplierName: string; candidateIds: string[]; productIds: string[]; kind: string }[]): Promise<SourcingResult> {
+export async function markRequestsSentAction(items: { supplierName: string; candidateIds: string[]; productIds: string[]; kind: string; destination?: string | null }[]): Promise<SourcingResult> {
   const t = await getT();
   try {
     const db = await getDb();
@@ -1341,7 +1342,7 @@ export async function addReplyDocumentAction(form: FormData): Promise<SimpleResu
     const file = form.get("file");
     const upload = file instanceof File && file.size > 0 ? { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()), mimeType: file.type || null } : null;
     if (upload && upload.bytes.length > 20 * 1024 * 1024) throw new ReplyError(t("The file is larger than 20 MB."));
-    await addReplyDocument(db, threadId, { offerId: String(form.get("offerId") ?? "") || null, kind: isDocumentKind(kind) ? kind : "other", name: String(form.get("name") ?? ""), url: String(form.get("url") ?? "") || null, note: String(form.get("note") ?? "") || null, file: upload }, actor, t);
+    await addReplyDocument(db, threadId, { offerId: String(form.get("offerId") ?? "") || null, receivedOn: String(form.get("receivedOn") ?? "") || null, origin: String(form.get("origin") ?? "") || null, kind: isDocumentKind(kind) ? kind : "other", name: String(form.get("name") ?? ""), url: String(form.get("url") ?? "") || null, note: String(form.get("note") ?? "") || null, file: upload }, actor, t);
   });
 }
 
@@ -1349,11 +1350,33 @@ export async function removeReplyDocumentAction(id: string): Promise<SimpleResul
   return reply((db, actor) => removeReplyDocument(db, id, actor));
 }
 
+/** A person checked a document of a conversation, or takes the check back. */
+export async function verifyReplyDocumentAction(id: string, verified: boolean): Promise<SimpleResult> {
+  return reply((db, actor, t) => verifyReplyDocument(db, id, verified, actor, t));
+}
+
+/** What to ask the company about an offer — more information, or a price still valid — is written down. Nothing is sent. */
+export async function requestFromSupplierAction(offerId: string, v: { kind: "information" | "price"; productId?: string | null; what: string; followUpOn?: string | null }): Promise<SimpleResult> {
+  return reply((db, actor, t) => requestFromSupplier(db, offerId, { kind: v.kind === "price" ? "price" : "information", productId: v.productId ?? null, what: String(v.what ?? ""), followUpOn: v.followUpOn ?? null }, actor, t));
+}
+
+/**
+ * The official reference rate of a currency on a day, to be checked and kept
+ * by the person: it is offered, never stored by this call. Null rate: no
+ * source has one — nothing is made up in its place.
+ */
+export async function referenceRateAction(currency: string, date: string): Promise<{ ok: boolean; error?: string; rate?: number; date?: string; source?: string }> {
+  const t = await getT();
+  const found = await referenceRate(String(currency ?? ""), String(date ?? ""));
+  if (!found) return { ok: false, error: t("No official reference rate was found for {currency} on that day: enter the rate yourself, with its source and date.", { currency: String(currency ?? "").toUpperCase() }) };
+  return { ok: true, rate: found.eurPerUnit, date: found.date, source: found.source };
+}
+
 /** What a record of another part of the app is to this company: the same, of the same group, another — or undecided again. */
 export async function decideCompanyLinkAction(replyId: string, where: string, id: string, relation: string | null): Promise<SimpleResult> {
   return reply(async (db, actor, t) => {
     if (where !== "supplier" && where !== "candidate" && where !== "directory") throw new ReplyError(t("Something went wrong."));
-    if (relation !== null && relation !== "same" && relation !== "group" && relation !== "different") throw new ReplyError(t("Something went wrong."));
+    if (relation !== null && relation !== "same" && relation !== "group" && relation !== "different" && relation !== "later") throw new ReplyError(t("Something went wrong."));
     await decideCompanyLink(db, replyId, { where, id }, relation, actor, t);
   });
 }

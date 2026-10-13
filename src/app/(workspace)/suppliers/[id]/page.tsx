@@ -1,3 +1,5 @@
+import { readReplyPointers } from "@/server/replies";
+import { replyCompanyIdOf } from "@/lib/replies/bridge";
 import { ChannelSection } from "@/components/orders/sections";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
@@ -30,6 +32,9 @@ export default async function SupplierPage({ params }: PageProps<"/suppliers/[id
   const { id } = await params;
   const [data, learning, intel, spend, t] = await Promise.all([getDataset(), getLearning(), getIntel(), getSpend(), getT()]);
   const otherSpend = spend.items.filter((i) => i.supplierIds.includes(id));
+  // A company that answered a request is carried into the comparisons as itself: its page is its reply card.
+  const replyCompany = replyCompanyIdOf(decodeURIComponent(id));
+  if (replyCompany) redirect(`/sourcing/replies/${replyCompany}`);
   const supplier = data.suppliers.find((s) => s.id === id);
   const si = intel.suppliers.find((s) => s.supplier.id === id);
   const db = await getDb();
@@ -70,6 +75,9 @@ export default async function SupplierPage({ params }: PageProps<"/suppliers/[id
     .filter((r) => r.product)
     .sort((a, b) => a.product.name.localeCompare(b.product.name));
 
+  // The way to the company's answers to requests for quotation, when it is the same company.
+  const answered = (await readReplyPointers(await getDb(), t)).suppliers.get(supplier.id) ?? [];
+
   return (
     <>
       <Remember kind="supplier" id={supplier.id} title={supplier.name} />
@@ -107,6 +115,21 @@ export default async function SupplierPage({ params }: PageProps<"/suppliers/[id
         />
         <Figure label={t("Orders")} value={String(stats.ordersLast12m)} note={stats.averageOrderValue != null ? t("{amount} on average", { amount: f.money(Math.round(stats.averageOrderValue)) }) : t("in the last 12 months")} />
       </section>
+
+      {answered.length > 0 && (
+        <p className="mb-6 rounded-lg border border-rule bg-well px-4 py-3 text-[13.5px] text-ink-2">
+          {t("This company also answered a request for quotation")}:{" "}
+          {answered.map((a, i) => (
+            <span key={a.replyId}>
+              {i > 0 && ", "}
+              <Link href={`/sourcing/replies/${a.replyId}`} className="font-medium text-ledger hover:underline">
+                {a.name}
+              </Link>{" "}
+              <span className="text-ink-3">({t.n(a.offers, "{n} price stated", "{n} prices stated")})</span>
+            </span>
+          ))}
+        </p>
+      )}
 
       <ChannelSection className="mb-6" record={{ kind: "supplier", id: supplier.id }} defaultEmail={supplier.email} products={data.products.map((p) => ({ id: p.id, name: p.name }))} />
 

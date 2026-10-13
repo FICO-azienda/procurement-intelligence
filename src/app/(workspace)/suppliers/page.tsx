@@ -1,3 +1,4 @@
+import { replyCompanyIdOf } from "@/lib/replies/bridge";
 import Link from "next/link";
 import type { Metadata } from "next";
 import { SupplierDialog } from "@/components/dialogs";
@@ -20,7 +21,8 @@ export async function generateMetadata(): Promise<Metadata> {
 export default async function SuppliersPage() {
   const [data, intel, spend, t] = await Promise.all([getDataset(), getIntel(), getSpend(), getT()]);
   const EXPLAIN = explain(t);
-  const rows = [...intel.suppliers].sort((a, b) => b.metrics.annualSpend - a.metrics.annualSpend || a.supplier.name.localeCompare(b.supplier.name));
+  // A company that answered a request and whose offer is being compared is not a supplier: it is listed with the replies.
+  const rows = intel.suppliers.filter((x) => replyCompanyIdOf(x.supplier.id) == null).sort((a, b) => b.metrics.annualSpend - a.metrics.annualSpend || a.supplier.name.localeCompare(b.supplier.name));
   // Records that may be the same company under two names: for the user to merge or keep apart.
   const resolution = await readResolution(await getDb(), t);
   const record = (id: string) => {

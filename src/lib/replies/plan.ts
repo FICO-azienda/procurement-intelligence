@@ -73,15 +73,15 @@ export interface Elsewhere {
   why: string;
   products: { id: string; name: string }[];
   market: string | null;
-  /** What a person decided about the two: one company, two companies of one group, or two companies. Null: nobody said. */
-  decided: "same" | "group" | "different" | null;
+  /** What a person decided about the two: one company, two companies of one group, two companies — or that it is to be decided later, which leaves it open. Null: nobody said. */
+  decided: "same" | "group" | "different" | "later" | null;
 }
 
 /** A person's decision about a record of another part of the app and this company. */
 export interface CompanyDecision {
   where: Elsewhere["where"];
   id: string;
-  relation: "same" | "group" | "different";
+  relation: "same" | "group" | "different" | "later";
 }
 
 export interface FieldChange {
@@ -184,7 +184,10 @@ export function elsewhereOf(company: Known, records: Pick<Records, "suppliers" |
       // What a person said about the two comes first: it makes a resemblance sure, or sets it aside for good.
       const decided = decisions.find((d) => d.where === where && d.id === r.id)?.relation ?? null;
       const same = sameCompanyAs(company, r, t);
-      if (decided) out.push({ where, id: r.id, name: r.name, certain: decided === "same", why: same?.why ?? "", decided, ...more(r) });
+      // Put off: still a resemblance nobody settled — it stays listed as one, with the note that it was looked at.
+      if (decided === "later") {
+        if (same) out.push({ where, id: r.id, name: r.name, ...same, certain: false, decided, ...more(r) });
+      } else if (decided) out.push({ where, id: r.id, name: r.name, certain: decided === "same", why: same?.why ?? "", decided, ...more(r) });
       else if (same) out.push({ where, id: r.id, name: r.name, ...same, decided: null, ...more(r) });
     }
   };

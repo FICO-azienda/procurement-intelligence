@@ -78,7 +78,9 @@ export function estimateSaving(row: ComparisonRow, ctx: SavingContext, cfg: Inte
   factors.push(
     row.specDifferences.length
       ? { key: "specs", label: t("Specifications"), state: "caution", detail: t.n(row.specDifferences.length, "{n} difference: {names}", "{n} differences: {names}", { names: row.specDifferences.map((d) => d.name).join(", ") }) }
-      : row.specsKnown
+      : row.validated
+        ? { key: "specs", label: t("Specifications"), state: "ok", detail: t("Equivalence validated by a person") }
+        : row.specsKnown
         ? { key: "specs", label: t("Specifications"), state: "ok", detail: t("Recorded specifications match") }
         : { key: "specs", label: t("Specifications"), state: cfg.requireSpecsForHighConfidence ? "caution" : "ok", detail: t("Not compared — no specifications recorded for this offer") },
   );
@@ -133,14 +135,16 @@ export const DELIVERED_INCOTERMS = new Set(["DAP", "DPU", "DDP"]);
 export function missingInformation(row: ComparisonRow, current: ComparisonRow | null, t: T = en): string[] {
   const out: string[] = [];
   if (row.fxRequired) out.push(t("FX conversion required ({currency})", { currency: row.currency }));
-  if (row.freightCost == null) {
+  if (row.landed) {
+    // A cost worked out to the plant: transport, duties and clearance are in it, each stated with its source.
+  } else if (row.freightCost == null) {
     if (row.incoterm && DELIVERED_INCOTERMS.has(row.incoterm)) out.push(t("Freight should be included (Incoterm {incoterm}) — to be confirmed", { incoterm: row.incoterm }));
     else out.push(row.incoterm ? t("Freight unknown (Incoterm {incoterm}: transport not fully included)", { incoterm: row.incoterm }) : t("Freight unknown"));
   }
-  if (!row.supplier.country || !current?.supplier.country || countryKey(row.supplier.country) !== countryKey(current.supplier.country)) {
+  if (!row.landed && (!row.supplier.country || !current?.supplier.country || countryKey(row.supplier.country) !== countryKey(current.supplier.country))) {
     out.push(t("Duties and customs not assessed"));
   }
-  if (!row.specsKnown) out.push(t("Specifications not compared"));
+  if (!row.specsKnown && !row.validated) out.push(t("Specifications not compared"));
   out.push(t("Quality comparison missing"));
   if (row.moq == null) out.push(t("MOQ unknown"));
   if (row.leadTimeDays == null) out.push(t("Lead time unknown"));

@@ -120,6 +120,10 @@ export interface QuoteData {
   source: string;
   sourceDoc: SourceDoc | null;
   notes: string | null;
+  /** The price is the whole cost to the plant — transport, duties and clearance are in it: nothing is to be added, and nothing of the kind is "not assessed". */
+  landed?: boolean;
+  /** A person validated that it is technically the product bought: its specification is not "not compared". */
+  validated?: boolean;
 }
 
 export interface Dataset {

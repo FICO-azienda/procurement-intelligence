@@ -249,7 +249,8 @@ describe("the company's own name on a document", () => {
     await copy.insert(schema.settings).values({ id: 1, companyName: "Candele Verdi Srl" });
     await clearAll(copy);
     expect((await readSettings(copy)).companyName).toBe("Candele Verdi Srl");
-  });
+    // A second database is migrated from scratch inside this test: with every migration added it takes longer than the default allows on a busy machine.
+  }, 30_000);
 });
 
 describe("a first import: mostly new names", () => {

@@ -65,6 +65,10 @@ export interface ComparisonRow {
   /** The user decided the comparability. */
   overridden: boolean;
   specsKnown: boolean;
+  /** The price is a whole cost to the plant (an offer read from the replies, with its landed cost complete): transport and import costs are in it. */
+  landed: boolean;
+  /** A person validated that the offer is technically the product. */
+  validated: boolean;
   specDifferences: SpecDifference[];
   /** Lowest EUR price among suppliers other than the current one, and below it. */
   isLowest: boolean;
@@ -212,6 +216,8 @@ export function compareSuppliers(input: ComparisonInput, cfg: IntelConfig = INTE
       comparabilityReasons: reasons,
       overridden,
       specsKnown,
+      landed: useQuote && quote?.landed === true,
+      validated: useQuote && quote?.validated === true,
       specDifferences: diffs,
       isLowest: false,
       source: record?.source ?? null,

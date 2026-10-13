@@ -3,13 +3,13 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition, type ReactNode } from "react";
 import {
-  addReplyDocumentAction, correctAttributionAction, decideCompanyLinkAction, decideOfferAction, declineSuggestionAction, linkOfferAction, removeDestinationAction, removeReplyDocumentAction, saveDestinationAction,
-  saveLandedAction, setOfferCompatibilityAction, unlinkOfferAction, type SimpleResult,
+  addReplyDocumentAction, correctAttributionAction, decideCompanyLinkAction, decideOfferAction, declineSuggestionAction, linkOfferAction, referenceRateAction, removeDestinationAction, removeReplyDocumentAction,
+  requestFromSupplierAction, saveDestinationAction, saveLandedAction, setOfferCompatibilityAction, unlinkOfferAction, verifyReplyDocumentAction, type SimpleResult,
 } from "@/app/actions";
 import type { CategoryTree, Selection } from "@/lib/catalog/tree";
 import { useT } from "@/lib/i18n/client";
 import { INPUT_KEYS, LANDED_LABEL, type CostEntry, type InputKey, type LandedInput } from "@/lib/replies/landed";
-import { ACTORS, ACTOR_LABEL, COMPATIBILITIES, COMPATIBILITY_LABEL, DOCUMENT_KINDS, DOCUMENT_KIND_LABEL, type ActorType, type Compatibility } from "@/lib/replies/types";
+import { ACTORS, ACTOR_LABEL, COMPATIBILITIES, COMPATIBILITY_LABEL, DOCUMENT_KINDS, DOCUMENT_KIND_LABEL, DOCUMENT_ORIGINS, DOCUMENT_ORIGIN_LABEL, type ActorType, type Compatibility } from "@/lib/replies/types";
 import type { Destination, DestinationField } from "@/server/destinations";
 import { ProductCategoryPicker } from "../catalog/category-picker";
 import { Field, Input, Select, Textarea } from "../form-kit";
@@ -46,19 +46,60 @@ function useRun() {
 }
 
 /** A proposal of the app: confirm that the offer is an alternative to verify for the product, or say it is not for it. */
+/**
+ * The three answers to a product the app proposes for an offer. Associating
+ * the two is not saying they are equivalent: the technical compatibility is
+ * kept apart, and stays "to verify" until a person says more, with the reason.
+ */
 export function SuggestionButtons({ offerId, productId, compatibility, reasons }: { offerId: string; productId: string; compatibility: Compatibility; reasons: string[] }) {
   const t = useT();
   const { busy, run, status } = useRun();
+  const [asking, setAsking] = useState(false);
   return (
-    <span className="flex flex-wrap items-center gap-2">
-      <button type="button" className={buttonClass("secondary", "sm")} disabled={busy} onClick={() => run(() => linkOfferAction(offerId, productId, { compatibility, note: reasons.join(" ") }))}>
-        {t("Confirm as an alternative to verify")}
-      </button>
-      <button type="button" className={buttonClass("ghost", "sm")} disabled={busy} onClick={() => run(() => declineSuggestionAction(offerId, productId))}>
-        {t("Not for this product")}
-      </button>
-      {status}
-    </span>
+    <div className="flex flex-col gap-3">
+      <span className="flex flex-wrap items-center gap-2">
+        <button type="button" className={buttonClass("primary", "sm")} disabled={busy} onClick={() => run(() => linkOfferAction(offerId, productId, { compatibility, note: reasons.join(" ") }))}>
+          {t("Associate as a possible alternative")}
+        </button>
+        <button type="button" className={buttonClass("secondary", "sm")} disabled={busy} onClick={() => run(() => declineSuggestionAction(offerId, productId))}>
+          {t("Not the same product")}
+        </button>
+        <button type="button" className={buttonClass("secondary", "sm")} disabled={busy} aria-expanded={asking} onClick={() => setAsking((a) => !a)}>
+          {t("Request further information")}
+        </button>
+        {status}
+      </span>
+      {asking && <AskSupplier offerId={offerId} kind="information" productId={productId} />}
+    </div>
+  );
+}
+
+/**
+ * What to ask the company — more information, or a price still valid — is
+ * written down on the offer and on its conversation, with the day to come
+ * back to it. The app sends nothing: the person writes to the company.
+ */
+export function AskSupplier({ offerId, kind, productId, suggested, today }: { offerId: string; kind: "information" | "price"; productId?: string | null; suggested?: string; today?: string }) {
+  const t = useT();
+  const { busy, run, status } = useRun();
+  const [what, setWhat] = useState(suggested ?? "");
+  const [followUpOn, setFollowUpOn] = useState("");
+  return (
+    <div className="grid gap-3 rounded-md border border-rule bg-well px-3 py-3 text-[13px] @2xl:grid-cols-[minmax(0,1fr)_180px]">
+      <Field label={kind === "price" ? t("What to ask for") : t("What is needed to judge it")} hint={kind === "price" ? t("The quantity and the terms you want the new price for.") : t("A data sheet, the oil content, the melting point, a sample: what is missing to say whether it is the same product.")}>
+        <Textarea rows={2} value={what} onChange={(e) => setWhat(e.target.value)} />
+      </Field>
+      <Field label={t("Come back to it on")} hint={t("Optional")}>
+        <Input type="date" min={today} value={followUpOn} onChange={(e) => setFollowUpOn(e.target.value)} />
+      </Field>
+      <div className="flex flex-wrap items-center gap-3 @2xl:col-span-2">
+        <button type="button" className={buttonClass("secondary", "sm")} disabled={busy || !what.trim()} onClick={() => run(() => requestFromSupplierAction(offerId, { kind, productId: productId ?? null, what, followUpOn: followUpOn || null }))}>
+          {kind === "price" ? t("Record: updated price to ask") : t("Record: information to ask")}
+        </button>
+        <span className="text-ink-3">{t("Nothing is sent: it becomes the next action of the conversation, and you write to the company.")}</span>
+        {status}
+      </div>
+    </div>
   );
 }
 
@@ -163,6 +204,8 @@ export function LandedForm({ offerId, currency, unit, input, destinations, desti
     () => Object.fromEntries(INPUT_KEYS.map((k) => [k, input[k] ? { amount: String(input[k]!.amount).replace(".", ","), per: input[k]!.per, currency: input[k]!.currency, status: input[k]!.status, source: input[k]!.source ?? "", date: input[k]!.date ?? "", note: input[k]!.note ?? "" } : blank("EUR")])) as Record<InputKey, Row>,
   );
   const [destination, setDestination] = useState(destinationId ?? "");
+  const [looking, look] = useTransition();
+  const [fxNote, setFxNote] = useState<string | null>(null);
   const set = (key: InputKey, patch: Partial<Row>) => setRows((old) => ({ ...old, [key]: { ...old[key], ...patch } }));
 
   const save = () => {
@@ -193,6 +236,26 @@ export function LandedForm({ offerId, currency, unit, input, destinations, desti
       {foreign && (
         <fieldset className="grid gap-3 rounded-md border border-rule px-3 py-3 @2xl:grid-cols-4">
           <legend className="px-1 text-[12.5px] font-medium text-ink-2">{t("Exchange rate: euro for one {currency}", { currency })}</legend>
+          <div className="flex flex-wrap items-center gap-3 @2xl:col-span-4">
+            <button
+              type="button"
+              className={buttonClass("secondary", "sm")}
+              disabled={looking}
+              onClick={() =>
+                look(async () => {
+                  setFxNote(null);
+                  const res = await referenceRateAction(currency, fx.date || today);
+                  if (!res.ok || res.rate == null) return setFxNote(res.error ?? t("Something went wrong."));
+                  // A reference rate is not the rate a bank will apply: offered as an estimate, for the person to keep or change.
+                  setFx({ rate: String(res.rate).replace(".", ","), date: res.date ?? fx.date, source: res.source ?? "", status: "estimated" });
+                  setFxNote(t("Filled in with the official reference rate of {date}: check it, then save. It is kept with this offer as it is today.", { date: res.date ?? "" }));
+                })
+              }
+            >
+              {looking ? t("Looking…") : t("Use the official reference rate of that day")}
+            </button>
+            {fxNote && <span className="text-[12.5px] text-ink-2">{fxNote}</span>}
+          </div>
           <Field label={t("Rate")}>
             <Input inputMode="decimal" value={fx.rate} onChange={(e) => setFx({ ...fx, rate: e.target.value })} placeholder="0,92" />
           </Field>
@@ -292,6 +355,19 @@ export function DocumentForm({ threadId, offerId }: { threadId: string; offerId?
       <Field label={t("The file")} hint={t("Uploading it keeps a copy on file")}>
         <input name="file" type="file" className="block w-full text-[12.5px] file:mr-2 file:rounded-md file:border file:border-rule-strong file:bg-canvas file:px-2.5 file:py-1.5 file:text-[12.5px]" />
       </Field>
+      <Field label={t("Received on")} hint={t("Optional")}>
+        <Input name="receivedOn" type="date" />
+      </Field>
+      <Field label={t("How it came")}>
+        <Select name="origin" defaultValue="">
+          <option value="">{t("Not said")}</option>
+          {DOCUMENT_ORIGINS.map((o) => (
+            <option key={o} value={o}>
+              {t(DOCUMENT_ORIGIN_LABEL[o])}
+            </option>
+          ))}
+        </Select>
+      </Field>
       <div className="flex flex-wrap items-center gap-3 @2xl:col-span-4">
         <button type="submit" className={buttonClass("secondary", "sm")} disabled={busy}>
           {t("Add the document")}
@@ -312,14 +388,25 @@ export function RemoveDocument({ id }: { id: string }) {
   );
 }
 
+/** A person checked that a document on file is what it says, or takes the check back. Only a copy on file can be checked. */
+export function VerifyDocument({ id, verified }: { id: string; verified: boolean }) {
+  const t = useT();
+  const { busy, run } = useRun();
+  return (
+    <button type="button" className="text-[12px] text-ink-3 hover:text-ink hover:underline" disabled={busy} onClick={() => run(() => verifyReplyDocumentAction(id, !verified))}>
+      {verified ? t("Take the check back") : t("Mark as checked")}
+    </button>
+  );
+}
+
 /** What a record of another part of the app is to this company: a person says, and can take it back. */
-export function CompanyLinkDecision({ replyId, where, id, decided }: { replyId: string; where: string; id: string; decided: "same" | "group" | "different" | null }) {
+export function CompanyLinkDecision({ replyId, where, id, decided }: { replyId: string; where: string; id: string; decided: "same" | "group" | "different" | "later" | null }) {
   const t = useT();
   const { busy, run, status } = useRun();
   const say = (relation: string | null) => run(() => decideCompanyLinkAction(replyId, where, id, relation));
   return (
     <span className="mt-1 flex flex-wrap items-center gap-2">
-      {decided ? (
+      {decided && decided !== "later" ? (
         <button type="button" className={buttonClass("ghost", "sm")} disabled={busy} onClick={() => say(null)}>
           {t("Take the decision back")}
         </button>
@@ -334,6 +421,11 @@ export function CompanyLinkDecision({ replyId, where, id, decided }: { replyId: 
           <button type="button" className={buttonClass("ghost", "sm")} disabled={busy} onClick={() => say("different")}>
             {t("Two different companies")}
           </button>
+          {decided !== "later" && (
+            <button type="button" className={buttonClass("ghost", "sm")} disabled={busy} onClick={() => say("later")}>
+              {t("Decide later")}
+            </button>
+          )}
         </>
       )}
       {status}

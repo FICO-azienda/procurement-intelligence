@@ -244,6 +244,7 @@ function flagsFor(row: ComparisonRow, ctx: AlternativeContext, setAside: boolean
   else o("recent", t(row.kind === "quote" ? "Recent quote" : "Recent price paid"));
 
   if (row.specDifferences.length) w("specs_differ", t("Specifications differ"));
+  else if (row.validated) o("specs_match", t("Equivalence validated by a person"));
   else if (row.specsKnown) o("specs_match", t("Similar specifications"));
 
   if (row.moq != null) {
@@ -257,12 +258,13 @@ function flagsFor(row: ComparisonRow, ctx: AlternativeContext, setAside: boolean
     else o("same_currency", t("Same currency"));
   }
 
-  if (row.freightCost == null) {
+  if (row.landed) o("delivered", t("Cost worked out to your plant: transport, duties and clearance are in it"));
+  else if (row.freightCost == null) {
     if (row.incoterm && DELIVERED_INCOTERMS.has(row.incoterm)) o("delivered", t("Delivered price ({incoterm})", { incoterm: row.incoterm }));
     else w("freight", row.incoterm ? t("Freight not included ({incoterm})", { incoterm: row.incoterm }) : t("Freight unknown"));
   }
   // Same rule as the opportunity engine: a different (or unknown) country means import costs are open.
-  if (!row.supplier.country || !current?.supplier.country || countryKey(row.supplier.country) !== countryKey(current.supplier.country)) {
+  if (!row.landed && (!row.supplier.country || !current?.supplier.country || countryKey(row.supplier.country) !== countryKey(current.supplier.country))) {
     w("import", t("Import costs not assessed"));
   }
   if (row.leadTimeDays != null && current?.leadTimeDays != null && row.leadTimeDays > current.leadTimeDays + cfg.overview.leadTimeToleranceDays) {
@@ -271,7 +273,7 @@ function flagsFor(row: ComparisonRow, ctx: AlternativeContext, setAside: boolean
   if (row.paymentTermsDays != null && current?.paymentTermsDays != null && row.paymentTermsDays < current.paymentTermsDays) {
     w("payment", row.paymentTermsDays === 0 ? t("Payment in advance") : t("Shorter payment terms ({offer} vs {current} days)", { offer: row.paymentTermsDays, current: current.paymentTermsDays }));
   }
-  if (!row.specsKnown && !row.specDifferences.length) w("specs_unknown", t("Specifications not compared"));
+  if (!row.specsKnown && !row.validated && !row.specDifferences.length) w("specs_unknown", t("Specifications not compared"));
   w("quality", t("Quality not validated"));
   return [...warn, ...ok];
 }

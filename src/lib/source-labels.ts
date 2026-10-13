@@ -9,6 +9,7 @@ export const SOURCE_LABEL: Record<string, Msg> = {
   email: "Email",
   erp: "ERP",
   demo: "Demo data",
+  rfq_reply: "Reply to a request",
 };
 
 /** Human name of a record's origin (purchases.source / quotes.source). */

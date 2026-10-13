@@ -19,6 +19,8 @@ export interface RfqContext {
   deliveryCountry: string | null;
   /** The delivery town registered in Settings. Null: the request names only the country, and says the address comes on request. */
   deliveryPlace?: string | null;
+  /** The other destinations saved in Settings, in a line each: a request can name one of them, or a place of its own. */
+  places?: string[];
   companyName: string;
   userName: string | null;
 }
@@ -50,6 +52,11 @@ export function RfqPanel({ items, context, language, onClose, onSent }: { items:
   const [copied, setCopied] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  // Where these requests ask to be delivered: the company's default, another saved destination, or a place of their own.
+  const saved = [...new Set([context.deliveryPlace, ...(context.places ?? [])].filter((x): x is string => !!x))];
+  const [choice, setChoice] = useState(context.deliveryPlace ?? "");
+  const [own, setOwn] = useState("");
+  const place = choice === "__own" ? own.trim() || null : choice || null;
   const drafts = useMemo(() => {
     const tt = translator(lang);
     return new Map(
@@ -59,7 +66,7 @@ export function RfqPanel({ items, context, language, onClose, onSent }: { items:
           {
             lines: item.lines.map((l) => ({ productName: l.productName, specifications: Object.fromEntries(l.specifications.map((s) => [tt.any(s.label), s.value])), description: l.description, application: l.application, attachments: l.documents.map((d) => d.filename), unit: l.unit, annualQuantity: l.annualQuantity, annualConfirmed: l.annualConfirmed, typicalOrderQuantity: l.typicalOrderQuantity, tiers: l.tiers })),
             deliveryCountry: context.deliveryCountry,
-            deliveryPlace: context.deliveryPlace ?? null,
+            deliveryPlace: place,
             // The questions of a material are added when every product of the request is that material.
             category: item.lines.length && item.lines.every((l) => l.category === item.lines[0].category) ? item.lines[0].category : null,
             companyName: context.companyName,
@@ -72,7 +79,7 @@ export function RfqPanel({ items, context, language, onClose, onSent }: { items:
         ),
       ]),
     );
-  }, [items, context, lang]);
+  }, [items, context, lang, place]);
   const whole = (key: string) => `${drafts.get(key)!.subject}\n\n${drafts.get(key)!.body}`;
   const copy = async (key: string) => {
     try {
@@ -97,6 +104,19 @@ export function RfqPanel({ items, context, language, onClose, onSent }: { items:
           <div className="text-[14.5px] font-semibold">{followUp ? t.n(items.length, "Follow-up to {n} supplier", "Follow-up to {n} suppliers") : t.n(items.length, "Request for quotation: {n} supplier", "Requests for quotation: {n} suppliers")}</div>
           <div className="text-[12.5px] text-ink-2">{t("Read each text, then send it from your own email. Nothing is sent from here, and your current price and supplier are not mentioned.")}</div>
         </div>
+        <label className="flex flex-wrap items-center gap-2 text-[12.5px] text-ink-2">
+          {t("Delivered to")}
+          <select value={choice} onChange={(e) => setChoice(e.target.value)} className="h-7 rounded-md border border-rule-strong bg-canvas px-2 text-[12.5px] text-ink">
+            {saved.length === 0 && <option value="">{t("the country only: address on request")}</option>}
+            {saved.map((p, i) => (
+              <option key={p} value={p}>
+                {i === 0 && p === context.deliveryPlace ? t("{place} (default)", { place: p }) : p}
+              </option>
+            ))}
+            <option value="__own">{t("another place, for this request only")}</option>
+          </select>
+          {choice === "__own" && <input value={own} onChange={(e) => setOwn(e.target.value)} placeholder={t("Town")} aria-label={t("Destination of this request")} className="h-7 w-[160px] rounded-md border border-rule-strong bg-canvas px-2 text-[12.5px] text-ink" />}
+        </label>
         <div className="inline-flex overflow-hidden rounded-md border border-rule-strong text-[12.5px]">
           {(["it", "en"] as const).map((l) => (
             <button key={l} type="button" aria-pressed={lang === l} onClick={() => setLang(l)} className={cx("h-7 px-2.5", lang === l ? "bg-ink text-white" : "bg-canvas text-ink-2 hover:bg-wash")}>
@@ -156,7 +176,7 @@ export function RfqPanel({ items, context, language, onClose, onSent }: { items:
           onClick={() =>
             start(async () => {
               setError(null);
-              const res = await markRequestsSentAction(items.map((i) => ({ supplierName: i.supplierName, candidateIds: i.candidateIds, productIds: i.lines.map((l) => l.productId), kind: i.kind })));
+              const res = await markRequestsSentAction(items.map((i) => ({ supplierName: i.supplierName, candidateIds: i.candidateIds, productIds: i.lines.map((l) => l.productId), kind: i.kind, destination: place })));
               if (!res.ok) return setError(res.error ?? t("Something went wrong."));
               router.refresh();
               onSent?.();

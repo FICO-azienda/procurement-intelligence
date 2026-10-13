@@ -6,26 +6,28 @@ import type { ReactNode } from "react";
 import { connection } from "next/server";
 import { eq, inArray } from "drizzle-orm";
 import { ReplyStatusPills } from "@/components/replies/pills";
-import { AttributionFix, CompanyLinkDecision, DocumentForm, RemoveDocument } from "@/components/replies/offer-controls";
+import { AttributionFix, CompanyLinkDecision, DocumentForm, RemoveDocument, VerifyDocument } from "@/components/replies/offer-controls";
 import { CompanyEdit, ThreadUpdate } from "@/components/replies/replies";
 import { Crumbs, Disclosure, PageHeader, Section } from "@/components/ui";
 import { getDb } from "@/db";
-import { products, rfqSuppliers } from "@/db/schema";
+import { marketSuppliers, products, rfqSuppliers, suppliers } from "@/db/schema";
 import { todayISO } from "@/lib/analytics";
 import { countryName, flagOf } from "@/lib/countries";
 import { getT } from "@/lib/data";
 import * as f from "@/lib/format";
-import { ACTOR_LABEL, AUDIT_ACTION_LABEL, COMPATIBILITY_LABEL, COMPATIBILITY_MEANING, DOCUMENT_KIND_LABEL, MESSAGE_KIND_LABEL, REPLY_STATUS_LABEL, SPEC_LABEL, availabilityOf, deliveryOf, specsOf, statusesOf, validityOf } from "@/lib/replies/types";
+import { ACTOR_LABEL, AUDIT_ACTION_LABEL, AVAILABILITY_LABEL, COMPATIBILITY_LABEL, COMPATIBILITY_MEANING, DOCUMENT_KIND_LABEL, MESSAGE_KIND_LABEL, REPLY_STATUS_LABEL, SPEC_LABEL, availabilityOf, deliveryOf, specsOf, statusesOf, validityOf } from "@/lib/replies/types";
 import { readAudit } from "@/server/audit";
 import { readReplies } from "@/server/replies";
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function generateMetadata({ params }: PageProps<"/sourcing/replies/[id]">): Promise<Metadata> {
   const { id } = await params;
-  const [row] = await (await getDb()).select({ name: rfqSuppliers.name }).from(rfqSuppliers).where(eq(rfqSuppliers.id, id));
+  // An address that is no record's: "not found", not a database error.
+  const [row] = UUID.test(id) ? await (await getDb()).select({ name: rfqSuppliers.name }).from(rfqSuppliers).where(eq(rfqSuppliers.id, id)) : [];
   return { title: row?.name ?? (await getT())("Replies to requests for quotation") };
 }
 
-const AVAILABILITY = { stored: "A copy is on file", link: "Link only: not a copy", named: "Named only: not on file" } as const;
 const ATTRIBUTION = { recorded: null, reconstructed: "rebuilt from the rows: recorded before the log existed", uncertain: "who did it was not recorded", corrected: "attribution corrected" } as const;
 const days = (from: string, to: string) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
 
@@ -38,6 +40,7 @@ const days = (from: string, to: string) => Math.round((Date.parse(`${to}T00:00:0
 export default async function ReplyCompanyPage({ params }: PageProps<"/sourcing/replies/[id]">) {
   await connection();
   const { id } = await params;
+  if (!UUID.test(id)) notFound();
   const [db, t] = await Promise.all([getDb(), getT()]);
   const c = (await readReplies(db, t)).find((x) => x.id === id);
   if (!c) notFound();
@@ -49,6 +52,49 @@ export default async function ReplyCompanyPage({ params }: PageProps<"/sourcing/
     linked.length ? db.select({ id: products.id, name: products.name }).from(products).where(inArray(products.id, linked)) : Promise.resolve([]),
   ]);
   const productName = new Map(names.map((p) => [p.id, p.name]));
+  // A resemblance nobody settled is shown with what each record says, side by side: the person decides on the facts.
+  const unsettled = c.elsewhere.filter((e) => !e.certain && (!e.decided || e.decided === "later"));
+  const facts = new Map<string, { name: string; country: string | null; city: string | null; vatNumber: string | null; email: string | null; phone: string | null; website: string | null }>();
+  for (const e of unsettled) {
+    if (e.where === "directory") {
+      const [r] = await db.select().from(marketSuppliers).where(eq(marketSuppliers.id, e.id));
+      if (r) facts.set(`${e.where}|${e.id}`, { name: r.name, country: r.country, city: r.city, vatNumber: null, email: r.email, phone: r.phone, website: r.website });
+    } else if (e.where === "supplier") {
+      const [r] = await db.select().from(suppliers).where(eq(suppliers.id, e.id));
+      if (r) facts.set(`${e.where}|${e.id}`, { name: r.name, country: r.country, city: r.city, vatNumber: r.vatNumber, email: r.email, phone: r.phone, website: r.website });
+    }
+  }
+  const compared = (other: NonNullable<ReturnType<typeof facts.get>>) => {
+    const lines: [string, string | null, string | null][] = [
+      [t("Name"), c.name, other.name],
+      [t("Country"), c.country, other.country],
+      [t("Address or town"), c.address, other.city],
+      [t("VAT number"), c.vatNumber, other.vatNumber],
+      [t("Email"), c.email, other.email],
+      [t("Phone"), c.phone, other.phone],
+      [t("Website"), c.website, other.website],
+    ];
+    return (
+      <table className="mt-2 w-full max-w-[720px] text-left text-[12.5px]">
+        <thead>
+          <tr className="text-ink-3">
+            <th className="w-[110px] py-1 font-medium" />
+            <th className="py-1 pr-3 font-medium">{t("This company, as it answered")}</th>
+            <th className="py-1 font-medium">{t("The other record")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {lines.map(([label, a, b]) => (
+            <tr key={label} className="border-t border-rule align-top">
+              <td className="py-1 text-ink-3">{label}</td>
+              <td className="py-1 pr-3 break-words">{a ?? <span className="text-ink-4">—</span>}</td>
+              <td className="py-1 break-words">{b ?? <span className="text-ink-4">—</span>}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    );
+  };
   const none = <span className="text-ink-4">{t("Not stated")}</span>;
   const link = (url: string | null, label?: string) =>
     url ? (
@@ -279,9 +325,12 @@ export default async function ReplyCompanyPage({ params }: PageProps<"/sourcing/
                       <div className="min-w-0">
                         {d.documentId ? <a href={`/documents/${d.documentId}`} target="_blank" rel="noreferrer" className="font-medium text-ledger hover:underline">{d.name}</a> : d.url ? <a href={d.url} target="_blank" rel="noreferrer" className="font-medium text-ledger hover:underline">{d.name}</a> : <span className="font-medium">{d.name}</span>}
                         <span className="ml-2 text-[12px] text-ink-3">{t(DOCUMENT_KIND_LABEL[d.kind])}</span>
-                        <div className={`text-[12px] ${availability === "stored" ? "text-down" : "text-caution"}`}>{t(AVAILABILITY[availability])}</div>
+                        <div className={`text-[12px] ${availability === "stored" ? "text-down" : "text-caution"}`}>{t(AVAILABILITY_LABEL[availability])}</div>
                       </div>
-                      <RemoveDocument id={d.id} />
+                      <span className="flex items-center gap-3">
+                        {d.documentId && <VerifyDocument id={d.id} verified={!!d.verifiedAt} />}
+                        <RemoveDocument id={d.id} />
+                      </span>
                     </li>
                   );
                 })}
@@ -312,7 +361,7 @@ export default async function ReplyCompanyPage({ params }: PageProps<"/sourcing/
                 ) : e.decided === "group" ? (
                   <span className="font-medium text-ink-2">{t("Same group, another company")}: </span>
                 ) : !e.certain ? (
-                  <span className="font-medium text-caution">{t("Possibly the same company")}: </span>
+                  <span className="font-medium text-caution">{e.decided === "later" ? t("Possibly the same company — decision put off") : t("Possibly the same company")}: </span>
                 ) : null}
                 {e.where === "supplier" ? (
                   <>
@@ -334,7 +383,8 @@ export default async function ReplyCompanyPage({ params }: PageProps<"/sourcing/
                   </>
                 )}
                 {e.decided === "same" && <span className="text-ink-3"> · {t("confirmed by a person")}</span>}
-                {!e.certain && !e.decided && e.why && <span className="text-ink-3"> ({e.why})</span>}
+                {!e.certain && (!e.decided || e.decided === "later") && e.why && <span className="text-ink-3"> ({e.why})</span>}
+                {facts.has(`${e.where}|${e.id}`) && compared(facts.get(`${e.where}|${e.id}`)!)}
                 {(e.decided || !e.certain) && <CompanyLinkDecision replyId={c.id} where={e.where} id={e.id} decided={e.decided} />}
               </li>
             ))}

@@ -33,6 +33,8 @@ import { mapCatalogue, toMapInput, type MapAnalysis } from "./catalog/mapper";
 import { categoryNaming } from "./catalog/tree";
 import { catalogueOf, companySpend, type CompanySpend } from "./catalog/spend";
 import { canonicalIds } from "./suppliers/resolve";
+import { bridgeDataset } from "./replies/bridge";
+import { readComparableOffers } from "@/server/replies";
 
 const num = (v: string) => Number(v);
 const numOrNull = (v: string | null) => (v == null ? null : Number(v));
@@ -233,7 +235,8 @@ export const getOpportunityStates = cache(async () => {
  */
 export const getIntel = cache(async (): Promise<Intel> => {
   const [data, learning, states, t] = await Promise.all([getDataset(), getLearning(), getOpportunityStates(), getT()]);
-  const catalogue = catalogueOf(data);
+  // The offers that passed every check are read as quotes (lib/replies/bridge.ts): read, never copied.
+  const catalogue = bridgeDataset(catalogueOf(data), await getComparableOffers());
   const intel = analyze(catalogue, learning.supplierProducts, states, todayISO(), undefined, t);
   if (catalogue !== data) {
     // A supplier is who the company pays: its spend, dates and status count every purchase, not only the catalogue's.
@@ -247,6 +250,12 @@ export const getIntel = cache(async (): Promise<Intel> => {
     }
   }
   return intel;
+});
+
+/** The offers of the replies that can be compared, once per request: what Compare, negotiation and strategy all read. */
+export const getComparableOffers = cache(async () => {
+  await connection();
+  return readComparableOffers(await getDb(), await getT());
 });
 
 /** The company's whole spend of the last 12 months: catalogue and everything else. */

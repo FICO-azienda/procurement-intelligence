@@ -1,3 +1,4 @@
+import { readDestinations } from "@/server/destinations";
 import Link from "next/link";
 import type { Metadata } from "next";
 import { ResearchImport, ResearchPriority } from "@/components/sourcing/research";
@@ -39,6 +40,8 @@ const STATE_LABEL: Record<SourceState, Msg> = { connected: "Connected", needs_ke
  */
 export default async function SourcingPage() {
   const [{ review, opportunities, requests, views, pilot }, research, settings, intel, t] = await Promise.all([getMarketViews(), getResearch(), getSettings(), getIntel(), getT()]);
+  // The destinations a request can name besides the default one.
+  const places = (await readDestinations(await getDb())).map((d) => (d.province ? `${d.city} (${d.province})` : d.city));
   if (review.products.length === 0) {
     return (
       <>
@@ -210,7 +213,7 @@ export default async function SourcingPage() {
             ? t("First round: the {products} products that weigh most. For them {suppliers} suppliers are recommended — {pairs} product requests in {suppliers} emails, because a supplier that covers several products gets one request. Nothing is sent from here.", { products: firstRound.length, suppliers: suppliers.length, pairs })
             : t("First round: the {products} products that weigh most. No supplier is recommended for them yet.", { products: firstRound.length })}
         </p>
-        <SupplierRfqBoard suppliers={suppliers} context={{ deliveryCountry: settings.country, deliveryPlace: settings.deliveryPlace, companyName: settings.companyName, userName: settings.userName }} language={t.locale} />
+        <SupplierRfqBoard suppliers={suppliers} context={{ deliveryCountry: settings.country, deliveryPlace: settings.deliveryPlace, places, companyName: settings.companyName, userName: settings.userName }} language={t.locale} />
       </section>
 
       <div className="mb-4 flex flex-wrap items-center gap-1.5">

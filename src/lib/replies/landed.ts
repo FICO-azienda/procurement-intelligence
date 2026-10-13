@@ -101,6 +101,11 @@ export interface Landed {
   missing: LandedKey[];
   /** EUR per unit, at the plant. Null while something is missing. */
   total: number | null;
+  /**
+   * What is known so far, when the cost is not whole: the sum of the lines with a figure, and the lines it leaves
+   * out. A partial figure — never a cost to the plant, never set against the price paid. Null: whole, or nothing known.
+   */
+  partial: { perUnit: number; includes: LandedKey[]; excludes: LandedKey[] } | null;
   /** One figure in it is an estimate. */
   estimated: boolean;
 }
@@ -201,12 +206,15 @@ export function landedCost(offer: { unitPrice: number; currency: string; quantit
 
   const missing = lines.filter((l) => l.perUnit == null).map((l) => l.key);
   const complete = missing.length === 0;
+  const known = lines.filter((l) => l.perUnit != null && (l.status === "confirmed" || l.status === "estimated" || l.key === "goods"));
   return {
     lines,
     fx,
     complete,
     missing,
     total: complete ? lines.reduce((sum, l) => sum + (l.perUnit ?? 0), 0) : null,
+    // Without the goods in euro there is nothing to add to: no partial figure either.
+    partial: !complete && goods != null ? { perUnit: known.reduce((sum, l) => sum + l.perUnit!, 0), includes: lines.filter((l) => l.perUnit != null && l.status !== "not_applicable").map((l) => l.key), excludes: missing } : null,
     estimated: lines.some((l) => l.status === "estimated") || fx?.status === "estimated",
   };
 }

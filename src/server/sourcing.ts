@@ -4,6 +4,8 @@
  * connected providers (none today): what they return is kept only if it has
  * a source, and always as "discovered" — for the user to review.
  */
+import { bridgeDataset, offerIdOf } from "@/lib/replies/bridge";
+import { readComparableOffers } from "./replies";
 import { eq } from "drizzle-orm";
 import { connection } from "next/server";
 import { cache } from "react";
@@ -125,11 +127,12 @@ export async function readSourcing(db: DB): Promise<{ candidates: SupplierCandid
  * with the products asked about, and its candidates move to "RFQ sent" —
  * unless they are already further along. Nothing is sent from here.
  */
-export async function markRequestsSent(db: DB, items: { supplierName: string; candidateIds: string[]; productIds: string[] }[], kind: RfqRequest["kind"], sentAt: string = todayISO()): Promise<void> {
+export async function markRequestsSent(db: DB, items: { supplierName: string; candidateIds: string[]; productIds: string[]; destination?: string | null }[], kind: RfqRequest["kind"], sentAt: string = todayISO()): Promise<void> {
   const further = new Set<CandidateStatus>(["quote_received", "converted"]);
   for (const item of items) {
     if (!item.candidateIds.length) continue;
-    await db.insert(rfqRequests).values({ supplierKey: companyKey(item.supplierName), supplierName: item.supplierName, candidateIds: item.candidateIds, productIds: item.productIds, kind, sentAt });
+    // The destination is kept as the request said it: changing the company's destinations later does not rewrite what was asked.
+    await db.insert(rfqRequests).values({ supplierKey: companyKey(item.supplierName), supplierName: item.supplierName, candidateIds: item.candidateIds, productIds: item.productIds, kind, sentAt, destination: item.destination?.trim() || null });
     for (const id of item.candidateIds) {
       const [c] = await db.select({ status: supplierCandidates.status }).from(supplierCandidates).where(eq(supplierCandidates.id, id));
       if (c && !further.has(c.status as CandidateStatus)) await updateCandidate(db, id, { status: "quote_requested" });
@@ -617,7 +620,8 @@ export async function readProductCosts(db: DB, intel: Intel, views: Map<string, 
       const supplier = sups.find((x) => x.id === r.supplier.id);
       const country = supplier?.country ?? r.supplier.country ?? null;
       const crosses = crossesCustoms(country, home);
-      const technicalConfirmed = candidates.some((c) => c.productId === p.product.id && c.supplierId === r.supplier.id && c.technicalCompatibility === "high");
+      // An offer read through the bridge crossed only because a person validated its equivalence (lib/replies/bridge.ts).
+      const technicalConfirmed = offerIdOf(r.recordId) != null || candidates.some((c) => c.productId === p.product.id && c.supplierId === r.supplier.id && c.technicalCompatibility === "high");
       const inputs: TrueCostInputs = { freightPerUnit: numOrNull(sc?.freightPerUnit ?? null), freightBasis: sc?.freightBasis ?? null, dutyRatePct: sc?.dutyRatePct ?? null, customsPerUnit: numOrNull(sc?.customsPerUnit ?? null), otherPerUnit: numOrNull(sc?.otherPerUnit ?? null), notes: sc?.notes ?? null };
       const cost = trueCost(
         {
@@ -742,8 +746,8 @@ export const getMarketViews = cache(async (): Promise<MarketViews> => {
 
 /** The same, read straight from the database: for a research that has just written to it. The catalogue and the analysis it was built on come with it. */
 export async function readMarketViews(db: DB, t: T = en) {
-  const [data, learning, states, sourcing, settings] = await Promise.all([readDataset(db), readLearning(db), readOpportunityStates(db), readSourcing(db), readSettings(db)]);
-  const catalogue = catalogueOf(data);
+  const [data, learning, states, sourcing, settings, offers] = await Promise.all([readDataset(db), readLearning(db), readOpportunityStates(db), readSourcing(db), readSettings(db), readComparableOffers(db, t)]);
+  const catalogue = bridgeDataset(catalogueOf(data), offers);
   const intel = analyze(catalogue, learning.supplierProducts, states, todayISO(), undefined, t);
   return { ...buildViews(intel, purchasingOverview(intel, t), sourcing, settings.country, t), intel, catalogue, data };
 }

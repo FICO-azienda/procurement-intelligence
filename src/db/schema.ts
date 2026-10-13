@@ -597,6 +597,8 @@ export const rfqRequests = pgTable(
     /** request | update (products added to an earlier request) | follow_up */
     kind: text("kind").notNull().default("request"),
     sentAt: date("sent_at").notNull(),
+    /** Where the goods were asked to be delivered, as the request said it: a later change of the company's destinations does not reach it. Null: asked before this was kept. */
+    destination: text("destination"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("rfq_requests_supplier_idx").on(t.supplierKey)],
@@ -1104,6 +1106,14 @@ export const rfqDocuments = pgTable(
     url: text("url"),
     /** The copy kept on file, when someone uploaded one. Only this is a permanent copy. */
     documentId: uuid("document_id").references(() => documents.id, { onDelete: "set null" }),
+    /** The buyer's product it is about, when it is about one: a data sheet of the article offered for it. */
+    productId: uuid("product_id").references(() => products.id, { onDelete: "set null" }),
+    /** When it was received, and how it came (DOCUMENT_ORIGINS in lib/replies/types.ts). */
+    receivedOn: date("received_on"),
+    origin: text("origin"),
+    /** When a person checked that it is what it says — the right company, the right article, the right version — and who. Null: not checked. */
+    verifiedAt: timestamp("verified_at", { withTimezone: true }),
+    verifiedBy: text("verified_by"),
     note: text("note"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
