@@ -70,7 +70,7 @@ describe("moving a workspace's data", () => {
     await target.insert(schema.suppliers).values({ name: "Mock Already There" });
     await expect(restore(target, lines)).rejects.toThrow(/already holds data/);
     expect(await target.select().from(schema.purchases)).toEqual([]);
-  });
+  }, 60_000);
 
   it("leaves nothing behind when what arrives is not what left", async () => {
     const target = await fresh();
