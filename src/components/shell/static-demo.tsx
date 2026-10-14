@@ -27,8 +27,9 @@ export function StaticDemoGuard() {
     window.fetch = (input, init) => {
       const headers = new Headers(init?.headers);
       // A Server Action: there is no server to answer it. It stays pending; the notice offers to reload.
+      // Only what the person just did is told: a page that asks something by itself on opening is not an action of theirs.
       if (headers.has("next-action")) {
-        setBlocked(true);
+        if (navigator.userActivation?.isActive ?? true) setBlocked(true);
         return new Promise<Response>(() => {});
       }
       return original(input, init);

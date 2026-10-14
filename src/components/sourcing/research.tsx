@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { Check, CircleAlert, Loader2, RefreshCw, Sparkles } from "lucide-react";
+import { STATIC_DEMO } from "@/lib/static-demo";
 import { importResearchAction, listResearchFilesAction, planResearchAction, readResearchFileAction, runResearchAction, setCustomsCodeAction, setResearchClassAction } from "@/app/actions";
 import * as f from "@/lib/format";
 import { useT } from "@/lib/i18n/client";
@@ -221,6 +222,8 @@ export function ResearchImport() {
   // Research saved on this computer by an earlier session: one click puts a file in the box, to check and load like any other.
   const [files, setFiles] = useState<ResearchFileInfo[]>([]);
   useEffect(() => {
+    // The read-only demo has no computer to list files from.
+    if (STATIC_DEMO) return;
     listResearchFilesAction().then(setFiles, () => setFiles([]));
   }, []);
   const gaps = useMemo(() => {
