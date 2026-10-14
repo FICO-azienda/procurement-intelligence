@@ -71,7 +71,7 @@ export default async function ImportSessionPage({ params }: PageProps<"/import/[
         <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <span>{fileKindLabel(session.fileType, session.sourceType, t)}</span>
           <span>{t("Uploaded {date}", { date: when(session.uploadedAt) })}</span>
-          <ImportStatusBadge status={session.status} attention={session.recordsReview} />
+          <ImportStatusBadge status={session.status} attention={session.recordsReview} imported={session.recordsImported} />
         </span>
       }
       actions={
@@ -289,6 +289,12 @@ export default async function ImportSessionPage({ params }: PageProps<"/import/[
             </p>
           )}
         </div>
+      )}
+
+      {session.status === "completed" && session.recordsImported === 0 && session.errorMessage && (
+        <p role="status" className="mb-5 rounded-lg border border-rule bg-wash px-4 py-3 text-[13.5px] text-ink-2">
+          {t.any(session.errorMessage)}
+        </p>
       )}
 
       {summary && summary.imported > 0 && <SummaryCard summary={summary} recordType={recordType} open={open} t={t} />}

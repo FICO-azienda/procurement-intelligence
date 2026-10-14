@@ -7,7 +7,7 @@ import { analyze } from "../intel/engine";
 import { explanations } from "../intel/explain";
 import { dataset, link, product, purchase, quote, supplier } from "../intel/fixtures";
 import { fieldErrors, purchaseInput } from "../validation";
-import { en, list, said, say, translator, type Msg } from "./index";
+import { en, list, lowerFirst, said, say, translator, type Msg } from "./index";
 import { PARTS, it } from "./it";
 
 const italian = translator("it");
@@ -270,6 +270,15 @@ describe("the engines write Italian when asked to", () => {
     const alt = d.alternatives.find((a) => a.supplierId === borg.id)!;
     expect(acme.country).not.toBe(borg.country);
     expect(alt.flags.map((x) => x.key)).not.toContain("import");
+  });
+});
+
+describe("a sentence that starts inside another", () => {
+  test("loses its capital, unless the first word is written in capitals", () => {
+    expect(lowerFirst("Quoted FOB")).toBe("quoted FOB");
+    expect(lowerFirst("NOT COMPARABLE — INSUFFICIENT DATA: quoted FOB")).toBe("NOT COMPARABLE — INSUFFICIENT DATA: quoted FOB");
+    expect(lowerFirst("NON CONFRONTABILE — DATI INSUFFICIENTI")).toBe("NON CONFRONTABILE — DATI INSUFFICIENTI");
+    expect(lowerFirst("È stato")).toBe("è stato");
   });
 });
 

@@ -115,5 +115,6 @@ export function list(t: T, items: string[]): string {
   return items.length <= 1 ? (items[0] ?? "") : t("{items} and {last}", { items: items.slice(0, -1).join(", "), last: items[items.length - 1] });
 }
 
-export const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
+/** A word written in capitals ("NOT COMPARABLE", "FOB") keeps them. */
+export const lowerFirst = (s: string) => (/^\p{Lu}{2}/u.test(s) ? s : s.charAt(0).toLowerCase() + s.slice(1));
 export const upperFirst = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);

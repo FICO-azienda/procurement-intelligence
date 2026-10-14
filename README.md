@@ -11,7 +11,7 @@ npm install
 npm run dev
 ```
 
-Apri http://localhost:3100. Al primo avvio viene creato un database locale (`.data/pglite`) con i dati demo.
+Apri http://localhost:3100. Al primo avvio viene creato un database locale (`.data/pglite`) con i dati demo. L'app risponde solo da questo computer (vedi «Protezione dei dati»).
 
 | Comando | Cosa fa |
 |---|---|
@@ -19,15 +19,15 @@ Apri http://localhost:3100. Al primo avvio viene creato un database locale (`.da
 | `npm test` | Test dei calcoli e del parsing (vitest) |
 | `npm run typecheck` / `npm run lint` | Controlli |
 | `npm run build && npm start` | Versione di produzione |
-| `npm run db:reset` | Cancella tutto e ricarica i dati demo (a server fermo) |
-| `npm run db:clear` | Cancella tutto (a server fermo) |
+| `npm run db:reset` | Cancella tutto e ricarica i dati demo (a server fermo; rifiutato sui dati dell'azienda) |
+| `npm run db:clear` | Cancella tutto (a server fermo; rifiutato sui dati dell'azienda) |
 | `npm run db:generate` | Genera una nuova migrazione dopo aver modificato lo schema |
 
 ## Sabato: passare ai dati reali
 
 > I nomi di pulsanti e pagine qui sotto sono quelli inglesi. Con l'app in italiano: Import → **Importa**, Demo data → **Dati demo**, Clear all data → **Cancella tutti i dati**, Review → **Revisione**, Paste from Excel → **Incolla da Excel**, Reload demo data → **Ricarica i dati demo**.
 
-1. **Import → Demo data → Clear all data.** Svuota database e file salvati. Finché ci sono dati demo, in alto resta la fascia "Demo mode".
+1. **Import → Demo data → Clear all data.** Svuota database e file salvati. Finché ci sono dati demo, in alto resta la fascia "Demo mode". Il pulsante esiste solo finché i dati sono quelli demo: dal primo dato dell'azienda non c'è più.
 2. **Import → trascina i file** nell'unica area di caricamento (anche molti insieme: PDF, Excel, CSV, oppure uno **zip** che li contiene). Non serve dire che cosa sono:
    - **CSV / Excel** con intestazioni note (italiane o inglesi) → le colonne vengono riconosciute da sole e si arriva subito al risultato ("Change columns" per correggere). Se un'intestazione non è chiara, o non ci sono intestazioni, compare la schermata delle colonne con una proposta da controllare.
    - **PDF** digitali (non scansioni) → letti come fattura o preventivo in base a ciò che dichiarano ("It is a quote / It is an invoice" per rileggerli nell'altro modo).
@@ -42,7 +42,7 @@ Ogni risposta viene ricordata: "ABC S.r.l." o "PARAFFIN WAX 58/60" confermati un
 
 **File di prova** in `test-data/` (scenari A–I + preventivo PDF; H è uno zip con fattura PDF, preventivo, Excel, fattura XML e due file che restano fuori; I è una fattura elettronica, semplice e firmata), rigenerabili con `npx tsx scripts/make-test-data.ts`. Funzionano sui dati demo.
 
-Per tornare alla demo: **Import → Your data → Reload demo data**.
+Per tornare alla demo: **Import → Your data → Reload demo data**, solo finché nel database ci sono i dati demo. Sui dati dell'azienda né l'app né gli script li cancellano.
 
 ## Facilità d'uso (fase UX)
 
@@ -596,6 +596,23 @@ npx tsx scripts/migrate-safe.ts nome_della_modifica
 ```
 
 La migrazione viene generata in una cartella a parte, applicata a un database vuoto e a una copia dei dati (ogni tabella deve conservare le sue righe), poi viene fatto un backup in `.data/backups/` e solo allora i file vengono pubblicati in `drizzle/` — l'elenco per ultimo, in un colpo. Se un passo fallisce non viene pubblicato nulla. Per tornare indietro: fermare l'app, ripristinare la cartella di backup sopra `.data/pglite`, togliere da `drizzle/` le tre voci della migrazione.
+
+## Protezione dei dati e backup automatici
+
+L'app distingue tre stati del database: **vuoto**, **demo** (solo i dati di esempio) e **dati dell'azienda** (qualunque cosa aggiunta da una persona o da un file). Sui dati dell'azienda:
+
+- «Cancella tutti i dati» e «Ricarica i dati demo» non compaiono e vengono rifiutati anche dal server; al loro posto c'è il link per scaricare una copia completa. `npm run db:reset` e `db:clear` si rifiutano.
+- Un fornitore o un prodotto con acquisti, preventivi o schede unite non si può eliminare. Eliminare un acquisto o un preventivo è registrato nel registro modifiche con la riga intera.
+- **Backup automatici** in `.data/backups/auto/`: uno al giorno e uno prima di ogni migrazione, compressi, con il loro `MANIFEST.json` (righe per tabella, totale degli acquisti). Se ne tengono 14 giornalieri e 10 prima delle migrazioni. Si ripristinano in un database vuoto, ad app spenta, con `npm run data:import -- .data/backups/auto/<cartella>`.
+- **Solo da questo computer**: `npm run dev` e `npm start` ascoltano su 127.0.0.1, e senza accesso con login l'app rifiuta le richieste che arrivano con un indirizzo diverso da questo computer. Per un'eccezione voluta: `WORKSPACE_HOSTS=nome1,nome2`.
+
+## Controlli all'importazione e confronti
+
+- **Codici del fornitore.** Il solo codice non basta a dire che è lo stesso prodotto: decide quando indica un solo prodotto di quel fornitore e la descrizione non dice un'altra misura o un altro grado. Un codice usato per più prodotti, o contraddetto dalla descrizione, diventa una domanda. La stessa descrizione da un altro fornitore è una proposta da confermare.
+- **Fatture già in archivio.** Una fattura viene riconosciuta dal fornitore e dal numero, qualunque sia il nome del file. La pagina dice quante fatture del file sono già in archivio e, delle loro righe, quante sono già presenti, quante hanno altri numeri (conflitto, da decidere riga per riga) e quante mancano. Un file di cui non è stato importato nulla si può **mettere da parte**.
+- **File che non sono tabelle** (senza colonne di date, quantità, prezzi o totali) vengono rifiutati.
+- **Preventivo e prezzo pagato.** Un prezzo quotato si confronta con quello pagato solo se è un costo reso allo stabilimento: un'offerta con il costo a destino calcolato, DDP, oppure DAP/DPU senza dogana in mezzo. FOB, CIF, EXW, FCA o una resa non indicata danno «NON CONFRONTABILE — DATI INSUFFICIENTI», con il motivo e senza risparmio. Anche un grado diverso scritto nel preventivo (56/58 per una 52/54) lo rende non confrontabile, finché una persona non dice il contrario. La resa (Incoterm) si indica accanto al prezzo quando si inserisce un preventivo.
+- **Periodo dei dati.** Finché in archivio c'è meno di un anno di fatture, ogni pagina dice quanti mesi copre e da quando a quando. Le cifre «ultimi 12 mesi» sono la somma di quel periodo; una cifra annua ricavata da lì è una stima e lo dice.
 
 ## Strategia di sourcing (Sourcing Mix)
 

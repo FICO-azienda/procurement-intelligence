@@ -32,6 +32,8 @@ export const safety = {
   "Confirm: import nothing from this file": "Conferma: non importare nulla da questo file",
   "Setting aside…": "Metto da parte…",
   "Set aside: nothing of this file was imported.": "Messo da parte: di questo file non è stato importato nulla.",
+  "Set aside, nothing imported": "Messo da parte, nulla importato",
+  "Delivered to you (DAP, DDP) or not: without it the quote is not compared with what you pay": "Reso a te (DAP, DDP) o no: senza, il preventivo non viene confrontato con quello che paghi",
   "Some lines of this file are already imported: it cannot be set aside.": "Alcune righe di questo file sono già importate: non si può mettere da parte.",
   "This file does not look like a table of purchases or prices: no column holds dates, quantities or amounts. Nothing was read from it.": "Questo file non sembra una tabella di acquisti o di prezzi: nessuna colonna contiene date, quantità o importi. Non ne è stato letto nulla.",
 

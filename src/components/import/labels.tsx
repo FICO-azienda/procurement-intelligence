@@ -12,9 +12,11 @@ const STATUS: Record<ImportStatus, { label: Msg; className: string }> = {
   failed: { label: "Failed", className: "bg-up-wash text-up" },
 };
 const READY: { label: Msg; className: string } = { label: "Ready to import", className: "bg-ledger-wash text-ledger" };
+const SET_ASIDE: { label: Msg; className: string } = { label: "Set aside, nothing imported", className: "bg-wash text-ink-2" };
 
-export function ImportStatusBadge({ status, attention }: { status: ImportStatus; attention?: number }) {
-  const s = status === "needs_review" && attention === 0 ? READY : STATUS[status];
+/** A file completed with nothing imported was set aside: it does not read as done. */
+export function ImportStatusBadge({ status, attention, imported }: { status: ImportStatus; attention?: number; imported?: number }) {
+  const s = status === "needs_review" && attention === 0 ? READY : status === "completed" && imported === 0 ? SET_ASIDE : STATUS[status];
   return (
     <span className={cx("inline-flex h-[22px] items-center rounded-full px-2 text-[12px] font-medium whitespace-nowrap", s.className)}>
       <Tx msg={s.label} />

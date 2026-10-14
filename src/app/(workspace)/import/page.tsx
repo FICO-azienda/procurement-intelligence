@@ -135,7 +135,7 @@ export default async function ImportPage() {
                       {s.recordsRejected > 0 && <span className="ml-1.5 text-[12px] text-ink-3">· {t("{n} skipped", { n: s.recordsRejected })}</span>}
                     </Td>
                     <Td>
-                      <ImportStatusBadge status={s.status} attention={s.recordsReview} />
+                      <ImportStatusBadge status={s.status} attention={s.recordsReview} imported={s.recordsImported} />
                     </Td>
                   </tr>
                 ))}

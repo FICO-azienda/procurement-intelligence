@@ -505,7 +505,7 @@ export function QuoteForm({ quote, defaultProductId, defaultSupplierId, close }:
   const rate = foreign ? parseNumber(fx) : 1;
   const gap = quoteGapPct(price != null && rate != null ? price * rate : null, product?.lastPrice ?? null);
   const sameSupplier = !!product && product.lastSupplierId === supplierId;
-  const extras = !!(quote && (quote.moq != null || quote.leadTimeDays != null || quote.paymentTermsDays != null || quote.incoterm || quote.validUntil || quote.quantity != null || quote.notes));
+  const extras = !!(quote && (quote.moq != null || quote.leadTimeDays != null || quote.paymentTermsDays != null || quote.validUntil || quote.quantity != null || quote.notes));
 
   return (
     <SheetForm
@@ -541,6 +541,15 @@ export function QuoteForm({ quote, defaultProductId, defaultSupplierId, close }:
         </Field>
         <Field label={t("Quote date")} required error={e.date}>
           <Input name="date" type="date" defaultValue={quote?.date ?? todayISO()} aria-invalid={!!e.date} />
+        </Field>
+        {/* Asked up front: without the delivery terms a quote is never set against the price paid. */}
+        <Field label="Incoterm" error={e.incoterm} hint={t("Delivered to you (DAP, DDP) or not: without it the quote is not compared with what you pay")}>
+          <Select name="incoterm" defaultValue={quote?.incoterm ?? ""}>
+            <option value="">—</option>
+            {INCOTERMS.map((i) => (
+              <option key={i}>{i}</option>
+            ))}
+          </Select>
         </Field>
       </Grid>
 
@@ -588,14 +597,6 @@ export function QuoteForm({ quote, defaultProductId, defaultSupplierId, close }:
             <Affixed affix={t("days")}>
               <Input name="paymentTermsDays" inputMode="numeric" defaultValue={toInput(quote?.paymentTermsDays)} placeholder={supplier?.paymentTermsDays != null ? t("{n} (their usual)", { n: supplier.paymentTermsDays }) : "60"} aria-invalid={!!e.paymentTermsDays} className="pr-12" />
             </Affixed>
-          </Field>
-          <Field label="Incoterm" error={e.incoterm} hint={t("Tells whether transport is included")}>
-            <Select name="incoterm" defaultValue={quote?.incoterm ?? ""}>
-              <option value="">—</option>
-              {INCOTERMS.map((i) => (
-                <option key={i}>{i}</option>
-              ))}
-            </Select>
           </Field>
           <Field label={t("Valid until")} error={e.validUntil}>
             <Input name="validUntil" type="date" defaultValue={quote?.validUntil ?? ""} aria-invalid={!!e.validUntil} />
