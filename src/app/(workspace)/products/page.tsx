@@ -77,6 +77,10 @@ export default async function ProductsPage({ searchParams }: PageProps<"/product
   const priorityOn = one(sp.show) !== "all" && !filtered && intel.products.length >= PRIORITY_FROM;
   const priority = intel.products.filter((p) => why(p).length > 0);
   const visible = statuses.length ? inView.filter((p) => statuses.includes(decisions.get(p.product.id)!.status)) : priorityOn ? inView.filter((p) => why(p).length > 0) : inView;
+  // The numbers on the status chips count what the other filters leave: clicking one shows exactly that many.
+  const byStatus = new Map<DecisionStatus, number>();
+  for (const p of inView) byStatus.set(decisions.get(p.product.id)!.status, (byStatus.get(decisions.get(p.product.id)!.status) ?? 0) + 1);
+  const allOn = !priorityOn && statuses.length === 0;
   const toMap = mapped.totals.analysed - mapped.totals.confirmed;
   const eighty = mapped.pareto.find((x) => x.share === 0.8);
 
@@ -239,14 +243,15 @@ export default async function ProductsPage({ searchParams }: PageProps<"/product
             {t("Priority")} <span className={cx("num text-[11.5px]", priorityOn ? "text-white/60" : "text-ink-4")}>{priority.length}</span>
           </Link>
         )}
-        <Link href={intel.products.length >= PRIORITY_FROM ? "/products?show=all" : "/products"} aria-pressed={!priorityOn && !filtered} scroll={false} className={chip(!priorityOn && !filtered)}>
-          {t("All")} <span className={cx("num text-[11.5px]", !priorityOn && !filtered ? "text-white/60" : "text-ink-4")}>{intel.products.length}</span>
+        {/* "All" takes off the status only: the search, the supplier, the category, the view and the order stay. */}
+        <Link href={href({ status: null, show: intel.products.length >= PRIORITY_FROM && !(view || query.supplierId || query.category || asked) ? "all" : null })} aria-pressed={allOn} scroll={false} className={chip(allOn)}>
+          {t("All")} <span className={cx("num text-[11.5px]", allOn ? "text-white/60" : "text-ink-4")}>{inView.length}</span>
         </Link>
         {STATUSES.filter((s) => ov.totals.byStatus[s] > 0 || statuses.includes(s)).map((s) => {
           const on = statuses.length === 1 && statuses[0] === s;
-          const n = ov.totals.byStatus[s];
+          const n = byStatus.get(s) ?? 0;
           return (
-            <Link key={s} href={href({ status: on ? null : s })} aria-pressed={on} scroll={false} title={t(DECISION_STATUS[s].meaning)} className={chip(on || (statuses.length > 1 && statuses.includes(s)), n === 0)}>
+            <Link key={s} href={href({ status: on ? null : s, show: null })} aria-pressed={on} scroll={false} title={t(DECISION_STATUS[s].meaning)} className={chip(on || (statuses.length > 1 && statuses.includes(s)), n === 0)}>
               {t(DECISION_STATUS[s].label)} <span className={cx("num text-[11.5px]", on ? "text-white/60" : "text-ink-4")}>{n}</span>
             </Link>
           );

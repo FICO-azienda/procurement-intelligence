@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ComponentProps, ReactNode } from "react";
 import { ArrowDownRight, ArrowUpRight, ChevronRight, Download } from "lucide-react";
+import { BASE_PATH, STATIC_DEMO, demoFile } from "@/lib/static-demo";
 import type { ProductStatus, SupplierStatus } from "@/lib/analytics";
 import { pct } from "@/lib/format";
 import { Tx } from "@/lib/i18n/client";
@@ -40,8 +41,10 @@ export function ButtonLink({
 
 /** Link to a CSV export (a file download, not a page). */
 export function ExportLink({ href, children, className }: { href: string; children?: ReactNode; className?: string }) {
+  // A plain link: the base path is added here. In the demo the file is one the snapshot saved (data-demo-file says from where).
+  const demo = STATIC_DEMO ? { href: `${BASE_PATH}${demoFile(href)}`, "data-demo-file": href } : { href: `${BASE_PATH}${href}` };
   return (
-    <a href={href} download className={cx("inline-flex items-center gap-1 text-[13px] font-medium whitespace-nowrap text-ledger hover:underline", className)}>
+    <a {...demo} download className={cx("inline-flex items-center gap-1 text-[13px] font-medium whitespace-nowrap text-ledger hover:underline", className)}>
       <Download size={13} strokeWidth={2} /> {children ?? <Tx msg="Export CSV" />}
     </a>
   );
@@ -247,14 +250,17 @@ export function Td({
   align = "left",
   className,
   muted,
+  colSpan,
 }: {
   children?: ReactNode;
   align?: "left" | "right";
   className?: string;
   muted?: boolean;
+  colSpan?: number;
 }) {
   return (
     <td
+      colSpan={colSpan}
       className={cx(
         "h-11 border-b border-rule px-2.5 whitespace-nowrap first:pl-5 last:pr-5",
         align === "right" && "num text-right",

@@ -17,9 +17,10 @@ import {
   Upload,
   type LucideIcon,
 } from "lucide-react";
-import type { Msg } from "@/lib/i18n";
+import type { Msg, T } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/client";
-import type { SearchKind, SearchResult } from "@/lib/search";
+import type { SearchCorpus, SearchKind, SearchResult } from "@/lib/search";
+import { BASE_PATH, DEMO_SEARCH_FILE, STATIC_DEMO } from "@/lib/static-demo";
 import { track } from "@/lib/track";
 import { useEntry, type Entry } from "../entry/context";
 import { cx } from "../ui";
@@ -49,6 +50,17 @@ const KIND: Record<SearchKind, { group: Msg; icon: LucideIcon }> = {
  * suppliers, quotes, purchases and opportunities; with nothing typed it
  * offers the common actions and what was opened recently.
  */
+/**
+ * The read-only demo has no server to ask: it searches in the browser, with
+ * the same function, through what the snapshot saved (`/search/data`).
+ */
+let demoCorpus: Promise<SearchCorpus> | null = null;
+async function searchInDemo(q: string, t: T): Promise<SearchResult[]> {
+  demoCorpus ??= fetch(`${BASE_PATH}${DEMO_SEARCH_FILE}`).then((r) => r.json() as Promise<SearchCorpus>);
+  const [{ search }, corpus] = await Promise.all([import("@/lib/search"), demoCorpus]);
+  return search(q, corpus.data, corpus.intel, corpus.aliases, t);
+}
+
 export function CommandBar() {
   const router = useRouter();
   const t = useT();
@@ -98,9 +110,9 @@ export function CommandBar() {
     const timer = setTimeout(async () => {
       setSearching(true);
       try {
-        const res = await fetch(`/search?q=${encodeURIComponent(q)}`, { signal: ctrl.signal });
-        const json = (await res.json()) as { results: SearchResult[] };
-        setResults(json.results);
+        const found = STATIC_DEMO ? await searchInDemo(q, t) : ((await (await fetch(`${BASE_PATH}/search?q=${encodeURIComponent(q)}`, { signal: ctrl.signal })).json()) as { results: SearchResult[] }).results;
+        if (ctrl.signal.aborted) return;
+        setResults(found);
         setActive(0);
       } catch {
         // Aborted by the next keystroke, or offline: keep what is shown.
@@ -112,7 +124,7 @@ export function CommandBar() {
       clearTimeout(timer);
       ctrl.abort();
     };
-  }, [query]);
+  }, [query, t]);
 
   const items = useMemo<Item[]>(() => {
     const go = (href: string) => () => router.push(href);

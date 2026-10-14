@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Fragment } from "react";
 import type { Metadata } from "next";
 import { Handshake } from "lucide-react";
 import { Hint } from "@/components/hint";
@@ -53,7 +54,12 @@ export default async function OpportunitiesPage({ searchParams }: PageProps<"/op
   const rows = intel.opportunities
     .filter(inView)
     .sort((a, b) => (b.potentialSaving ?? -1) - (a.potentialSaving ?? -1) || (b.impact ?? -1) - (a.impact ?? -1));
-  const count = (v: (typeof VIEWS)[number]) => intel.opportunities.filter((o) => !v.statuses || (v.statuses as readonly string[]).includes(o.status)).length;
+  // Counted with the type chosen: the number on a tab is what clicking it shows.
+  const count = (v: (typeof VIEWS)[number]) => intel.opportunities.filter((o) => (!v.statuses || (v.statuses as readonly string[]).includes(o.status)) && (!type || o.type === type)).length;
+  // One product can raise several signals (a price increase, above its average…): they sit together, the strongest first,
+  // since their amounts describe the same money and are not to be added up.
+  const groups = new Map<string, TrackedOpportunity[]>();
+  for (const o of rows) groups.set(o.productId, [...(groups.get(o.productId) ?? []), o]);
   const types = [...new Set(intel.opportunities.map((o) => o.type))];
 
   // Decisions taken on opportunities the engine no longer detects (quote expired, price changed…).
@@ -176,17 +182,30 @@ export default async function OpportunitiesPage({ searchParams }: PageProps<"/op
               </tr>
             </thead>
             <tbody>
-              {rows.map((o) => {
-                const product = l.product(o.productId);
-                return (
+            {[...groups].map(([productId, list]) => {
+              const product = l.product(productId);
+              const grouped = list.length > 1;
+              return (
+              <Fragment key={productId}>
+                {grouped && (
+                  <tr className="bg-wash/60">
+                    <Td colSpan={5} className="h-9 py-2 whitespace-normal!">
+                      <span className="font-medium">{product?.name}</span>
+                      <span className="ml-2 text-[12px] text-ink-3">
+                        {t("{n} signals on this product · the amounts overlap: do not add them up", { n: list.length })}
+                      </span>
+                    </Td>
+                  </tr>
+                )}
+              {list.map((o) => (
                   <tr key={o.key} className={rowClass(true)}>
-                    <Td className="max-w-[260px] py-2.5 whitespace-normal!">
+                    <Td className={cx("max-w-[260px] py-2.5 whitespace-normal!", grouped && "first:pl-9")}>
                       <Link href={`/opportunities/${o.key}`} className="stretched font-medium">
-                        {product?.name}
+                        {grouped ? t(OPPORTUNITY_LABEL[o.type]) : product?.name}
                       </Link>
                       <div className="text-[12px] text-ink-3">
-                        {t(OPPORTUNITY_LABEL[o.type])}
-                        {o.alternativeSupplierId && ` · ${l.supplierName(o.alternativeSupplierId)}`}
+                        {grouped ? null : t(OPPORTUNITY_LABEL[o.type])}
+                        {o.alternativeSupplierId && `${grouped ? "" : " · "}${l.supplierName(o.alternativeSupplierId)}`}
                       </div>
                     </Td>
                     <Td className="hidden max-w-[360px] whitespace-normal! text-ink-2 @3xl:table-cell">
@@ -219,8 +238,10 @@ export default async function OpportunitiesPage({ searchParams }: PageProps<"/op
                       <OpportunityStatusSelect opportunityKey={o.key} status={o.status} size="sm" />
                     </Td>
                   </tr>
-                );
-              })}
+              ))}
+              </Fragment>
+              );
+            })}
             </tbody>
           </Table>
         )}

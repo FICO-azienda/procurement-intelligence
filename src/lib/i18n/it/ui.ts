@@ -932,4 +932,15 @@ export const ui = {
   "Select a product": "Seleziona un prodotto",
   "Select a supplier": "Seleziona un fornitore",
   "FX rate": "Tasso di cambio",
+
+  // ---- fixes after the review of 2026-10-14
+  "{~label} cannot be in the future": "{~label}: non può essere nel futuro",
+  "e.g. {value}": "es. {value}",
+  "{n} signals on this product · the amounts overlap: do not add them up": "{n} segnali su questo prodotto · gli importi si sovrappongono: non vanno sommati",
+  "Per year, at today's price": "All'anno, al prezzo di oggi",
+  "In the last 12 months these {n} products cost {spent}, each invoice at its own price (the figure on Overview and Products). The annual cost here is a year's volume at today's prices: {cost}.": "Negli ultimi 12 mesi questi {n} prodotti sono costati {spent}, ogni fattura al suo prezzo (la cifra di Panoramica e Prodotti). Il costo annuo qui è il volume di un anno ai prezzi di oggi: {cost}.",
+  "Read-only copy: to use your own data, run the app (instructions)": "Copia in sola lettura: per usare i tuoi dati, avvia l'app (istruzioni)",
+  "Read-only copy: to use your own data, run the app on your computer.": "Copia in sola lettura: per usare i tuoi dati, avvia l'app sul tuo computer.",
+  "Rows that contain “{query}”: {n}. In this copy the search reads the words shown in the table.": "Righe che contengono “{query}”: {n}. In questa copia la ricerca legge le parole mostrate nella tabella.",
+  "This combination of filters is not saved in the demo: the page shows the closest one, without some of them.": "Questa combinazione di filtri non è salvata nella demo: la pagina mostra la più vicina, senza alcuni filtri.",
 };

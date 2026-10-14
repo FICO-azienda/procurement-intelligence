@@ -3,6 +3,7 @@
 import { usePathname, useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { useT } from "@/lib/i18n/client";
+import { demoHref } from "@/lib/static-demo";
 import { Select } from "./form-kit";
 
 export function ProductPicker({
@@ -26,7 +27,7 @@ export function ProductPicker({
         }
       >
         {products.map((p) => (
-          <option key={p.id} value={p.id}>
+          <option key={p.id} value={p.id} {...demoHref(pathname, new URLSearchParams({ product: p.id }))}>
             {p.name} · {p.sku}
           </option>
         ))}

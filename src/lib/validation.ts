@@ -3,6 +3,7 @@
  * channel (invoice AI, email AI) must produce data that passes these.
  */
 import { z } from "zod";
+import { TIME_ZONE } from "./config";
 import { en, type Msg, type T } from "./i18n";
 import { parseDate, parseNumber } from "./parse";
 
@@ -34,14 +35,19 @@ const num = (label: Msg, opts: { required?: boolean; min?: number; positive?: bo
       .refine((n) => !opts.required || n != null, about("{~label} is required", label)),
   );
 
-const isoDate = (label: Msg, required = true) =>
+/** The calendar day where the company works (as `todayISO` in analytics, which this file cannot import). */
+const today = () => new Date().toLocaleDateString("sv-SE", { timeZone: TIME_ZONE });
+
+/** A date; `past` for what already happened (a purchase, a quote received): a day after today is a typing error, and would become the "current" price. */
+const isoDate = (label: Msg, required = true, past = false) =>
   z.preprocess(
     (v) => (v === "" || v == null ? null : (parseDate(v) ?? "invalid")),
     z
       .string()
       .nullable()
       .refine((d) => d !== "invalid", about("{~label} is not a valid date", label))
-      .refine((d) => !required || d != null, about("{~label} is required", label)),
+      .refine((d) => !required || d != null, about("{~label} is required", label))
+      .refine((d) => !past || d == null || d === "invalid" || d <= today(), about("{~label} cannot be in the future", label)),
   );
 
 const currency = z.preprocess(
@@ -103,7 +109,7 @@ export const productInput = z.object({
 export const purchaseInput = z.object({
   productId: id("Select a product"),
   supplierId: id("Select a supplier"),
-  date: isoDate("Date"),
+  date: isoDate("Date", true, true),
   quantity: num("Quantity", { required: true, positive: true }),
   unitPrice: num("Unit price", { required: true, min: 0 }),
   currency,
@@ -117,7 +123,7 @@ export const purchaseInput = z.object({
 export const quoteInput = z.object({
   productId: id("Select a product"),
   supplierId: id("Select a supplier"),
-  date: isoDate("Date"),
+  date: isoDate("Date", true, true),
   quantity: num("Quantity", { positive: true }),
   unitPrice: num("Unit price", { required: true, min: 0 }),
   currency,

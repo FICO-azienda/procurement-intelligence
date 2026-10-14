@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { analyze } from "./intel/engine";
 import { dataset, product, purchase, quote, supplier } from "./intel/fixtures";
-import { search } from "./search";
+import { search, searchCorpus } from "./search";
 
 const a = supplier({ name: "Acme Srl", country: "Italy" });
 // In the buyer's own customs area: a price quoted delivered is a cost to the plant, and can be set against the price paid.
@@ -55,5 +55,12 @@ describe("global search", () => {
   it("returns nothing for an empty or unknown query", () => {
     expect(find("  ")).toEqual([]);
     expect(find("zzz")).toEqual([]);
+  });
+});
+
+describe("search in the read-only demo", () => {
+  it("finds the same through the saved corpus as through the analysis", () => {
+    const corpus = JSON.parse(JSON.stringify(searchCorpus(data, intel, { productAliases: [], supplierAliases: [] })));
+    for (const q of ["paraffina", "acme", "FT 2026", "vetro 300"]) expect(search(q, corpus.data, corpus.intel, corpus.aliases)).toEqual(search(q, data, intel));
   });
 });

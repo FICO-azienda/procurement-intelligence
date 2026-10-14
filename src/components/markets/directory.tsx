@@ -12,8 +12,10 @@ import type { Facets } from "@/lib/markets/filter";
 import { BOTH_WICKS, CONTINENT_LABEL, PRODUCT_TYPE_LABEL, ROLE_LABEL, STATUSES, STATUS_LABEL, STATUS_MEANING, TECHNOLOGY_LABEL, type Continent, type MarketStatus } from "@/lib/markets/types";
 import type { Msg } from "@/lib/i18n";
 import type { MarketImport } from "@/server/markets";
+import { demoHref } from "@/lib/static-demo";
 import { ProductCategoryPicker } from "../catalog/category-picker";
 import { Input, Select } from "../form-kit";
+import { demoSearch } from "../shell/static-demo";
 import { buttonClass, cx } from "../ui";
 
 const chip = (on: boolean) =>
@@ -37,13 +39,18 @@ export function DirectoryFilters({ facets, countries, typeLabel = "Kind of conta
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
 
-  const go = (change: Record<string, string | null>) => {
+  const target = (change: Record<string, string | null>) => {
     const next = new URLSearchParams(params.toString());
     for (const [k, v] of Object.entries(change)) {
       if (v) next.set(k, v);
       else next.delete(k);
     }
     next.delete("page");
+    return next;
+  };
+  const go = (change: Record<string, string | null>) => {
+    const next = target(change);
+    if (Object.keys(change).join() === "q" && demoSearch(pathname, next)) return;
     const query = next.toString();
     start(() => router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false }));
   };
@@ -53,7 +60,7 @@ export function DirectoryFilters({ facets, countries, typeLabel = "Kind of conta
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="mr-1 w-[104px] shrink-0 text-[12px] font-medium text-ink-3">{label}</span>
         {options.map(([value, text, count]) => (
-          <button key={value} type="button" aria-pressed={at(key) === value} className={chip(at(key) === value)} onClick={() => go({ [key]: at(key) === value ? null : value })}>
+          <button key={value} type="button" aria-pressed={at(key) === value} className={chip(at(key) === value)} onClick={() => go({ [key]: at(key) === value ? null : value })} {...demoHref(pathname, target({ [key]: at(key) === value ? null : value }))}>
             {text} <span className="num text-[11.5px] opacity-70">{count}</span>
           </button>
         ))}
@@ -84,7 +91,7 @@ export function DirectoryFilters({ facets, countries, typeLabel = "Kind of conta
           <Select value={at("country") ?? ""} onChange={(e) => go({ country: e.target.value || null })}>
             <option value="">{at("continent") ? t("Every country of the continent") : t("Every country")}</option>
             {countries.map(([country, count]) => (
-              <option key={country} value={country}>
+              <option key={country} value={country} {...demoHref(pathname, target({ country }))}>
                 {countryName(country, t.locale)} ({count})
               </option>
             ))}

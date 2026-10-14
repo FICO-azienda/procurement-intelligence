@@ -24,6 +24,32 @@ export interface SearchAliases {
   supplierAliases: { supplierId: string; alias: string }[];
 }
 
+/**
+ * What the search reads of the analysis — no more, so that the read-only demo
+ * can carry it in a file (`/search/data`) and search in the browser.
+ */
+type IntelProduct = Intel["products"][number];
+export interface SearchIntel {
+  products: { product: IntelProduct["product"]; price: { current: IntelProduct["price"]["current"] } }[];
+  suppliers: { supplier: { id: string }; metrics: { annualSpend: number } }[];
+  opportunities: Intel["opportunities"];
+}
+export type SearchData = Pick<Dataset, "suppliers" | "products" | "quotes" | "purchases">;
+
+/** The parts of the data the search reads: what the demo saves for its search box. */
+export function searchCorpus(data: SearchData, intel: SearchIntel, aliases: SearchAliases) {
+  return {
+    data: { suppliers: data.suppliers, products: data.products, quotes: data.quotes, purchases: data.purchases },
+    intel: {
+      products: intel.products.map((p) => ({ product: p.product, price: { current: p.price.current } })),
+      suppliers: intel.suppliers.map((s) => ({ supplier: { id: s.supplier.id }, metrics: { annualSpend: s.metrics.annualSpend } })),
+      opportunities: intel.opportunities,
+    },
+    aliases: { productAliases: aliases.productAliases.map(({ productId, alias }) => ({ productId, alias })), supplierAliases: aliases.supplierAliases.map(({ supplierId, alias }) => ({ supplierId, alias })) },
+  };
+}
+export type SearchCorpus = ReturnType<typeof searchCorpus>;
+
 const PER_GROUP = 5;
 
 const norm = (s: string | null | undefined) =>
@@ -34,7 +60,7 @@ const norm = (s: string | null | undefined) =>
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
 
-export function search(query: string, data: Dataset, intel: Intel, aliases: SearchAliases = { productAliases: [], supplierAliases: [] }, t: T = en): SearchResult[] {
+export function search(query: string, data: SearchData, intel: SearchIntel, aliases: SearchAliases = { productAliases: [], supplierAliases: [] }, t: T = en): SearchResult[] {
   const words = norm(query).split(" ").filter(Boolean);
   if (!words.length) return [];
   // Every word must appear, each as the start of a word ("par 58" finds "Paraffina 58/60").

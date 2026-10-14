@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { BundleTable, CurrentSuppliers, LimitsForm, ObjectiveCards, ScenarioDetail, SpecialistList, TodayPortfolio } from "@/components/portfolio/strategy";
 import { ButtonLink, Empty, PageHeader, Section, buttonClass, cx } from "@/components/ui";
-import { getT } from "@/lib/data";
+import { getIntel, getT } from "@/lib/data";
 import { OBJECTIVE_LABEL, PORTFOLIO_CONFIG, type Objective } from "@/lib/portfolio/config";
 import { sourcingMix } from "@/lib/portfolio/engine";
 import { readStrategyParams, strategyHref } from "@/lib/portfolio/params";
@@ -21,7 +21,7 @@ export async function generateMetadata(): Promise<Metadata> {
  */
 export default async function StrategyPage({ searchParams }: PageProps<"/strategy">) {
   const params = readStrategyParams(await searchParams);
-  const [scope, t] = await Promise.all([getPortfolioScope(params.top), getT()]);
+  const [scope, intel, t] = await Promise.all([getPortfolioScope(params.top), getIntel(), getT()]);
   const products = scope.input.products;
   if (!products.length) {
     return (
@@ -62,7 +62,7 @@ export default async function StrategyPage({ searchParams }: PageProps<"/strateg
       />
 
       <div className="mb-6">
-        <TodayPortfolio portfolio={portfolio} products={products} t={t} />
+        <TodayPortfolio portfolio={portfolio} products={products} spent={intel.products.filter((p) => products.some((x) => x.id === p.product.id)).reduce((n, p) => n + p.metrics.annualSpend, 0)} t={t} />
       </div>
 
       <Section className="mb-6" title={portfolio.suggested ? t("Where to start: {objective}", { objective: t(OBJECTIVE_LABEL[portfolio.suggested.objective].label) }) : t("Where to start")}>

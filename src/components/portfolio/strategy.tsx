@@ -125,7 +125,7 @@ function AllocationTable({ rows, today, t }: { rows: Allocation[]; today: boolea
           <Th>{t("Product")}</Th>
           <Th>{today ? t("Supplier today") : t("In this mix")}</Th>
           <Th align="right" className="hidden @xl:table-cell">
-            {t("Per year")}
+            {today ? t("Per year, at today's price") : t("Per year")}
           </Th>
           {!today && <Th align="right">{t("Against today")}</Th>}
           <Th>{t("What the data supports")}</Th>
@@ -179,7 +179,8 @@ function AllocationTable({ rows, today, t }: { rows: Allocation[]; today: boolea
 
 // ---------------- Today ----------------
 
-export function TodayPortfolio({ portfolio, products, t }: { portfolio: Portfolio; products: PortfolioProduct[]; t: T }) {
+/** `spent`: what these products cost in the last 12 months, each invoice at its own price — the figure Overview and Products show. */
+export function TodayPortfolio({ portfolio, products, spent, t }: { portfolio: Portfolio; products: PortfolioProduct[]; spent?: number; t: T }) {
   const s = portfolio.today;
   const estimated = products.filter((p) => p.quantityStatus !== "confirmed").length;
   return (
@@ -190,6 +191,12 @@ export function TodayPortfolio({ portfolio, products, t }: { portfolio: Portfoli
     >
       <div className="px-5 pb-4">
         <Figures s={s} total={products.length} t={t} />
+        {spent != null && spent > 0 && Math.abs(spent - s.measures.cost) >= 1 && (
+          // Two yearly figures for the same products: say why they differ, or they read as a mistake.
+          <p role="note" className="mt-3 text-[12.5px] text-ink-3">
+            {t("In the last 12 months these {n} products cost {spent}, each invoice at its own price (the figure on Overview and Products). The annual cost here is a year's volume at today's prices: {cost}.", { n: products.length, spent: approx(spent), cost: approx(s.measures.cost) })}
+          </p>
+        )}
         <ul className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-[13px] text-ink-2">
           {s.measures.suppliers.map((x) => (
             <li key={x.key}>

@@ -370,16 +370,16 @@ export function PurchaseForm({
             }}
           />
           <Field label={t("Date")} required error={e.date}>
-            <Input name="date" type="date" defaultValue={purchase?.date ?? prefill?.date ?? todayISO()} aria-invalid={!!e.date} />
+            <Input name="date" type="date" max={todayISO()} defaultValue={purchase?.date ?? prefill?.date ?? todayISO()} aria-invalid={!!e.date} />
           </Field>
           <Field label={t("Quantity")} required error={e.quantity} className="col-span-1!">
             <Affixed affix={product?.unit}>
-              <Input name="quantity" inputMode="decimal" autoFocus={!!startProduct && !!startSupplier && !purchase} value={quantity} onChange={(ev) => setQuantity(ev.target.value)} placeholder="2000" aria-invalid={!!e.quantity} className="pr-12" />
+              <Input name="quantity" inputMode="decimal" autoFocus={!!startProduct && !!startSupplier && !purchase} value={quantity} onChange={(ev) => setQuantity(ev.target.value)} placeholder={t("e.g. {value}", { value: "2000" })} aria-invalid={!!e.quantity} className="pr-12" />
             </Affixed>
           </Field>
           <Field label={t("Unit price")} required error={e.unitPrice} className="col-span-1!">
             <Affixed affix={currency}>
-              <Input name="unitPrice" inputMode="decimal" value={unitPrice} onChange={(ev) => setUnitPrice(ev.target.value)} placeholder="1,58" aria-invalid={!!e.unitPrice} className="pr-12" />
+              <Input name="unitPrice" inputMode="decimal" value={unitPrice} onChange={(ev) => setUnitPrice(ev.target.value)} placeholder={t("e.g. {value}", { value: "1,50" })} aria-invalid={!!e.unitPrice} className="pr-12" />
             </Affixed>
           </Field>
         </div>
@@ -442,7 +442,7 @@ export function PurchaseForm({
           </Field>
           {foreign ? (
             <Field label={t("Exchange rate (EUR per 1 {currency})", { currency })} error={e.fxRate} hint={t("On the invoice date. Without it, this purchase stays out of the EUR totals.")}>
-              <Input name="fxRate" inputMode="decimal" value={fx} onChange={(ev) => setFx(ev.target.value)} placeholder="0,92" aria-invalid={!!e.fxRate} />
+              <Input name="fxRate" inputMode="decimal" value={fx} onChange={(ev) => setFx(ev.target.value)} placeholder={t("e.g. {value}", { value: "0,92" })} aria-invalid={!!e.fxRate} />
             </Field>
           ) : (
             <div className="hidden sm:block" />
@@ -454,7 +454,7 @@ export function PurchaseForm({
             <Input name="otherCosts" inputMode="decimal" value={other} onChange={(ev) => setOther(ev.target.value)} placeholder="0" aria-invalid={!!e.otherCosts} />
           </Field>
           <Field label={t("Invoice number")} error={e.invoiceReference} className="sm:col-span-2">
-            <Input name="invoiceReference" defaultValue={purchase?.invoiceReference ?? ""} placeholder="FT 2026/0142" />
+            <Input name="invoiceReference" defaultValue={purchase?.invoiceReference ?? ""} placeholder={t("e.g. {value}", { value: "FT 2026/0142" })} />
           </Field>
           <Field label={t("Notes")} className="sm:col-span-2">
             <Textarea name="notes" defaultValue={purchase?.notes ?? ""} rows={2} />
@@ -536,11 +536,11 @@ export function QuoteForm({ quote, defaultProductId, defaultSupplierId, close }:
         <Parties supplierId={supplierId} productId={productId} setSupplier={setSupplierId} setProduct={setProductId} errors={e} focus={quote ? null : !supplierId ? "supplier" : !productId ? "product" : null} />
         <Field label={product ? t("Quoted price per {unit}", { unit: product.unit }) : t("Quoted price")} required error={e.unitPrice}>
           <Affixed affix={currency}>
-            <Input name="unitPrice" inputMode="decimal" autoFocus={!!productId && !!supplierId && !quote} value={unitPrice} onChange={(ev) => setUnitPrice(ev.target.value)} placeholder="1,49" aria-invalid={!!e.unitPrice} className="pr-12" />
+            <Input name="unitPrice" inputMode="decimal" autoFocus={!!productId && !!supplierId && !quote} value={unitPrice} onChange={(ev) => setUnitPrice(ev.target.value)} placeholder={t("e.g. {value}", { value: "1,50" })} aria-invalid={!!e.unitPrice} className="pr-12" />
           </Affixed>
         </Field>
         <Field label={t("Quote date")} required error={e.date}>
-          <Input name="date" type="date" defaultValue={quote?.date ?? todayISO()} aria-invalid={!!e.date} />
+          <Input name="date" type="date" max={todayISO()} defaultValue={quote?.date ?? todayISO()} aria-invalid={!!e.date} />
         </Field>
         {/* Asked up front: without the delivery terms a quote is never set against the price paid. */}
         <Field label="Incoterm" error={e.incoterm} hint={t("Delivered to you (DAP, DDP) or not: without it the quote is not compared with what you pay")}>
@@ -578,24 +578,24 @@ export function QuoteForm({ quote, defaultProductId, defaultSupplierId, close }:
           </Field>
           {foreign ? (
             <Field label={t("Exchange rate (EUR per 1 {currency})", { currency })} error={e.fxRate} hint={t("Without it, the quote can't be compared.")}>
-              <Input name="fxRate" inputMode="decimal" value={fx} onChange={(ev) => setFx(ev.target.value)} placeholder="0,92" aria-invalid={!!e.fxRate} />
+              <Input name="fxRate" inputMode="decimal" value={fx} onChange={(ev) => setFx(ev.target.value)} placeholder={t("e.g. {value}", { value: "0,92" })} aria-invalid={!!e.fxRate} />
             </Field>
           ) : (
             <div className="hidden sm:block" />
           )}
           <Field label={t("Minimum order (MOQ)")} error={e.moq}>
             <Affixed affix={product?.unit}>
-              <Input name="moq" inputMode="decimal" defaultValue={toInput(quote?.moq)} placeholder="1000" aria-invalid={!!e.moq} className="pr-12" />
+              <Input name="moq" inputMode="decimal" defaultValue={toInput(quote?.moq)} placeholder={t("e.g. {value}", { value: "1000" })} aria-invalid={!!e.moq} className="pr-12" />
             </Affixed>
           </Field>
           <Field label={t("Lead time")} error={e.leadTimeDays}>
             <Affixed affix={t("days")}>
-              <Input name="leadTimeDays" inputMode="numeric" defaultValue={toInput(quote?.leadTimeDays)} placeholder={supplier?.leadTimeDays != null ? t("{n} (their usual)", { n: supplier.leadTimeDays }) : "14"} aria-invalid={!!e.leadTimeDays} className="pr-12" />
+              <Input name="leadTimeDays" inputMode="numeric" defaultValue={toInput(quote?.leadTimeDays)} placeholder={supplier?.leadTimeDays != null ? t("{n} (their usual)", { n: supplier.leadTimeDays }) : t("e.g. {value}", { value: "14" })} aria-invalid={!!e.leadTimeDays} className="pr-12" />
             </Affixed>
           </Field>
           <Field label={t("Payment terms")} error={e.paymentTermsDays} hint={t("0 = payment in advance")}>
             <Affixed affix={t("days")}>
-              <Input name="paymentTermsDays" inputMode="numeric" defaultValue={toInput(quote?.paymentTermsDays)} placeholder={supplier?.paymentTermsDays != null ? t("{n} (their usual)", { n: supplier.paymentTermsDays }) : "60"} aria-invalid={!!e.paymentTermsDays} className="pr-12" />
+              <Input name="paymentTermsDays" inputMode="numeric" defaultValue={toInput(quote?.paymentTermsDays)} placeholder={supplier?.paymentTermsDays != null ? t("{n} (their usual)", { n: supplier.paymentTermsDays }) : t("e.g. {value}", { value: "60" })} aria-invalid={!!e.paymentTermsDays} className="pr-12" />
             </Affixed>
           </Field>
           <Field label={t("Valid until")} error={e.validUntil}>
@@ -631,7 +631,7 @@ export function ProductForm({ product, deleteNote, close }: { product?: ProductD
       {product && <input type="hidden" name="id" value={product.id} />}
       <Grid>
         <Field label={t("Product name")} required error={e.name} className="sm:col-span-2">
-          <Input name="name" defaultValue={product?.name} placeholder="Paraffina 58/60" aria-invalid={!!e.name} autoFocus />
+          <Input name="name" defaultValue={product?.name} placeholder={t("e.g. {value}", { value: "Paraffina 58/60" })} aria-invalid={!!e.name} autoFocus />
         </Field>
         <Field label={t("Category")} error={e.category}>
           <Input name="category" list="entry-categories" defaultValue={product?.category ?? ""} placeholder={t("Wax")} />
@@ -649,7 +649,7 @@ export function ProductForm({ product, deleteNote, close }: { product?: ProductD
       <MoreDetails summary={t("your code, usual supplier, specifications")} defaultOpen={!!(product && (product.description || product.specs || product.technicalSpecifications))}>
         <Grid>
           <Field label={t("Your code (SKU)")} error={e.sku} hint={product ? undefined : t("Leave empty and we make one from the name")}>
-            <Input name="sku" defaultValue={product?.sku} placeholder="PAR-5860" className="font-mono uppercase" aria-invalid={!!e.sku} />
+            <Input name="sku" defaultValue={product?.sku} placeholder={t("e.g. {value}", { value: "PAR-5860" })} className="font-mono uppercase" aria-invalid={!!e.sku} />
           </Field>
           <Field label={t("Usual supplier")} error={e.currentSupplierId} hint={t("Set by your first purchase if left empty")}>
             <Select name="currentSupplierId" defaultValue={product?.currentSupplierId ?? ""}>
@@ -713,12 +713,12 @@ export function SupplierForm({ supplier, deleteNote, close }: { supplier?: Suppl
           </Field>
           <Field label={t("Payment terms")} error={e.paymentTermsDays} hint={t("0 = payment in advance")}>
             <Affixed affix={t("days")}>
-              <Input name="paymentTermsDays" inputMode="numeric" defaultValue={toInput(supplier?.paymentTermsDays)} placeholder="60" aria-invalid={!!e.paymentTermsDays} className="pr-12" />
+              <Input name="paymentTermsDays" inputMode="numeric" defaultValue={toInput(supplier?.paymentTermsDays)} placeholder={t("e.g. {value}", { value: "60" })} aria-invalid={!!e.paymentTermsDays} className="pr-12" />
             </Affixed>
           </Field>
           <Field label={t("Usual lead time")} error={e.defaultLeadTimeDays}>
             <Affixed affix={t("days")}>
-              <Input name="defaultLeadTimeDays" inputMode="numeric" defaultValue={toInput(supplier?.defaultLeadTimeDays)} placeholder="14" aria-invalid={!!e.defaultLeadTimeDays} className="pr-12" />
+              <Input name="defaultLeadTimeDays" inputMode="numeric" defaultValue={toInput(supplier?.defaultLeadTimeDays)} placeholder={t("e.g. {value}", { value: "14" })} aria-invalid={!!e.defaultLeadTimeDays} className="pr-12" />
             </Affixed>
           </Field>
           <Field label={t("Invoices in")} error={e.currency}>

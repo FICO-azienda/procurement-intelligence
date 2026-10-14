@@ -23,6 +23,8 @@ env:
   ROOT: /${{ github.event.repository.name }}
   NEXT_PUBLIC_STATIC_DEMO: "1"
   NEXT_PUBLIC_DEMO_ROOT: /${{ github.event.repository.name }}
+  # Where the demo's banner sends whoever wants to use it with their own data.
+  NEXT_PUBLIC_DEMO_REPO: ${{ github.server_url }}/${{ github.repository }}
 
 jobs:
   build:

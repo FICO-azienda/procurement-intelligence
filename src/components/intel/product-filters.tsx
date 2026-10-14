@@ -5,6 +5,8 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { Search } from "lucide-react";
 import type { Msg } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/client";
+import { demoHref, withParam } from "@/lib/static-demo";
+import { demoSearch } from "../shell/static-demo";
 import { Input, Select } from "../form-kit";
 import { cx } from "../ui";
 
@@ -33,9 +35,8 @@ export function ProductFilters({
   useEffect(() => () => clearTimeout(timer.current), []);
 
   function update(key: string, value: string) {
-    const next = new URLSearchParams(params.toString());
-    if (value) next.set(key, value);
-    else next.delete(key);
+    const next = withParam(params, key, value);
+    if (key === "q" && demoSearch(pathname, next)) return;
     startTransition(() => router.replace(`${pathname}?${next.toString()}`, { scroll: false }));
   }
 
@@ -61,7 +62,7 @@ export function ProductFilters({
         <Select value={params.get("supplier") ?? ""} onChange={(e) => update("supplier", e.target.value)}>
           <option value="">{t("All suppliers")}</option>
           {suppliers.map((s) => (
-            <option key={s.id} value={s.id}>
+            <option key={s.id} value={s.id} {...demoHref(pathname, withParam(params, "supplier", s.id))}>
               {s.name}
             </option>
           ))}
@@ -72,7 +73,9 @@ export function ProductFilters({
         <Select value={params.get("category") ?? ""} onChange={(e) => update("category", e.target.value)}>
           <option value="">{t("All categories")}</option>
           {categories.map((c) => (
-            <option key={c}>{c}</option>
+            <option key={c} {...demoHref(pathname, withParam(params, "category", c))}>
+              {c}
+            </option>
           ))}
         </Select>
       </label>
@@ -81,7 +84,7 @@ export function ProductFilters({
         <span className="w-[170px]">
           <Select value={params.get("sort") ?? defaultSort} onChange={(e) => update("sort", e.target.value === defaultSort ? "" : e.target.value)}>
             {sorts.map((s) => (
-              <option key={s.key} value={s.key}>
+              <option key={s.key} value={s.key} {...demoHref(pathname, withParam(params, "sort", s.key === defaultSort ? null : s.key))}>
                 {t(s.label)}
               </option>
             ))}

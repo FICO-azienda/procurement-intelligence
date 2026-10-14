@@ -6,8 +6,10 @@ import { ChevronDown, Search, X } from "lucide-react";
 import { NO_SELECTION, resolve, type CategoryTree, type Selection } from "@/lib/catalog/tree";
 import * as f from "@/lib/format";
 import { useT } from "@/lib/i18n/client";
+import { demoHref, withParam } from "@/lib/static-demo";
 import { ProductCategoryPicker } from "./catalog/category-picker";
 import { Input, Select } from "./form-kit";
+import { demoSearch } from "./shell/static-demo";
 import { cx } from "./ui";
 
 type Option = { id: string; name: string };
@@ -43,9 +45,8 @@ export function PurchaseFilters({ tree, suppliers }: { tree: CategoryTree; suppl
     });
   }
   function update(key: string, value: string) {
-    const next = new URLSearchParams(params.toString());
-    if (value) next.set(key, value);
-    else next.delete(key);
+    const next = withParam(params, key, value);
+    if (key === "q" && demoSearch(pathname, next)) return;
     go(next);
   }
   function pick(choice: Selection) {
@@ -91,6 +92,7 @@ export function PurchaseFilters({ tree, suppliers }: { tree: CategoryTree; suppl
         type="button"
         aria-pressed={current}
         onClick={() => pick(key ? { category: key, subcategory: null, product: null } : NO_SELECTION)}
+        {...demoHref(pathname, withParam(withParam(withParam(params, "category", key), "subcategory", null), "product", null))}
         className={cx(
           "-mb-px shrink-0 border-b-2 px-0.5 pb-2 text-[13px] whitespace-nowrap transition-colors focus-visible:text-ledger focus-visible:outline-none",
           current ? "border-ledger font-medium text-ink" : "border-transparent text-ink-3 hover:text-ink",
@@ -128,7 +130,7 @@ export function PurchaseFilters({ tree, suppliers }: { tree: CategoryTree; suppl
           <Select value={params.get("supplier") ?? ""} onChange={(e) => update("supplier", e.target.value)}>
             <option value="">{t("All suppliers")}</option>
             {suppliers.map((s) => (
-              <option key={s.id} value={s.id}>
+              <option key={s.id} value={s.id} {...demoHref(pathname, withParam(params, "supplier", s.id))}>
                 {s.name}
               </option>
             ))}

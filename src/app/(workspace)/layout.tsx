@@ -11,7 +11,7 @@ import { CommandBar } from "@/components/shell/command";
 import { LanguageMenu } from "@/components/shell/language";
 import { Notifications, type Notice } from "@/components/shell/notifications";
 import { SignOut } from "@/components/shell/sign-out";
-import { StaticDemoGuard } from "@/components/shell/static-demo";
+import { StaticDemoGuard, StaticDemoView } from "@/components/shell/static-demo";
 import { Sidebar } from "@/components/sidebar";
 import { APP_NAME, COMPANY_NAME } from "@/lib/config";
 import { getDataset, getIntel, getSettings, getT } from "@/lib/data";
@@ -19,6 +19,7 @@ import { coverageOf, todayISO } from "@/lib/analytics";
 import * as f from "@/lib/format";
 import { I18nProvider } from "@/lib/i18n/client";
 import { workspaceAccess } from "@/lib/auth/cookie";
+import { DEMO_REPO, STATIC_DEMO } from "@/lib/static-demo";
 import { attentionCount, inbox } from "@/server/imports";
 import { pendingCount, readNotifications } from "@/server/orders";
 import { directOrderOn, workspacePrincipal } from "@/server/session";
@@ -132,9 +133,18 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
                   <span>
                     <span className="font-semibold text-ledger">{t("Demo mode")}</span> {t("— these are example figures, not your company's.")}
                   </span>
-                  <Link href="/import#data" className="font-medium text-ledger hover:underline">
-                    {t("Start with your own data")}
-                  </Link>
+                  {/* The saved demo can't import anything: it says where to run the app instead of opening an import that cannot work. */}
+                  {!STATIC_DEMO ? (
+                    <Link href="/import#data" className="font-medium text-ledger hover:underline">
+                      {t("Start with your own data")}
+                    </Link>
+                  ) : DEMO_REPO ? (
+                    <a href={`${DEMO_REPO}#readme`} target="_blank" rel="noreferrer" className="font-medium text-ledger hover:underline">
+                      {t("Read-only copy: to use your own data, run the app (instructions)")}
+                    </a>
+                  ) : (
+                    <span>{t("Read-only copy: to use your own data, run the app on your computer.")}</span>
+                  )}
                 </div>
               )}
               <div className="relative z-20 flex items-center gap-3 border-b border-rule bg-canvas/95 px-4 py-2.5 backdrop-blur sm:px-8 md:sticky md:top-0 lg:px-10 print:hidden">
@@ -164,7 +174,10 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
                   {t("from {from} to {to}. Figures for the last 12 months are the sum of this period, not a year's; a yearly figure worked out from it is an estimate, and says so.", { from: f.date(s.coverage.from), to: f.date(s.coverage.to) })}
                 </p>
               )}
-              <div className="@container mx-auto max-w-[1200px] px-4 pt-6 pb-16 sm:px-8 md:pt-8 lg:px-10">{children}</div>
+              <div className="@container mx-auto max-w-[1200px] px-4 pt-6 pb-16 sm:px-8 md:pt-8 lg:px-10">
+                {STATIC_DEMO && <StaticDemoView />}
+                {children}
+              </div>
             </main>
           </div>
         </EntryProvider>
