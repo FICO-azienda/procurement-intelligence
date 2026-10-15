@@ -41,6 +41,17 @@ describe("proposing a product for an offer", () => {
     expect(suggestFor(offer({ specs: {} }), [paraffin])).toMatchObject([{ compatibility: "not_analyzed" }]);
   });
 
+  it("proposes an offer quoted per tonne for a product bought by the kilo, keeps its price as written, and leaves it short of comparable", () => {
+    const perTonne = offer({ productName: "Mock paraffin 52/54 slabs", grade: "52/54", specs: {}, unit: "t", unitPrice: 1520 });
+    const [s] = suggestFor(perTonne, [paraffin]);
+    expect(s).toMatchObject({ productId: "p1", compatibility: "possible" });
+    expect(s.reasons.join(" ")).toContain("quoted per t where you buy per kg");
+    expect(perTonne.unitPrice).toBe(1520);
+    // Proposed is not comparable: a price per tonne is never set against a price per kilo.
+    expect(shortfallsOf(perTonne, { compatibility: "validated", productUnit: "kg", landed: { complete: true }, today: TODAY, linked: true })).toContain("unit");
+    expect(groupOf(perTonne, { state: "validated", compatibility: "validated", productUnit: "kg", landed: { complete: true }, today: TODAY, linked: true })).not.toBe("comparable");
+  });
+
   it("proposes nothing across kinds or units, nothing a person declined, and never an equivalence", () => {
     expect(suggestFor(offer({ unit: "pcs" }), [paraffin])).toEqual([]);
     expect(suggestFor(offer(), [{ ...paraffin, subKey: "wick" }])).toEqual([]);

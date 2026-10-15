@@ -4,7 +4,10 @@
  * it or says it is not for that product.
  *
  * A proposal needs the same kind of thing (the catalogue's own subcategory,
- * read from the offer's words) in the same unit. That alone says nothing of
+ * read from the offer's words) in the same unit — or in a unit of the same
+ * measure that converts exactly (a price per tonne for a product bought by the
+ * kilo): then it is proposed, the price stays as written, and the offer is not
+ * comparable until it is in the product's unit. That alone says nothing of
  * equivalence: it is "not analysed". When both carry a grade written as a
  * range (52/54, 56–58 °C) the proposal says how they stand — and a grade that
  * does not overlap is proposed as another grade, never as the same product.
@@ -13,6 +16,7 @@
 import { categorize } from "../catalog/taxonomy";
 import { en, type T } from "../i18n";
 import { normalizeKey } from "../import/normalize/text";
+import { conversionFactor, normalizeUnit } from "../import/normalize/units";
 import type { Compatibility, ReplyOffer } from "./types";
 
 export interface MatchProduct {
@@ -45,6 +49,12 @@ export function rangesIn(text: string | null | undefined): Range[] {
 
 const say = ([a, b]: Range) => `${a}–${b}`;
 
+/** Two units that measure the same thing and convert exactly: t and kg, ml and l. Pieces, boxes and rolls never convert. */
+function alike(a: string, b: string): boolean {
+  const [x, y] = [normalizeUnit(a), normalizeUnit(b)];
+  return !!x && !!y && x !== y && conversionFactor(x, y) != null;
+}
+
 export function suggestFor(offer: Pick<ReplyOffer, "productName" | "grade" | "category" | "unit" | "specs" | "declinedProductIds">, products: MatchProduct[], t: T = en): Suggestion[] {
   const kind = categorize([offer.productName, offer.grade, offer.category].filter(Boolean).join(" "))?.sub.key ?? null;
   if (!kind) return [];
@@ -53,8 +63,11 @@ export function suggestFor(offer: Pick<ReplyOffer, "productName" | "grade" | "ca
   const stated = declared.length ? declared : rangesIn([offer.grade, offer.productName].filter(Boolean).join(" "));
   const out: Suggestion[] = [];
   for (const p of products) {
-    if (p.subKey !== kind || normalizeKey(p.unit) !== normalizeKey(offer.unit) || offer.declinedProductIds.includes(p.id)) continue;
-    const same = t("Same kind of product and same unit as {product}.", { product: p.name });
+    const sameUnit = normalizeKey(p.unit) === normalizeKey(offer.unit);
+    if (p.subKey !== kind || (!sameUnit && !alike(offer.unit, p.unit)) || offer.declinedProductIds.includes(p.id)) continue;
+    const same = sameUnit
+      ? t("Same kind of product and same unit as {product}.", { product: p.name })
+      : t("Same kind of product as {product}, quoted per {unit} where you buy per {productUnit}: the price stays as written.", { product: p.name, unit: offer.unit, productUnit: p.unit });
     const [mine] = rangesIn(p.name);
     if (!mine || !stated.length) {
       out.push({ productId: p.id, productName: p.name, compatibility: "not_analyzed", reasons: [same, t("Nothing says how close the two are: to analyse.")] });

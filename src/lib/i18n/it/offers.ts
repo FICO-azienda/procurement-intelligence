@@ -52,6 +52,7 @@ export const offers = {
   "for": "per",
   "Not linked to one of your products yet": "Non ancora collegata a un tuo prodotto",
   "Same kind of product and same unit as {product}.": "Stesso tipo di prodotto e stessa unità di {product}.",
+  "Same kind of product as {product}, quoted per {unit} where you buy per {productUnit}: the price stays as written.": "Stesso tipo di prodotto di {product}, quotato per {unit} mentre tu compri per {productUnit}: il prezzo resta come scritto.",
   "Nothing says how close the two are: to analyse.": "Niente dice quanto i due siano vicini: da analizzare.",
   "Its documents state two different ranges ({a} and {b}): the right data sheet is needed before anything is said.": "I suoi documenti dichiarano due intervalli diversi ({a} e {b}): serve la scheda tecnica corretta prima di dire qualcosa.",
   "It declares {theirs}; your product is {mine}: another grade.": "Dichiara {theirs}; il tuo prodotto è {mine}: un altro grado.",
