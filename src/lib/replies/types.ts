@@ -177,6 +177,8 @@ export interface ReplyOffer {
   missing: string | null;
   sourceUrl: string | null;
   sourceDocument: string | null;
+  /** The supplier's article it is a line of (supplier_articles); null until the app tied it. */
+  articleId?: string | null;
 }
 
 export interface ReplyMessage {

@@ -18,6 +18,9 @@ import { FieldStatusTag, FieldProvenance, ProductDataPanel } from "@/components/
 import { FIELDS, FIELD_KEYS, SECTION_LABEL, type Section as DataSection } from "@/lib/dataset/fields";
 import type { ProductProfile } from "@/lib/dataset/profile";
 import { getDb } from "@/db";
+import { RelatedSection } from "@/components/catalog/related-section";
+import { readProductArticles, syncArticles } from "@/server/articles";
+import { readProductRelations } from "@/server/relations";
 import { mergedInto } from "@/server/mapper";
 import { documentsOnFile, getPriorityDataset, getProfiles, linkedProductDocuments } from "@/server/product-data";
 import { ButtonLink, Crumbs, Delta, Disclosure, Empty, ExportLink, Label, PageHeader, Section, Sku, Table, Td, Th, cx, rowClass } from "@/components/ui";
@@ -83,6 +86,9 @@ export default async function ProductPage({ params, searchParams }: PageProps<"/
   const negotiation = negotiations.get(product.id) ?? null;
   // What the companies asked for a quotation answered about this product (server/replies.ts).
   const replies = await readProductOffers(db, product.id, t);
+  // The suppliers' articles that are it or could stand for it, and the products related to it (server/articles.ts, relations.ts).
+  await syncArticles(db);
+  const [articles, relations] = await Promise.all([readProductArticles(db, product.id, t), readProductRelations(db, product.id, t)]);
   const toRow = (v: OfferView) => offerRow(v, { id: product.id, unit: product.unit }, { price: price.current?.price ?? null, annualQuantity: pi.metrics.annualQuantity || null }, todayISO(), t);
   // What is shown now joins the history once the page is out, if it differs from the last estimate kept.
   keepEstimateHistory([product.id]);
@@ -278,6 +284,8 @@ export default async function ProductPage({ params, searchParams }: PageProps<"/
           </ul>
         </Section>
       )}
+
+      <RelatedSection t={t} productId={product.id} articles={articles} relations={relations} />
 
       <ProductOrderSection productId={id} className="mt-6" />
 

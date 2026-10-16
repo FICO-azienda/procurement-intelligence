@@ -183,6 +183,13 @@
       "when": 1792174427558,
       "tag": "0025_companies",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1792176680453,
+      "tag": "0026_articles_relations_invoices",
+      "breakpoints": true
     }
   ]
 }

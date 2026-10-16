@@ -127,6 +127,7 @@ export async function readDataset(db: DB): Promise<Dataset> {
       otherCosts: num(r.otherCosts),
       totalAmount: num(r.totalAmount),
       invoiceReference: r.invoiceReference,
+      invoiceId: r.invoiceId,
       invoiceLine: r.invoiceLine,
       paymentTermsDays: r.paymentTermsDays,
       incoterm: r.incoterm,

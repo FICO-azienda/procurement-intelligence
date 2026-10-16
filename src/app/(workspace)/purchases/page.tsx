@@ -69,6 +69,7 @@ export default async function PurchasesPage({ searchParams }: PageProps<"/purcha
       <PageHeader
         title={t("Purchases")}
         meta={t("Every purchase, one line each. All prices and spend are calculated from these.")}
+        actions={<ButtonLink href="/purchases/invoices">{t("Invoices")}</ButtonLink>}
       />
 
       <Suspense>
@@ -140,7 +141,14 @@ export default async function PurchasesPage({ searchParams }: PageProps<"/purcha
                       </Td>
                       <Td className="hidden @4xl:table-cell">
                         <SourceTag source={p.source} doc={p.sourceDoc} />
-                        {p.invoiceReference && <span className="ml-1.5 text-[12px] text-ink-3">{p.invoiceReference}</span>}
+                        {p.invoiceReference &&
+                          (p.invoiceId ? (
+                            <Link href={`/purchases/invoices/${p.invoiceId}`} className="ml-1.5 text-[12px] text-ledger hover:underline">
+                              {p.invoiceReference}
+                            </Link>
+                          ) : (
+                            <span className="ml-1.5 text-[12px] text-ink-3">{p.invoiceReference}</span>
+                          ))}
                       </Td>
                       <Td>
                         <PurchaseDialog purchase={p} trigger={{ label: t("Edit purchase"), iconOnly: true }} />

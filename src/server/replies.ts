@@ -21,11 +21,14 @@ import { companyLinks, deliveryDestinations, documents, marketSuppliers, product
 import { todayISO } from "@/lib/analytics";
 import { isStrategic } from "@/lib/catalog/kinds";
 import { subByKey } from "@/lib/catalog/taxonomy";
-import { en, type T } from "@/lib/i18n";
+import * as f from "@/lib/format";
+import { en, lowerFirst, type T } from "@/lib/i18n";
 import { companyKey } from "@/lib/import/normalize/text";
 import { landedCost, readLandedInput, type Landed, type LandedInput } from "@/lib/replies/landed";
 import { categoryKeyOf, offerKindOf, suggestFor, type MatchProduct, type Suggestion } from "@/lib/replies/match";
 import { pendingOf, type PendingOffers } from "@/lib/replies/pending";
+import { ARTICLE_LINK_LABEL, compatibilityFromMemory } from "@/lib/catalog/articles";
+import { articleMemory, rememberOfferDecision } from "./articles";
 import { groupOf, lineKey, offerState, shortfallsOf, supersededIds, unitFactorOf, type OfferGroup, type OfferState, type Shortfall } from "@/lib/replies/offers";
 import { elsewhereOf, planReplies, type CompanyDecision, type Elsewhere, type Records, type ReplyPlan, type StoredCompany } from "@/lib/replies/plan";
 import { parseReplyFile } from "@/lib/replies/read";
@@ -96,7 +99,7 @@ const toOffer = (r: typeof rfqOffers.$inferSelect): ReplyOffer => ({
   paymentTerms: r.paymentTerms, offeredOn: r.offeredOn, validUntil: r.validUntil, validity: r.validity, specs: r.specs ?? {},
   productId: r.productId, compatibility: isCompatibility(r.compatibility) ? r.compatibility : "not_analyzed", compatibilityNote: r.compatibilityNote, declinedProductIds: r.declinedProductIds ?? [],
   decision: r.decision === "rejected" ? "rejected" : null, decisionNote: r.decisionNote, landed: r.landed ?? {}, destinationId: r.destinationId, createdAt: r.createdAt.toISOString(),
-  technicalStatus: r.technicalStatus, missing: r.missing, sourceUrl: r.sourceUrl, sourceDocument: r.sourceDocument,
+  technicalStatus: r.technicalStatus, missing: r.missing, sourceUrl: r.sourceUrl, sourceDocument: r.sourceDocument, articleId: r.articleId,
 });
 
 const toMessage = (r: typeof rfqMessages.$inferSelect): ReplyMessage => ({
@@ -398,6 +401,8 @@ export async function setOfferCompatibility(db: DB, offerId: string, v: { compat
   await db.transaction(async (tx) => {
     await tx.update(rfqOffers).set({ compatibility: v.compatibility, compatibilityNote: note, updatedAt: new Date() }).where(eq(rfqOffers.id, offerId));
     await logEvents(tx as unknown as DB, actor, [{ action: "update", entity: "rfq_offer", entityId: offerId, field: "compatibility", oldValue: row.compatibility, newValue: v.compatibility, note, source: "ui" }]);
+    // The article remembers what a person said of it for this product.
+    await rememberOfferDecision(tx as unknown as DB, offerId, row.productId, v.compatibility, note, actor);
   });
 }
 
@@ -415,6 +420,7 @@ export async function linkOffer(db: DB, offerId: string, productId: string, v: {
   if (compatibility !== "not_analyzed" && !note) throw new ReplyError(t("Say why: a compatibility needs its reason."));
   await db.transaction(async (tx) => {
     await tx.update(rfqOffers).set({ productId, compatibility, compatibilityNote: note, declinedProductIds: (row.declinedProductIds ?? []).filter((x) => x !== productId), updatedAt: new Date() }).where(eq(rfqOffers.id, offerId));
+    await rememberOfferDecision(tx as unknown as DB, offerId, productId, compatibility, note, actor);
     await logEvents(tx as unknown as DB, actor, [
       ...(row.productId !== productId ? [{ action: "link", entity: "rfq_offer", entityId: offerId, field: "product", oldValue: row.productId, newValue: productId, note: product.name, source: "ui" }] : []),
       ...(compatibility !== row.compatibility ? [{ action: "update", entity: "rfq_offer", entityId: offerId, field: "compatibility", oldValue: row.compatibility, newValue: compatibility, note, source: "ui" }] : []),
@@ -428,6 +434,8 @@ export async function unlinkOffer(db: DB, offerId: string, actor: Actor, t: T = 
   if (!row.productId) return;
   await db.transaction(async (tx) => {
     await tx.update(rfqOffers).set({ productId: null, compatibility: "not_analyzed", compatibilityNote: null, updatedAt: new Date() }).where(eq(rfqOffers.id, offerId));
+    // What was said of their compatibility goes with the link: the article's memory of it too.
+    await rememberOfferDecision(tx as unknown as DB, offerId, row.productId, "not_analyzed", null, actor);
     await logEvents(tx as unknown as DB, actor, [{ action: "unlink", entity: "rfq_offer", entityId: offerId, field: "product", oldValue: row.productId, newValue: null, note: row.compatibility !== "not_analyzed" ? `${row.compatibility}: ${row.compatibilityNote ?? ""}` : null, source: "ui" }]);
   });
 }
@@ -660,6 +668,8 @@ interface World {
   destinations: Destination[];
   home: string | null;
   today: string;
+  /** What a person said before of each article, by product: what a new line of the same article is read with. */
+  memory: Awaited<ReturnType<typeof articleMemory>>;
 }
 
 async function readWorld(db: DB, t: T): Promise<World> {
@@ -676,13 +686,22 @@ async function readWorld(db: DB, t: T): Promise<World> {
     destinations,
     home: company?.country ?? null,
     today: todayISO(),
+    memory: await articleMemory(db, companies.flatMap((c) => c.threads.flatMap((th) => th.offers.map((o) => o.articleId))).filter((x): x is string => !!x)),
   };
 }
 
 /** How one offer stands to one product — the one it is linked to, or one the app proposes. Null: it is nothing to that product. */
 function viewOf(w: World, company: ReplyDossier, thread: ReplyThread, offer: ReplyOffer, product: MatchProduct, superseded: Map<string, string>, t: T): OfferView | null {
   const linked = offer.productId === product.id;
-  const suggestion = linked || offer.productId ? null : (suggestFor(offer, [product], t)[0] ?? null);
+  const ruled = linked || offer.productId ? null : (suggestFor(offer, [product], t)[0] ?? null);
+  // The same article met before: what a person said of it for this product comes first — proposed again, never
+  // validated by itself on a new line (lib/catalog/articles.ts).
+  const remembered = linked || offer.productId || !offer.articleId ? null : (w.memory.get(offer.articleId)?.find((m) => m.productId === product.id && m.decidedByType !== "import") ?? null);
+  const fromMemory = remembered ? compatibilityFromMemory(remembered.type) : null;
+  const suggestion =
+    remembered && fromMemory
+      ? { productId: product.id, productName: product.name, compatibility: fromMemory, reasons: [t("Said before of this article: {what} ({when}).", { what: lowerFirst(t(ARTICLE_LINK_LABEL[remembered.type])), when: f.date(remembered.createdAt.slice(0, 10)) }), ...(remembered.reason ? [remembered.reason] : []), ...(ruled?.reasons ?? [])] }
+      : ruled;
   if (!linked && !suggestion) return null;
   const destination = (offer.destinationId ? w.destinations.find((d) => d.id === offer.destinationId) : null) ?? defaultOf(w.destinations);
   const landed = landedCost(offer, readLandedInput(offer.landed), { customs: crossesCustoms(company.country, w.home), destinationCity: destination?.city ?? null }, t);

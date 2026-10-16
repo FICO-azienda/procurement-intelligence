@@ -57,6 +57,9 @@ import { referenceRate } from "@/server/fx";
 import { DestinationError, removeDestination, saveDestination, type DestinationField } from "@/server/destinations";
 import { ensureWorkspaceOrg } from "@/server/orgs";
 import { CompanyError, addCompanyContact, keepCompaniesInSync, relateCompanies, removeCompanyContact, undoCompanyRelation } from "@/server/companies";
+import { keepArticlesInSync } from "@/server/articles";
+import { RelationError, recordProductRelation, withdrawProductRelation } from "@/server/relations";
+import { InvoiceError, attachInvoiceDocument } from "@/server/invoices";
 import { setupCompany } from "@/server/setup";
 import type { SetupErrors, SetupField } from "@/lib/setup";
 import { summarise, type PlanSummary } from "@/lib/replies/plan";
@@ -94,8 +97,10 @@ const invalid = (t: T, errors: FieldErrors): FormState => ({
 
 function refresh() {
   revalidatePath("/", "layout");
-  // A write may have brought a record of a company not on file yet: its company follows (server/companies.ts).
+  // A write may have brought a record of a company not on file yet: its company follows (server/companies.ts)…
   keepCompaniesInSync();
+  // …and a new invoice link, offer line or purchase number: its supplier's article and its invoice (server/articles.ts).
+  keepArticlesInSync();
   // A write may have created a supplier that a VAT number proves to be one already on file (server/suppliers.ts)…
   keepSuppliersResolved();
   // …and may change what a price could be negotiated to: the history of the estimates follows (server/negotiation.ts).
@@ -1701,4 +1706,53 @@ export async function removeCompanyContactAction(contactId: string): Promise<Sim
   const denied = await refuse("data.edit");
   if (denied) return denied;
   return company((db, actor, t) => removeCompanyContact(db, contactId, actor, t));
+}
+
+// ---------------- What the buyer's products are to each other ----------------
+
+async function relation(run: (db: Awaited<ReturnType<typeof getDb>>, actor: Actor, t: T) => Promise<unknown>): Promise<SimpleResult> {
+  const t = await getT();
+  try {
+    await run(await getDb(), await actorOf(), t);
+    refresh();
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof RelationError) return { ok: false, error: err.message };
+    console.error("[relations]", err);
+    return { ok: false, error: t("Something went wrong.") };
+  }
+}
+
+/** A person says what two products are to each other: for an application and with the reason when it is an equivalence or an alternative. */
+export async function recordProductRelationAction(a: string, b: string, v: { type: string; application?: string | null; reason?: string | null }): Promise<SimpleResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
+  return relation((db, actor, t) => recordProductRelation(db, a, b, v, actor, t));
+}
+
+export async function withdrawProductRelationAction(id: string): Promise<SimpleResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
+  return relation((db, actor, t) => withdrawProductRelation(db, id, actor, t));
+}
+
+// ---------------- Invoices ----------------
+
+/** The original of an invoice, attached by a person. */
+export async function attachInvoiceDocumentAction(invoiceId: string, formData: FormData): Promise<SimpleResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
+  const t = await getT();
+  const file = formData.get("file");
+  if (!(file instanceof File) || !file.size) return { ok: false, error: t("Choose the file.") };
+  if (file.size > 20 * 1024 * 1024) return { ok: false, error: t("This file is larger than 20 MB.") };
+  try {
+    await attachInvoiceDocument(await getDb(), invoiceId, { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()), mimeType: file.type || null }, await actorOf(), t);
+    refresh();
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof InvoiceError) return { ok: false, error: err.message };
+    console.error("[invoices]", err);
+    return { ok: false, error: t("Something went wrong.") };
+  }
 }

@@ -1,0 +1,23 @@
+/** Italian for the invoices: each supplier invoice once, with its lines and its original. */
+export const invoices = {
+  "An invoice appears when purchases with its number are imported.": "Una fattura compare quando vengono importati acquisti con il suo numero.",
+  "Attach the original": "Allega l'originale",
+  "Choose the file.": "Scegli il file.",
+  "Each supplier invoice once, with its lines and the original document when it is on file.": "Ogni fattura di fornitore una sola volta, con le sue righe e il documento originale quando è in archivio.",
+  "Invoice number or supplier": "Numero di fattura o fornitore",
+  "Invoice {number}": "Fattura {number}",
+  "Invoices": "Fatture",
+  "No invoice matches": "Nessuna fattura corrisponde",
+  "No invoice on file yet": "Ancora nessuna fattura in archivio",
+  "Not on file: its lines came from a file that is not the invoice itself, or were written by hand.": "Non in archivio: le sue righe vengono da un file che non è la fattura stessa, o sono state scritte a mano.",
+  "Original": "Originale",
+  "Search the invoices": "Cerca tra le fatture",
+  "The document the invoice was read from. Kept as a copy: as private as the data itself.": "Il documento da cui è stata letta la fattura. Conservato in copia: riservato quanto i dati.",
+  "The original": "L'originale",
+  "This file is larger than 20 MB.": "Questo file supera i 20 MB.",
+  "This invoice is no longer on file.": "Questa fattura non è più in archivio.",
+  "on file": "in archivio",
+  "{n} invoice": "{n} fattura",
+  "{n} invoices": "{n} fatture",
+  "The invoice's original": "L'originale della fattura",
+};

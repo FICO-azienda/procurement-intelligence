@@ -16,6 +16,7 @@ import * as svc from "@/server/imports";
 import { keepEstimateHistory } from "@/server/negotiation";
 import { keepSuppliersResolved } from "@/server/suppliers";
 import { keepCompaniesInSync } from "@/server/companies";
+import { keepArticlesInSync } from "@/server/articles";
 
 export type ActionResult = { ok: boolean; error?: string; code?: string };
 
@@ -25,8 +26,9 @@ const done = (): ActionResult => {
   keepSuppliersResolved();
   // New purchases change the price paid: the history of the negotiation estimates follows.
   keepEstimateHistory();
-  // A new supplier is a role of a company: its company follows.
+  // A new supplier is a role of a company: its company follows; new lines get their article and their invoice.
   keepCompaniesInSync();
+  keepArticlesInSync();
   return { ok: true };
 };
 

@@ -284,6 +284,8 @@ export const purchases = pgTable(
     /** quantity × unit_price + freight + other costs, in document currency. */
     totalAmount: money("total_amount").notNull(),
     invoiceReference: text("invoice_reference"),
+    /** The invoice it is a line of (invoices): set by `syncInvoices` from the supplier and the number, never by hand. */
+    invoiceId: uuid("invoice_id").references((): AnyPgColumn => invoices.id, { onDelete: "set null" }),
     /** The line's number on the invoice: two equal lines of one invoice are two purchases, the same line read twice is one. */
     invoiceLine: integer("invoice_line"),
     paymentTermsDays: integer("payment_terms_days"),
@@ -451,6 +453,8 @@ export const supplierProducts = pgTable(
     /** User decision on whether this offer can be compared with what we buy. */
     comparabilityOverride: text("comparability_override", { enum: ["comparable", "partial", "not"] }),
     comparabilityNote: text("comparability_note"),
+    /** The supplier's article this record is about (supplier_articles): one entity whichever archive names it. */
+    articleId: uuid("article_id").references((): AnyPgColumn => supplierArticles.id, { onDelete: "set null" }),
     ...timestamps,
   },
   (t) => [uniqueIndex("supplier_products_pair_idx").on(t.supplierId, t.productId)],
@@ -603,6 +607,8 @@ export const rfqRequests = pgTable(
     sentAt: date("sent_at").notNull(),
     /** Where the goods were asked to be delivered, as the request said it: a later change of the company's destinations does not reach it. Null: asked before this was kept. */
     destination: text("destination"),
+    /** The company asked (companies): what ties the request to the conversation that answers it. */
+    companyId: uuid("company_id").references((): AnyPgColumn => companies.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("rfq_requests_supplier_idx").on(t.supplierKey)],
@@ -981,6 +987,8 @@ export const rfqThreads = pgTable(
       .references(() => rfqSuppliers.id, { onDelete: "cascade" }),
     /** The request's own reference in the source ("RFQ-WAX-001"): the same reference is the same conversation, read again. */
     reference: text("reference"),
+    /** The request the buyer said it sent that this conversation answers (rfq_requests): tied by the company and the products, or by a person. */
+    requestId: uuid("request_id").references((): AnyPgColumn => rfqRequests.id, { onDelete: "set null" }),
     /** What was asked about, in the buyer's own words: a company can be in several. */
     categories: jsonb("categories").$type<string[]>().notNull().default([]),
     /** REPLY_STATUSES (lib/replies/types.ts), and the status as the source wrote it. */
@@ -1066,6 +1074,8 @@ export const rfqOffers = pgTable(
     sourceDocument: text("source_document"),
     original: jsonb("original").$type<Record<string, unknown>>(),
     sourceFile: text("source_file"),
+    /** The supplier's article this record is about (supplier_articles): one entity whichever archive names it. */
+    articleId: uuid("article_id").references((): AnyPgColumn => supplierArticles.id, { onDelete: "set null" }),
     ...timestamps,
   },
   (t) => [uniqueIndex("rfq_offers_line_idx").on(t.threadId, t.key)],
@@ -1356,6 +1366,8 @@ export const orderProducts = pgTable(
     enabledAt: timestamp("enabled_at", { withTimezone: true }),
     enabledBy: text("enabled_by"),
     suspendedAt: timestamp("suspended_at", { withTimezone: true }),
+    /** The supplier's article this record is about (supplier_articles): one entity whichever archive names it. */
+    articleId: uuid("article_id").references((): AnyPgColumn => supplierArticles.id, { onDelete: "set null" }),
     ...timestamps,
   },
   (t) => [index("order_products_org_idx").on(t.supplierOrgId)],
@@ -1632,3 +1644,125 @@ export const companyContacts = pgTable("company_contacts", {
   createdBy: text("created_by"),
   ...timestamps,
 });
+
+// ---------------- Relations between the buyer's own products ----------------
+
+/**
+ * What a person said two of the buyer's products are to each other (lib/catalog/technical.ts): a possible equivalent
+ * to verify, an equivalent validated for an application, the same family in another grade, a technical alternative
+ * for an application, or not equivalent. The rules only ever propose, and a proposal is not stored. A decision
+ * changed is a new row; the one before stays, `superseded`. Withdrawn: the pair is proposed again as the rules see it.
+ */
+export const productRelations = pgTable(
+  "product_relations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    productA: uuid("product_a")
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    productB: uuid("product_b")
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    /** possible_equivalent | equivalent_validated | same_family | technical_alternative | not_equivalent */
+    type: text("type").notNull(),
+    /** The use it was judged for: an equivalence can depend on it. */
+    application: text("application"),
+    reason: text("reason"),
+    /** active | superseded | withdrawn */
+    state: text("state").notNull().default("active"),
+    decidedBy: text("decided_by").notNull(),
+    decidedByType: text("decided_by_type").notNull().default("user"),
+    evidenceDocumentId: uuid("evidence_document_id").references(() => documents.id, { onDelete: "set null" }),
+    supersedesId: uuid("supersedes_id").references((): AnyPgColumn => productRelations.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("product_relations_a_idx").on(t.productA), index("product_relations_b_idx").on(t.productB)],
+);
+
+// ---------------- The articles of the suppliers ----------------
+
+/**
+ * An article as a company sells it — its code, its own name, the specification it states — whichever part of the app
+ * met it: an invoice (supplier_products), an offer (rfq_offers), the portal's catalogue (order_products). One entity
+ * for the three, each keeping its own data and pointing here with `article_id` (lib/catalog/articles.ts,
+ * server/articles.ts). An article exists without any product of the buyer: a price list or an offer never makes one.
+ */
+export const supplierArticles = pgTable(
+  "supplier_articles",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    companyId: uuid("company_id").references(() => companies.id, { onDelete: "set null" }),
+    /** The supplier record it was bought from, when it was bought. */
+    supplierId: uuid("supplier_id").references(() => suppliers.id, { onDelete: "set null" }),
+    /** The company's own code and name, as written. */
+    code: text("code"),
+    name: text("name").notNull(),
+    /** What it is matched by inside its company: its code, else its name read the same way every time. */
+    key: text("key").notNull(),
+    statedSpecs: jsonb("stated_specs").$type<Record<string, string>>().notNull().default({}),
+    unit: text("unit"),
+    /** invoice | offer | portal | price_list | manual */
+    source: text("source").notNull(),
+    firstSeen: date("first_seen"),
+    lastSeen: date("last_seen"),
+    /** active | discontinued */
+    status: text("status").notNull().default("active"),
+    ...timestamps,
+  },
+  (t) => [index("supplier_articles_company_idx").on(t.companyId, t.key)],
+);
+
+/**
+ * What an article is to one of the buyer's products, as decided: identical (it is the product — what an invoice the
+ * user approved says), or, for an article of another supplier, a possible equivalent, an equivalent validated for an
+ * application, the same family, a technical alternative, not equivalent. The memory of the decisions: the same article
+ * met again is read for what a person said. A change is a new row; the one before stays, `superseded`.
+ */
+export const articleLinks = pgTable(
+  "article_links",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    articleId: uuid("article_id")
+      .notNull()
+      .references(() => supplierArticles.id, { onDelete: "cascade" }),
+    productId: uuid("product_id")
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    /** identical | possible_equivalent | equivalent_validated | same_family | technical_alternative | not_equivalent */
+    type: text("type").notNull(),
+    application: text("application"),
+    reason: text("reason"),
+    /** active | superseded | withdrawn */
+    state: text("state").notNull().default("active"),
+    /** import: an invoice the user approved · user: a person · system: the app's own bookkeeping */
+    decidedByType: text("decided_by_type").notNull(),
+    decidedBy: text("decided_by"),
+    evidenceDocumentId: uuid("evidence_document_id").references(() => documents.id, { onDelete: "set null" }),
+    supersedesId: uuid("supersedes_id").references((): AnyPgColumn => articleLinks.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("article_links_article_idx").on(t.articleId), index("article_links_product_idx").on(t.productId)],
+);
+
+// ---------------- Invoices ----------------
+
+/**
+ * An invoice of a supplier: what its lines (the purchases) were billed on. One per supplier and number, made from the
+ * purchases on file (server/invoices.ts) — the purchases are the facts and keep every value they have; totals are
+ * worked out from them, never stored here. The document it was read from, when a file was imported.
+ */
+export const invoices = pgTable(
+  "invoices",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    supplierId: uuid("supplier_id")
+      .notNull()
+      .references(() => suppliers.id, { onDelete: "cascade" }),
+    number: text("number").notNull(),
+    /** The date of its lines; the earliest when they differ. */
+    date: date("date"),
+    documentId: uuid("document_id").references(() => documents.id, { onDelete: "set null" }),
+    ...timestamps,
+  },
+  (t) => [uniqueIndex("invoices_supplier_number_idx").on(t.supplierId, t.number)],
+);

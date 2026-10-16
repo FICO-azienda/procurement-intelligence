@@ -89,6 +89,8 @@ export interface PurchaseData {
   otherCosts: number;
   totalAmount: number;
   invoiceReference: string | null;
+  /** The invoice it is a line of (invoices), once the app tied it. */
+  invoiceId?: string | null;
   /** The line's number on the invoice, when the document gave one. */
   invoiceLine?: number | null;
   paymentTermsDays: number | null;

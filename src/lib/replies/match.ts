@@ -14,6 +14,7 @@
  * Similar names decide nothing, and "validated" is never proposed.
  */
 import { categorize } from "../catalog/taxonomy";
+import { gradeFit, rangesIn, sayRange } from "../catalog/technical";
 import { en, type T } from "../i18n";
 import { normalizeUnit, unitsPer } from "../import/normalize/units";
 import type { Compatibility, ReplyOffer } from "./types";
@@ -34,19 +35,9 @@ export interface Suggestion {
   reasons: string[];
 }
 
-type Range = [number, number];
-
-/** Grades written as a range of two numbers: "52/54", "56–58 °C", "51-54". Decimals and percentages are not grades. */
-export function rangesIn(text: string | null | undefined): Range[] {
-  const out: Range[] = [];
-  for (const m of (text ?? "").matchAll(/(?<![\d.,])(\d{2,3})\s*[/–-]\s*(\d{2,3})(?![\d.,]|\s*%)/g)) {
-    const [a, b] = [Number(m[1]), Number(m[2])];
-    if (a < b && b - a <= 20 && !out.some((r) => r[0] === a && r[1] === b)) out.push([a, b]);
-  }
-  return out;
-}
-
-const say = ([a, b]: Range) => `${a}–${b}`;
+/** Grades written as a range of two numbers ("52/54", "56–58 °C"): read by the one technical engine of the app (catalog/technical.ts). */
+export { rangesIn };
+const say = sayRange;
 
 
 /** The kind of thing an offer is, read from its own words: the catalogue's subcategory. Null: its words say none. */
@@ -67,20 +58,20 @@ export function suggestFor(offer: Pick<ReplyOffer, "productName" | "grade" | "ca
     const same = sameUnit
       ? t("Same kind of product and same unit as {product}.", { product: p.name })
       : t("Same kind of product as {product}, quoted per {unit} where you buy per {productUnit}: the price stays as written.", { product: p.name, unit: offer.unit, productUnit: p.unit });
-    const [mine] = rangesIn(p.name);
-    if (!mine || !stated.length) {
+    const mine = rangesIn(p.name).slice(0, 1);
+    const g = gradeFit(mine, stated);
+    if (g.fit === "unknown" || (g.fit === "contradictory" && !mine.length)) {
       out.push({ productId: p.id, productName: p.name, compatibility: "not_analyzed", reasons: [same, t("Nothing says how close the two are: to analyse.")] });
       continue;
     }
-    if (stated.length > 1) {
+    if (g.fit === "contradictory") {
       out.push({ productId: p.id, productName: p.name, compatibility: "awaiting_specs", reasons: [same, t("Its documents state two different ranges ({a} and {b}): the right data sheet is needed before anything is said.", { a: say(stated[0]), b: say(stated[1]) })] });
       continue;
     }
-    const [theirs] = stated;
-    const overlap = Math.min(mine[1], theirs[1]) - Math.max(mine[0], theirs[0]);
-    if (overlap <= 0) out.push({ productId: p.id, productName: p.name, compatibility: "not_equivalent", reasons: [t("It declares {theirs}; your product is {mine}: another grade.", { theirs: say(theirs), mine: say(mine) })] });
-    else if (theirs[0] === mine[0] && theirs[1] === mine[1]) out.push({ productId: p.id, productName: p.name, compatibility: "possible", reasons: [same, t("It declares {theirs}, the grade of your product: to verify on its data sheet and on a sample.", { theirs: say(theirs) })] });
-    else out.push({ productId: p.id, productName: p.name, compatibility: "possible", reasons: [same, t("It declares {theirs}, which only partly matches your {mine}: to verify on its data sheet and on a sample.", { theirs: say(theirs), mine: say(mine) })] });
+    const [theirs, ours] = [g.theirs!, g.mine!];
+    if (g.fit === "apart") out.push({ productId: p.id, productName: p.name, compatibility: "not_equivalent", reasons: [t("It declares {theirs}; your product is {mine}: another grade.", { theirs: say(theirs), mine: say(ours) })] });
+    else if (g.fit === "same") out.push({ productId: p.id, productName: p.name, compatibility: "possible", reasons: [same, t("It declares {theirs}, the grade of your product: to verify on its data sheet and on a sample.", { theirs: say(theirs) })] });
+    else out.push({ productId: p.id, productName: p.name, compatibility: "possible", reasons: [same, t("It declares {theirs}, which only partly matches your {mine}: to verify on its data sheet and on a sample.", { theirs: say(theirs), mine: say(ours) })] });
   }
   return out;
 }
