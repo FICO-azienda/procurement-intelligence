@@ -49,8 +49,11 @@ export function rangesIn(text: string | null | undefined): Range[] {
 const say = ([a, b]: Range) => `${a}–${b}`;
 
 
+/** The kind of thing an offer is, read from its own words: the catalogue's subcategory. Null: its words say none. */
+export const offerKindOf = (offer: Pick<ReplyOffer, "productName" | "grade" | "category">): string | null => categorize([offer.productName, offer.grade, offer.category].filter(Boolean).join(" "))?.sub.key ?? null;
+
 export function suggestFor(offer: Pick<ReplyOffer, "productName" | "grade" | "category" | "unit" | "specs" | "declinedProductIds">, products: MatchProduct[], t: T = en): Suggestion[] {
-  const kind = categorize([offer.productName, offer.grade, offer.category].filter(Boolean).join(" "))?.sub.key ?? null;
+  const kind = offerKindOf(offer);
   if (!kind) return [];
   // The grade the offer declares: its melting point when it states one, else the range in its own name.
   const declared = rangesIn(offer.specs.melting_point);

@@ -37,6 +37,8 @@ import { connectedProviders } from "@/server/providers";
 import { getNegotiations } from "@/server/negotiation";
 import { WEB_RESEARCH, getResearch } from "@/server/research";
 import { discoveryRequest, getMarketViews, readProductCosts, readRfqLines, readSourcing } from "@/server/sourcing";
+import { decisionFor } from "@/lib/intel/decision";
+import { PendingOffersSection } from "@/components/replies/pending-offers";
 
 export async function generateMetadata({ params }: PageProps<"/sourcing/[id]">): Promise<Metadata> {
   const { id } = await params;
@@ -57,6 +59,9 @@ export default async function ProductSourcingPage({ params }: PageProps<"/sourci
   const v = views.get(id);
   const product = data.products.find((p) => p.id === id);
   if (!v || !product) notFound();
+  // The offers received still to verify: named here, compared nowhere until they can be.
+  const pending = intel.pending[id] ?? null;
+  const verify = pending?.toVerify.length ? (decisionFor(intel, id, t)?.nextActions.find((a) => a.kind === "verify_offers") ?? null) : null;
   const db = await getDb();
   const built = await discoveryRequest(db, id, t);
   const [row] = await db.select().from(productsTable).where(eq(productsTable.id, id));
@@ -383,6 +388,8 @@ export default async function ProductSourcingPage({ params }: PageProps<"/sourci
         </div>
       </Section>
 
+      {pending && pending.toVerify.length > 0 && <PendingOffersSection className="mt-5" t={t} pending={pending} productId={id} today={intel.asOf} />}
+
       {costs && (
         <Section className="mt-5" title={t("Quotes and true cost")} description={t("What you pay today next to each quote, once transport, duty, stock and payment terms are counted. Every figure says where it comes from.")} flush>
           <TrueCostTable productId={id} unit={unit} currentSupplier={v.currentSupplier?.name ?? null} costs={costs} t={t} />
@@ -415,7 +422,8 @@ export default async function ProductSourcingPage({ params }: PageProps<"/sourci
       </Section>
 
       <Section className="mt-5" title={t("Next step")}>
-        <p className="text-[14px] font-medium">{v.next.label}</p>
+        {/* Offers came already: the next step is to verify them (decision.ts says it), not to ask again. */}
+        <p className="text-[14px] font-medium">{verify?.label ?? v.next.label}</p>
         <div className="mt-3">
           <Label>{t("What is still missing")}</Label>
           <ul className="mt-1.5 list-disc space-y-0.5 pl-5 text-[13px] text-ink-2">

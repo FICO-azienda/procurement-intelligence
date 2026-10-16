@@ -10,6 +10,7 @@ import { getDb } from "@/db";
 import { getMarketViews, readProductCosts } from "@/server/sourcing";
 import { getDataset, getIntel, getT } from "@/lib/data";
 import { compareColumns, decisionFor } from "@/lib/intel/decision";
+import { PendingOffersSection } from "@/components/replies/pending-offers";
 import { explain } from "@/lib/intel/explain";
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -47,6 +48,9 @@ export default async function ComparePage({ searchParams }: PageProps<"/compare"
   const columns = compareColumns(pi, intel.config, t);
   const d = decisionFor(intel, product.id, t)!;
   const alternatives = columns.filter((c) => !c.isCurrent).length;
+  // Offers that came and are not comparable yet: named next to the price paid, never set against it.
+  const pending = intel.pending[product.id] ?? null;
+  const waiting = pending?.toVerify.length ?? 0;
   // The quotes on file, on true cost: the same table as on the product's market page.
   const costs = (await readProductCosts(await getDb(), intel, (await getMarketViews()).views, t)).get(product.id) ?? null;
 
@@ -69,7 +73,15 @@ export default async function ComparePage({ searchParams }: PageProps<"/compare"
             {t("Every supplier with a price for one product, side by side. Prices only for now")} <Hint text={EXPLAIN.trueCost} label={t("What is not included")} />
           </span>
         }
-        actions={<QuoteDialog defaultProductId={product.id} trigger={{ label: t("Add quote"), variant: "primary" }} />}
+        actions={
+          waiting ? (
+            <ButtonLink href={`/products/${product.id}#offers`} variant="primary">
+              {t("See the offers received")}
+            </ButtonLink>
+          ) : (
+            <QuoteDialog defaultProductId={product.id} trigger={{ label: t("Add quote"), variant: "primary" }} />
+          )
+        }
       />
 
       <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
@@ -84,7 +96,9 @@ export default async function ComparePage({ searchParams }: PageProps<"/compare"
 
       <SupplierComparison product={product} columns={columns} rows={pi.comparison} quotes={data.quotes.filter((q) => q.productId === product.id)} />
 
-      {alternatives === 0 && columns.length > 0 && (
+      {pending && waiting > 0 && <PendingOffersSection className="mt-4" t={t} pending={pending} productId={product.id} today={intel.asOf} />}
+
+      {alternatives === 0 && columns.length > 0 && !waiting && (
         <div className="mt-4 flex flex-wrap items-center gap-3 rounded-lg border border-dashed border-rule-strong px-5 py-4 text-[13.5px]">
           <span className="min-w-[240px] flex-1 text-ink-2">{t("Only one supplier on file for this product. Add a quote from another supplier to see how your price compares.")}</span>
           <QuoteDialog defaultProductId={product.id} trigger={{ label: t("Add quote") }} />

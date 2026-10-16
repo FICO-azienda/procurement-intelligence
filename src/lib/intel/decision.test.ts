@@ -566,11 +566,56 @@ describe("edge cases", () => {
       if (i % 2 === 0) quotes.push(quote({ productId: p.id, supplierId: suppliers[(i + 7) % suppliers.length].id, date: "2026-09-12", unitPrice: 1.05, moq: 50, incoterm: "DAP" }));
     }
     const intel = analyze(dataset({ suppliers, products, purchases, quotes }), [], [], AS_OF);
-    const t = performance.now();
+    // The work itself, in CPU time: next to the rest of the suite the wall clock measures the other tests too.
+    const t = process.cpuUsage();
     const ov = purchasingOverview(intel);
-    const ms = performance.now() - t;
+    const used = process.cpuUsage(t);
+    const ms = (used.user + used.system) / 1000;
     // Typically well under 200 ms; the budget leaves room for a busy test machine.
     expect(ms).toBeLessThan(2000);
     expect(ov.products).toHaveLength(1000);
+  });
+});
+
+describe("offers received that are still to verify", () => {
+  const pendingFor = (productId: string, n: number, expiresOn: string | null = "2026-12-31") => ({
+    [productId]: {
+      toVerify: Array.from({ length: n }, (_, i) => ({ offerId: `o${i}`, companyId: `c${i}`, company: `Mock Company ${i + 1}`, product: "Mock widget", quoted: "1.30 EUR/kg FCA Mockport", quantity: 20000, unit: "kg", validUntil: i === 0 ? expiresOn : "2026-12-31", receivedOn: "2026-09-28", state: "quote_received" as const, shortfalls: ["not_linked", "compatibility", "landed"] as ("not_linked" | "compatibility" | "landed")[], link: "proposed" as const })),
+      companies: Array.from({ length: n }, (_, i) => `Mock Company ${i + 1}`),
+      expiring: expiresOn && expiresOn <= "2026-10-08" ? [{ offerId: "o0", companyId: "c0", company: "Mock Company 1", product: "Mock widget", quoted: "1.30 EUR/kg", quantity: null, unit: "kg", validUntil: expiresOn, receivedOn: "2026-09-28", state: "quote_received" as const, shortfalls: [], link: "proposed" as const }] : [],
+      expired: 0,
+      awaitingPrice: 0,
+    },
+  });
+
+  it("are named in the status, the next step and the summary — and enter no figure", () => {
+    const { a, p, purchases } = widget([1.5, 1.5, 1.5, 1.5]);
+    const { intel } = run({ suppliers: [a], products: [p], purchases });
+    const before = decisionFor(intel, p.id)!;
+    intel.pending = pendingFor(p.id, 3);
+    const d = decisionFor(intel, p.id)!;
+    expect(d.statusReason).toBe("3 offers received are still to verify: none can be compared yet.");
+    expect(d.nextActions[0]).toMatchObject({ kind: "verify_offers", label: "Verify the 3 offers received" });
+    expect(d.nextActions.some((x) => x.kind === "request_quote")).toBe(false);
+    expect(d.summary.join(" ")).toContain("3 offers from Mock Company 1, Mock Company 2 and Mock Company 3 have arrived and are still to verify");
+    expect(d.summary.join(" ")).not.toContain("there is no comparable price from another supplier yet");
+    expect(d.pendingOffers).toMatchObject({ count: 3 });
+    // No figure moved: no saving, no market reference, no alternative.
+    expect([d.potentialSaving, d.market.type, d.alternativesTotal]).toEqual([before.potentialSaving, before.market.type, before.alternativesTotal]);
+    expect(actionStep("verify_offers")).toEqual({ label: "See the offers received", target: "offers" });
+  });
+
+  it("say when one ends soon, and the whole page counts them", () => {
+    const { a, p, purchases } = widget([1.5, 1.5, 1.5, 1.5]);
+    const { intel } = run({ suppliers: [a], products: [p], purchases });
+    intel.pending = pendingFor(p.id, 2, "2026-10-05");
+    expect(decisionFor(intel, p.id)!.nextActions[0].label).toBe("Verify the 2 offers received: one expires on 05/10/2026");
+    const ov = purchasingOverview(intel);
+    expect(ov.executiveSummary.join(" ")).toContain("2 offers received for 1 product are still to verify: they enter no figure until they can be compared.");
+    // What came lately is a change too: one line per company, said for what it is.
+    expect(ov.recentChanges.filter((c) => c.kind === "offer").map((c) => [c.text, c.pct])).toEqual([
+      ["Offer received from Mock Company 1, to verify", null],
+      ["Offer received from Mock Company 2, to verify", null],
+    ]);
   });
 });

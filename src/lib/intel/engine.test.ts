@@ -481,9 +481,12 @@ describe("scale", () => {
       return purchase({ productId: p.id, supplierId: suppliers[(i % 1000) % 500].id, date: `2026-${month}-${String((i % 27) + 1).padStart(2, "0")}`, quantity: 100 + (i % 7) * 10, unitPrice: 1 + (i % 13) / 100 });
     });
     const quotes = Array.from({ length: 1500 }, (_, i) => quote({ productId: products[i % 1000].id, supplierId: suppliers[(i * 7 + 3) % 500].id, date: "2026-09-10", unitPrice: 1 + (i % 9) / 100, moq: 100 }));
-    const t0 = performance.now();
+    // The work itself, in CPU time: with the whole suite running side by side the clock on the wall measures the
+    // machine's other tests too, not the analysis.
+    const t0 = process.cpuUsage();
     const intel = analyze(dataset({ suppliers, products, purchases, quotes }), [], [], AS_OF);
-    const ms = performance.now() - t0;
+    const used = process.cpuUsage(t0);
+    const ms = (used.user + used.system) / 1000;
     expect(intel.products).toHaveLength(1000);
     expect(intel.suppliers).toHaveLength(500);
     expect(ms).toBeLessThan(2000);

@@ -1,0 +1,37 @@
+/** Italian for the offers received that are still to verify: named in the summaries, Compare, the market page and the notifications. */
+export const pending = {
+  "See the offers received": "Vedi le offerte ricevute",
+  "an offer to verify from {n} other company": "un'offerta da verificare da {n} altra azienda",
+  "offers to verify from {n} other companies": "offerte da verificare da {n} altre aziende",
+  "{n} offer received is still to verify: it can't be compared yet.": "{n} offerta ricevuta è ancora da verificare: non si può ancora confrontare.",
+  "{n} offers received are still to verify: none can be compared yet.": "{n} offerte ricevute sono ancora da verificare: nessuna si può ancora confrontare.",
+  "Verify the offer received: it expires on {date}": "Verifica l'offerta ricevuta: scade il {date}",
+  "Verify the {n} offers received: one expires on {date}": "Verifica le {n} offerte ricevute: una scade il {date}",
+  "Verify the offer received from {who}": "Verifica l'offerta ricevuta da {who}",
+  "Verify the {n} offers received": "Verifica le {n} offerte ricevute",
+  "Offers received": "Offerte ricevute",
+  "A comparable quote: the offer received is still to verify": "Un preventivo confrontabile: l'offerta ricevuta è ancora da verificare",
+  "A comparable quote: the {n} offers received are still to verify": "Un preventivo confrontabile: le {n} offerte ricevute sono ancora da verificare",
+  "An offer from {companies} has arrived and is still to verify: it is set against what you pay only once it is linked, validated and its cost to your plant is complete.":
+    "È arrivata un'offerta da {companies} ed è ancora da verificare: si confronta con quello che paghi solo quando è associata, validata e con il costo a destino completo.",
+  "{n} offers from {companies} have arrived and are still to verify: none is set against what you pay until it is linked, validated and its cost to your plant is complete.":
+    "Sono arrivate {n} offerte da {companies} e sono ancora da verificare: nessuna si confronta con quello che paghi finché non è associata, validata e con il costo a destino completo.",
+  "{n} offer received for {products} is still to verify: it enters no figure until it can be compared.": "{n} offerta ricevuta per {products} è ancora da verificare: non entra in nessuna cifra finché non si può confrontare.",
+  "{n} offers received for {products} are still to verify: they enter no figure until they can be compared.": "{n} offerte ricevute per {products} sono ancora da verificare: non entrano in nessuna cifra finché non si possono confrontare.",
+  "{n} offer received, still to verify": "{n} offerta ricevuta, ancora da verificare",
+  "{n} offers received, still to verify": "{n} offerte ricevute, ancora da verificare",
+  "Quoted to you by companies that answered your requests. None is compared with what you pay until it is linked to this product, validated by a person and its cost to your plant is complete.":
+    "Quotate da aziende che hanno risposto alle tue richieste. Nessuna si confronta con quello che paghi finché non è associata a questo prodotto, validata da una persona e con il costo a destino completo.",
+  "Expires today": "Scade oggi",
+  "Valid until {date}": "Valida fino al {date}",
+  "…and {n} more on the product's page.": "…e altre {n} nella scheda del prodotto.",
+  "Other companies sent {n} offer for its products, still to verify ({products}).": "Altre aziende hanno mandato {n} offerta per i suoi prodotti, ancora da verificare ({products}).",
+  "Other companies sent {n} offers for its products, still to verify ({products}).": "Altre aziende hanno mandato {n} offerte per i suoi prodotti, ancora da verificare ({products}).",
+  "{company}'s offer for {product} expires today": "L'offerta di {company} per {product} scade oggi",
+  "{n} offer to verify ends within {days} days": "{n} offerta da verificare scade entro {days} giorni",
+  "{n} offers to verify end within {days} days": "{n} offerte da verificare scadono entro {days} giorni",
+  "{n} reply to your requests in the last {days} days": "{n} risposta alle tue richieste negli ultimi {days} giorni",
+  "{n} replies to your requests in the last {days} days": "{n} risposte alle tue richieste negli ultimi {days} giorni",
+  "Offer received from {company}, to verify": "Offerta ricevuta da {company}, da verificare",
+  "Offer to verify|basis": "Offerta da verificare",
+};

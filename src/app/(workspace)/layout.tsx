@@ -14,6 +14,8 @@ import { SignOut } from "@/components/shell/sign-out";
 import { StaticDemoGuard, StaticDemoView } from "@/components/shell/static-demo";
 import { Sidebar } from "@/components/sidebar";
 import { APP_NAME } from "@/lib/config";
+import { offerNotices } from "@/lib/replies/pending";
+import { readReplyDates } from "@/server/replies";
 import { getDataset, getIntel, getSettings, getT } from "@/lib/data";
 import { coverageOf, todayISO } from "@/lib/analytics";
 import * as f from "@/lib/format";
@@ -82,6 +84,8 @@ async function shell() {
       ...(box.ready > 0 ? [{ key: "ready", text: t.n(box.ready, "{n} line ready to import", "{n} lines ready to import"), href: "/import", todo: true }] : []),
       ...(increases > 0 ? [{ key: "up", text: t.n(increases, "{n} price increase in the last {days} days", "{n} price increases in the last {days} days", { days: recent }), href: "/products?sort=change", todo: false }] : []),
       ...(newQuotes > 0 ? [{ key: "quotes", text: t.n(newQuotes, "{n} new quote to compare", "{n} new quotes to compare"), href: "/compare", todo: false }] : []),
+      // The replies: offers ending today or soon, and the answers that came lately (lib/replies/pending.ts).
+      ...offerNotices(intel.pending, new Map(intel.products.map((p) => [p.product.id, p.product.name])), intel.asOf, await readReplyDates(db), recent, t),
     ];
     // Direct Order, when it is switched on: what waits for an answer, and what the suppliers said since last time.
     let orders: { pending: number } | null = null;

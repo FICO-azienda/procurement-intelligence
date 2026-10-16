@@ -24,7 +24,8 @@ import { subByKey } from "@/lib/catalog/taxonomy";
 import { en, type T } from "@/lib/i18n";
 import { companyKey } from "@/lib/import/normalize/text";
 import { landedCost, readLandedInput, type Landed, type LandedInput } from "@/lib/replies/landed";
-import { categoryKeyOf, suggestFor, type MatchProduct, type Suggestion } from "@/lib/replies/match";
+import { categoryKeyOf, offerKindOf, suggestFor, type MatchProduct, type Suggestion } from "@/lib/replies/match";
+import { pendingOf, type PendingOffers } from "@/lib/replies/pending";
 import { groupOf, lineKey, offerState, shortfallsOf, supersededIds, unitFactorOf, type OfferGroup, type OfferState, type Shortfall } from "@/lib/replies/offers";
 import { elsewhereOf, planReplies, type CompanyDecision, type Elsewhere, type Records, type ReplyPlan, type StoredCompany } from "@/lib/replies/plan";
 import { parseReplyFile } from "@/lib/replies/read";
@@ -736,7 +737,38 @@ export interface ProductOffers {
 export async function readProductOffers(db: DB, productId: string, t: T = en): Promise<ProductOffers | null> {
   const w = await readWorld(db, t);
   const product = w.products.find((p) => p.id === productId);
-  if (!product) return null;
+  return product ? offersFor(w, product, t) : null;
+}
+
+/** The answers that came, by day: what the bell counts. Only the messages a company sent, never what was sent to it. */
+export async function readReplyDates(db: DB): Promise<{ date: string }[]> {
+  return (await db.select({ date: rfqMessages.date }).from(rfqMessages).where(eq(rfqMessages.kind, "reply"))).map((r) => ({ date: String(r.date) }));
+}
+
+/**
+ * What is still to verify for every product at once (lib/replies/pending.ts): read once, each offer's kind read once,
+ * so that the summaries of every page can say it. Products with nothing to verify are left out.
+ */
+export async function readPendingOffers(db: DB, t: T = en): Promise<Record<string, PendingOffers>> {
+  const w = await readWorld(db, t);
+  const offers = w.companies.flatMap((c) => c.threads.flatMap((th) => th.offers));
+  const kinds = new Set(offers.map((o) => offerKindOf(o)).filter((k): k is string => !!k));
+  const linked = new Set(offers.map((o) => o.productId).filter((id): id is string => !!id));
+  const categories = new Set(w.companies.flatMap((c) => c.threads.flatMap((th) => th.categories.map((x) => categoryKeyOf(x)))).filter((k): k is string => !!k));
+  const candidates = new Set(w.companies.flatMap((c) => c.elsewhere.filter((e) => e.where === "candidate" && e.certain).flatMap((e) => e.products.map((p) => p.id))));
+  const out: Record<string, PendingOffers> = {};
+  for (const product of w.products) {
+    // Only a product an offer could be about: one linked, one of the same kind, one whose category or candidates a reply is about.
+    const category = product.subKey ? (subByKey(product.subKey)?.category.key ?? null) : null;
+    if (!linked.has(product.id) && !(product.subKey && kinds.has(product.subKey)) && !(category && categories.has(category)) && !candidates.has(product.id)) continue;
+    const pending = pendingOf(offersFor(w, product, t), w.today);
+    if (pending) out[product.id] = pending;
+  }
+  return out;
+}
+
+function offersFor(w: World, product: World["products"][number], t: T): ProductOffers {
+  const productId = product.id;
   const out: ProductOffers = { comparable: [], toVerify: [], otherGrades: [], history: [], awaitingPrice: [], notSuitable: 0 };
   const mine = product.subKey ? (subByKey(product.subKey)?.category.key ?? null) : null;
   for (const company of w.companies) {

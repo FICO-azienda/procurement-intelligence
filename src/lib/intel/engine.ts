@@ -24,6 +24,7 @@ import {
   type SupplierMetrics,
   type SupplierOrderStats, coverageOf, type Coverage } from "../analytics";
 import { en, type T } from "../i18n";
+import type { PendingOffers } from "../replies/pending";
 import { compareSuppliers, type ComparisonRow, type SupplierLink } from "./comparison";
 import { INTEL_CONFIG, type IntelConfig } from "./config";
 import { findOpportunities, type Opportunity } from "./opportunities";
@@ -116,6 +117,11 @@ export interface Intel {
   spendBySupplier: SpendSlice[];
   spendByCategory: SpendSlice[];
   pareto: Pareto;
+  /**
+   * The offers received that are still to verify, by product (lib/replies/pending.ts). Named in the summaries,
+   * never compared: what can be compared is among the quotes already. Empty unless the replies were read.
+   */
+  pending: Record<string, PendingOffers>;
 }
 
 const INACTIVE: OpportunityStatus[] = ["rejected", "closed"];
@@ -358,6 +364,7 @@ export function analyze(
     spendBySupplier,
     spendByCategory,
     pareto: par,
+    pending: {},
   };
 }
 

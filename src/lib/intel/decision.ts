@@ -25,6 +25,8 @@ import { DELIVERED_INCOTERMS, type Confidence } from "./opportunities";
 import type { AlertLevel } from "./portfolio";
 import type { Quality } from "./quality";
 import { DECISION_STATUS, isDataGap, type DecisionStatus, type OpportunityStatus } from "./statuses";
+import { SHORTFALL_LABEL } from "../replies/offers";
+import { commonShortfalls, type PendingOffers } from "../replies/pending";
 
 // ---------------- Shapes ----------------
 
@@ -133,7 +135,8 @@ export type ActionKind =
   | "record_fx"
   | "second_source"
   | "confirm_price"
-  | "add_purchases";
+  | "add_purchases"
+  | "verify_offers";
 
 export interface NextAction {
   kind: ActionKind;
@@ -199,6 +202,8 @@ export interface ProductDecision {
   dataConfidenceReasons: string[];
   missingData: string[];
   nextActions: NextAction[];
+  /** Offers received for it that are still to verify: named, never compared (lib/replies/pending.ts). Null: none. */
+  pendingOffers: { count: number; companies: string[]; expiring: { company: string; validUntil: string }[]; awaitingPrice: number } | null;
   summary: string[];
   lastUpdated: { purchases: string | null; quotes: string | null };
   /** Internal ordering only — never shown as a score. */
@@ -372,11 +377,13 @@ const FOLLOW_UP: Partial<Record<FlagKey, { kind: ActionKind; label: (t: T, name:
 /** Where a suggested check is carried out in the app, and what the button says. */
 export interface ActionStep {
   label: Msg;
-  target: "compare" | "quote" | "product" | "purchase";
+  target: "compare" | "quote" | "product" | "purchase" | "offers";
 }
 
 export function actionStep(kind: ActionKind): ActionStep {
   switch (kind) {
+    case "verify_offers":
+      return { label: "See the offers received", target: "offers" };
     case "request_quote":
     case "second_source":
     case "update_quote":
@@ -410,6 +417,8 @@ function followUps(a: DecisionAlternative) {
 export interface DecisionContext {
   suppliers: Map<string, SupplierIntel>;
   cfg: IntelConfig;
+  /** The offers received still to verify, by product (`Intel.pending`). */
+  pending?: Record<string, PendingOffers>;
   /** The language of the sentences; English when left out. */
   t?: T;
 }
@@ -531,6 +540,13 @@ export function productDecision(p: ProductIntel, ctx: DecisionContext): ProductD
     };
   }
 
+  // ---- Offers received, still to verify: named, never in a figure.
+  const pending = ctx.pending?.[product.id] ?? null;
+  const waiting = pending?.toVerify.length ?? 0;
+  const pendingOffers: ProductDecision["pendingOffers"] = pending && (waiting || pending.awaitingPrice)
+    ? { count: waiting, companies: pending.companies, expiring: pending.expiring.map((o) => ({ company: o.company, validUntil: o.validUntil! })), awaitingPrice: pending.awaitingPrice }
+    : null;
+
   // ---- Supply risk
   const sourcing = p.concentration.sourcing;
   const suppliersUsed = p.concentration.shares.length;
@@ -544,7 +560,11 @@ export function productDecision(p: ProductIntel, ctx: DecisionContext): ProductD
             level: p.highSpend ? "high" : "moderate",
             label: t("Single source"),
             detail: `${p.highSpend ? t("{share} of your spend is bought from one supplier", { share }) : t("Bought from one supplier")} · ${
-              alternativesQuoted ? t.n(alternativesQuoted, "{n} other supplier on file", "{n} other suppliers on file") : t("no other supplier on file")
+              alternativesQuoted
+                ? t.n(alternativesQuoted, "{n} other supplier on file", "{n} other suppliers on file")
+                : waiting
+                  ? t.n(pending!.companies.length, "an offer to verify from {n} other company", "offers to verify from {n} other companies")
+                  : t("no other supplier on file")
             }.`,
             suppliers: 1,
             alternativesQuoted,
@@ -583,9 +603,13 @@ export function productDecision(p: ProductIntel, ctx: DecisionContext): ProductD
   } else if (stale) {
     status = "needs_history";
     statusReason = t("No purchase in the last 6 months — the price may be outdated.");
-  } else if (market.type === "not_available" && (alternativesQuoted || p.highSpend)) {
+  } else if (market.type === "not_available" && (alternativesQuoted || p.highSpend || waiting)) {
     status = "needs_alternative";
-    statusReason = alternativesQuoted ? t("The offers on file can't be compared yet.") : t("It is among the products that make up most of your spend, and there is no quote from another supplier to compare with.");
+    statusReason = waiting
+      ? t.n(waiting, "{n} offer received is still to verify: it can't be compared yet.", "{n} offers received are still to verify: none can be compared yet.")
+      : alternativesQuoted
+        ? t("The offers on file can't be compared yet.")
+        : t("It is among the products that make up most of your spend, and there is no quote from another supplier to compare with.");
   } else if (market.type === "not_available") {
     // Nothing is wrong with a product whose price and supplier are known: a comparison is something more, not something missing.
     status = "ready";
@@ -659,7 +683,20 @@ export function productDecision(p: ProductIntel, ctx: DecisionContext): ProductD
       ],
     });
   }
-  if (currentPrice != null && !savingMaterial && (market.type === "not_available" || market.recent === 0)) {
+  if (waiting && !savingMaterial) {
+    // Offers already came: the next step is to verify them, not to ask again.
+    const soonest = pending!.expiring[0];
+    actions.push({
+      kind: "verify_offers",
+      label: soonest
+        ? t.n(waiting, "Verify the offer received: it expires on {date}", "Verify the {n} offers received: one expires on {date}", { date: f.date(soonest.validUntil) })
+        : t.n(waiting, "Verify the offer received from {who}", "Verify the {n} offers received", { who: pending!.companies[0] ?? "" }),
+      why: [
+        { label: t("Offers received"), value: list(t, pending!.companies.slice(0, 3)) + (pending!.companies.length > 3 ? ` +${pending!.companies.length - 3}` : "") },
+        { label: t("To become comparable"), value: list(t, commonShortfalls(pending!).slice(0, 2).map((x) => lowerFirst(t(SHORTFALL_LABEL[x])))) },
+      ],
+    });
+  } else if (currentPrice != null && !savingMaterial && (market.type === "not_available" || market.recent === 0)) {
     actions.push({
       kind: "request_quote",
       label: market.count ? t("Ask for an up-to-date quote from another supplier") : t("Get a quote from another supplier"),
@@ -687,7 +724,11 @@ export function productDecision(p: ProductIntel, ctx: DecisionContext): ProductD
     ? p.bestSaving.missing
     : [
         ...(currentPrice == null ? [t("A purchase with a usable price")] : []),
-        ...(market.type === "not_available" ? [t("A comparable quote from another supplier")] : market.recent === 0 ? [t("A recent quote from another supplier")] : []),
+        ...(market.type === "not_available"
+          ? [waiting ? t.n(waiting, "A comparable quote: the offer received is still to verify", "A comparable quote: the {n} offers received are still to verify") : t("A comparable quote from another supplier")]
+          : market.recent === 0
+            ? [t("A recent quote from another supplier")]
+            : []),
         ...(product.specs && Object.keys(product.specs).length ? [] : [t("Structured specifications for this product")]),
         t("External market benchmark"),
       ];
@@ -747,6 +788,7 @@ export function productDecision(p: ProductIntel, ctx: DecisionContext): ProductD
     dataConfidenceReasons: p.quality.factors.filter((x) => x.state !== "ok").map((x) => x.detail),
     missingData,
     nextActions,
+    pendingOffers,
     summary: [],
     lastUpdated: { purchases: metrics.currentDate, quotes: quoteDates.length ? quoteDates.reduce((a, b) => (b > a ? b : a)) : null },
     priority,
@@ -832,6 +874,15 @@ export function easySummary(d: ProductDecision, t: T = en): string[] {
         ? t.n(d.alternativesTotal, "{n} offer from another supplier is on file but can't be compared yet ({why}).", "{n} offers from other suppliers are on file but can't be compared yet ({why}).", { why: lowerFirst(why) })
         : t.n(d.alternativesTotal, "{n} offer from another supplier is on file but can't be compared yet.", "{n} offers from other suppliers are on file but can't be compared yet."),
     );
+  } else if (d.pendingOffers?.count) {
+    s.push(
+      t.n(
+        d.pendingOffers.count,
+        "An offer from {companies} has arrived and is still to verify: it is set against what you pay only once it is linked, validated and its cost to your plant is complete.",
+        "{n} offers from {companies} have arrived and are still to verify: none is set against what you pay until it is linked, validated and its cost to your plant is complete.",
+        { companies: list(t, d.pendingOffers.companies.slice(0, 3)) + (d.pendingOffers.companies.length > 3 ? ` +${d.pendingOffers.companies.length - 3}` : "") },
+      ),
+    );
   } else {
     s.push(t("We know what you pay and how the price has moved, but there is no comparable price from another supplier yet, so we cannot say whether a saving is possible."));
   }
@@ -876,7 +927,8 @@ export interface RecentChange {
   daysAgo: number;
   productId: string;
   productName: string;
-  kind: "price" | "quote";
+  /** offer: received from a company that answered a request, still to verify — named, never compared. */
+  kind: "price" | "quote" | "offer";
   text: string;
   /** Price changes only, in %. */
   pct: number | null;
@@ -942,7 +994,7 @@ export function purchasingOverview(intel: Intel, t: T = en): PurchasingOverview 
   const cfg = intel.config;
   const o = cfg.overview;
   const suppliers = new Map(intel.suppliers.map((s) => [s.supplier.id, s]));
-  const ctx: DecisionContext = { suppliers, cfg, t };
+  const ctx: DecisionContext = { suppliers, cfg, t, pending: intel.pending };
   const byId = new Map(intel.products.map((p) => [p.product.id, p]));
   const products = intel.products.map((p) => productDecision(p, ctx)).sort(byPriority);
   const name = (id: string) => byId.get(id)?.product.name ?? t("Unknown product");
@@ -985,6 +1037,17 @@ export function purchasingOverview(intel: Intel, t: T = en): PurchasingOverview 
     for (const r of p.comparison) {
       if (r.isCurrent || r.kind !== "quote" || r.ageDays == null || r.ageDays > o.recentDays) continue;
       changes.push({ date: r.date!, daysAgo: r.ageDays, productId: p.product.id, productName: p.product.name, kind: "quote", text: t("Quote received from {supplier}", { supplier: r.supplier.name }), pct: null });
+    }
+  }
+  // The offers received lately and still to verify: one line per company and product, said for what they are.
+  for (const p of intel.products) {
+    const seen = new Set<string>();
+    for (const x of intel.pending[p.product.id]?.toVerify ?? []) {
+      if (!x.receivedOn || seen.has(x.companyId)) continue;
+      const ago = daysAgo(x.receivedOn);
+      if (ago < 0 || ago > o.recentDays) continue;
+      seen.add(x.companyId);
+      changes.push({ date: x.receivedOn, daysAgo: ago, productId: p.product.id, productName: p.product.name, kind: "offer", text: t("Offer received from {company}, to verify", { company: x.company }), pct: null });
     }
   }
   changes.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.productName.localeCompare(b.productName)));
@@ -1066,7 +1129,7 @@ export function purchasingOverview(intel: Intel, t: T = en): PurchasingOverview 
 /** The decision summary of one product (what the Overview card shows). */
 export function decisionFor(intel: Intel, productId: string, t: T = en): ProductDecision | null {
   const p = intel.products.find((x) => x.product.id === productId);
-  return p ? productDecision(p, { suppliers: new Map(intel.suppliers.map((s) => [s.supplier.id, s])), cfg: intel.config, t }) : null;
+  return p ? productDecision(p, { suppliers: new Map(intel.suppliers.map((s) => [s.supplier.id, s])), cfg: intel.config, t, pending: intel.pending }) : null;
 }
 
 /** Five to seven sentences that stand on their own, without opening a single card. */
@@ -1117,6 +1180,12 @@ export function executiveSummary(ov: PurchasingOverview, intel: Intel, t: T = en
     }
   } else {
     s.push(t("No potential saving has been identified yet: that needs comparable quotes from other suppliers."));
+  }
+  const waiting = ov.products.filter((d) => d.pendingOffers?.count);
+  if (waiting.length) {
+    // One offer proposed for two products is one offer.
+    const offers = new Set(waiting.flatMap((d) => intel.pending[d.productId]?.toVerify.map((x) => x.offerId) ?? [])).size;
+    s.push(t.n(offers, "{n} offer received for {products} is still to verify: it enters no figure until it can be compared.", "{n} offers received for {products} are still to verify: they enter no figure until they can be compared.", { products: t.n(waiting.length, "{n} product", "{n} products") }));
   }
 
   if (ov.supplyRisks.length) {

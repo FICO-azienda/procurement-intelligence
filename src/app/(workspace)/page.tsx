@@ -107,9 +107,9 @@ export default async function OverviewPage() {
                 <ul>
                   {ov.recentChanges.slice(0, 4).map((c, i) => (
                     <li key={i} className="border-t border-rule transition-colors hover:bg-well">
-                      <Link href={c.kind === "quote" ? `/compare?product=${c.productId}` : `/products/${c.productId}`} className="flex items-center gap-3 px-5 py-3">
-                        <span className={cx("grid size-8 shrink-0 place-items-center rounded-full", c.kind === "quote" ? "bg-ledger-wash text-ledger" : c.pct != null && c.pct > 0 ? "bg-up-wash text-up" : "bg-down-wash text-down")} aria-hidden>
-                          {c.kind === "quote" ? <FileText size={15} strokeWidth={1.75} /> : c.pct != null && c.pct > 0 ? <ArrowUpRight size={16} strokeWidth={2} /> : <ArrowDownRight size={16} strokeWidth={2} />}
+                      <Link href={c.kind === "quote" ? `/compare?product=${c.productId}` : c.kind === "offer" ? `/products/${c.productId}#offers` : `/products/${c.productId}`} className="flex items-center gap-3 px-5 py-3">
+                        <span className={cx("grid size-8 shrink-0 place-items-center rounded-full", c.kind !== "price" ? "bg-ledger-wash text-ledger" : c.pct != null && c.pct > 0 ? "bg-up-wash text-up" : "bg-down-wash text-down")} aria-hidden>
+                          {c.kind !== "price" ? <FileText size={15} strokeWidth={1.75} /> : c.pct != null && c.pct > 0 ? <ArrowUpRight size={16} strokeWidth={2} /> : <ArrowDownRight size={16} strokeWidth={2} />}
                         </span>
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-[13.5px] font-medium">{c.productName}</span>
@@ -253,7 +253,7 @@ function TopActions({ ov, t }: { ov: PurchasingOverview; t: T }) {
                 ) : c.step.target === "purchase" ? (
                   <PurchaseDialog defaultProductId={c.productId} trigger={{ label: t(c.step.label), size: "sm", plain: true }} />
                 ) : (
-                  <ButtonLink href={c.step.target === "compare" ? `/compare?product=${c.productId}` : `/products/${c.productId}`} size="sm">
+                  <ButtonLink href={c.step.target === "compare" ? `/compare?product=${c.productId}` : c.step.target === "offers" ? `/products/${c.productId}#offers` : `/products/${c.productId}`} size="sm">
                     {t(c.step.label)}
                   </ButtonLink>
                 )}

@@ -18,7 +18,7 @@ import type { Actor } from "@/lib/replies/types";
 import { correctAttribution, readAudit } from "./audit";
 import { readDestinations, saveDestination } from "./destinations";
 import {
-  ReplyError, addReplyDocument, checkReplies, decideCompanyLink, decideOffer, declineSuggestion, candidateKey, importReplies, linkOffer, readComparableOffers, readOffer, readProductOffers, readReplies, readReplyPointers, requestFromSupplier, verifyReplyDocument, saveLanded, setOfferCompatibility, unlinkOffer,
+  ReplyError, addReplyDocument, checkReplies, decideCompanyLink, decideOffer, declineSuggestion, candidateKey, importReplies, linkOffer, readComparableOffers, readOffer, readPendingOffers, readProductOffers, readReplies, readReplyPointers, requestFromSupplier, verifyReplyDocument, saveLanded, setOfferCompatibility, unlinkOffer,
   updateReplyCompany, updateReplyThread,
 } from "./replies";
 import { readSettings } from "@/lib/data";
@@ -305,6 +305,17 @@ describe("an offer and one of the buyer's products", () => {
     expect((await readOffer(db, same.id))!).toMatchObject({ state: "rejected", product: { name: "Mock paraffin 58/60" } });
     await decideOffer(db, same.id, { rejected: false, note: null }, ME);
     expect((await page()).comparable).toHaveLength(1);
+  });
+});
+
+describe("what is still to verify, for every product at once", () => {
+  it("is what each product's page says, read in one go — and the comparable offers are not in it", async () => {
+    const all = await readPendingOffers(db);
+    const p = (await readProductOffers(db, ids.paraffin))!;
+    const active = p.toVerify.filter((v) => !["expired", "rejected", "superseded"].includes(v.state));
+    expect((all[ids.paraffin]?.toVerify ?? []).map((o) => o.offerId).sort()).toEqual(active.map((v) => v.offer.id).sort());
+    for (const c of p.comparable) expect(all[ids.paraffin]?.toVerify.some((o) => o.offerId === c.offer.id) ?? false).toBe(false);
+    expect(all[ids.wick]?.toVerify ?? []).toEqual([]);
   });
 });
 

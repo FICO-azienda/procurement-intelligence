@@ -6,6 +6,7 @@
  */
 import { safety } from "./it/safety";
 import { setup } from "./it/setup";
+import { pending } from "./it/pending";
 import { catalog } from "./it/catalog";
 import { categories } from "./it/categories";
 import { dataset } from "./it/dataset";
@@ -25,6 +26,6 @@ import { sourcing } from "./it/sourcing";
 import { suppliers } from "./it/suppliers";
 import { ui } from "./it/ui";
 
-export const PARTS = { engine, imports, ui, catalog, safety, mapper, sourcing, research, dataset, negotiation, suppliers, portfolio, identity, rfq, categories, markets, replies, offers, orders, setup };
+export const PARTS = { engine, imports, ui, catalog, safety, mapper, sourcing, research, dataset, negotiation, suppliers, portfolio, identity, rfq, categories, markets, replies, offers, orders, setup, pending };
 
-export const it = { ...engine, ...imports, ...ui, ...catalog, ...safety, ...mapper, ...sourcing, ...research, ...dataset, ...negotiation, ...suppliers, ...portfolio, ...identity, ...rfq, ...categories, ...markets, ...replies, ...offers, ...orders, ...setup };
+export const it = { ...engine, ...imports, ...ui, ...catalog, ...safety, ...mapper, ...sourcing, ...research, ...dataset, ...negotiation, ...suppliers, ...portfolio, ...identity, ...rfq, ...categories, ...markets, ...replies, ...offers, ...orders, ...setup, ...pending };

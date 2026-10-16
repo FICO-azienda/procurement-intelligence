@@ -271,7 +271,7 @@ export default async function ReportPage({ searchParams }: PageProps<"/report">)
                       <span className="block truncate text-[12.5px] text-ink-3">{c.text}</span>
                     </span>
                     <span className="shrink-0 text-right">
-                      {c.pct != null ? <Delta value={c.pct} className="justify-end text-[13px]" /> : <Basis>{t("Quote|basis")}</Basis>}
+                      {c.pct != null ? <Delta value={c.pct} className="justify-end text-[13px]" /> : <Basis>{c.kind === "offer" ? t("Offer to verify|basis") : t("Quote|basis")}</Basis>}
                       <span className="num block text-[11.5px] text-ink-4">{c.daysAgo === 0 ? t("today") : t.n(c.daysAgo, "{n} day ago", "{n} days ago")}</span>
                     </span>
                   </a>

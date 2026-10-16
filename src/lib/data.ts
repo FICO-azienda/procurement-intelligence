@@ -34,7 +34,8 @@ import { categoryNaming } from "./catalog/tree";
 import { catalogueOf, companySpend, type CompanySpend } from "./catalog/spend";
 import { canonicalIds } from "./suppliers/resolve";
 import { bridgeDataset } from "./replies/bridge";
-import { readComparableOffers } from "@/server/replies";
+import { readComparableOffers, readPendingOffers } from "@/server/replies";
+import type { PendingOffers } from "./replies/pending";
 
 const num = (v: string) => Number(v);
 const numOrNull = (v: string | null) => (v == null ? null : Number(v));
@@ -236,8 +237,11 @@ export const getOpportunityStates = cache(async () => {
 export const getIntel = cache(async (): Promise<Intel> => {
   const [data, learning, states, t, company] = await Promise.all([getDataset(), getLearning(), getOpportunityStates(), getT(), getSettings()]);
   // The offers that passed every check are read as quotes (lib/replies/bridge.ts): read, never copied.
-  const catalogue = bridgeDataset(catalogueOf(data), await getComparableOffers());
+  const [comparable, pending] = await Promise.all([getComparableOffers(), getPendingOffers()]);
+  const catalogue = bridgeDataset(catalogueOf(data), comparable);
   const intel = analyze(catalogue, learning.supplierProducts, states, todayISO(), undefined, t, { homeCountry: company.country });
+  // The offers still to verify are named by the summaries, and enter no figure.
+  intel.pending = pending;
   if (catalogue !== data) {
     // A supplier is who the company pays: its spend, dates and status count every purchase, not only the catalogue's.
     const full = new Map(data.suppliers.map((s) => [s.id, supplierMetrics(s, data, intel.asOf)]));
@@ -256,6 +260,12 @@ export const getIntel = cache(async (): Promise<Intel> => {
 export const getComparableOffers = cache(async () => {
   await connection();
   return readComparableOffers(await getDb(), await getT());
+});
+
+/** The offers received still to verify, by product: what Compare, the market page and the summaries name. */
+export const getPendingOffers = cache(async (): Promise<Record<string, PendingOffers>> => {
+  await connection();
+  return readPendingOffers(await getDb(), await getT());
 });
 
 /** The company's whole spend of the last 12 months: catalogue and everything else. */

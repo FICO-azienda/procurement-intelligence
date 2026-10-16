@@ -284,6 +284,7 @@ export default async function ProductPage({ params, searchParams }: PageProps<"/
       <div className="mt-6 space-y-3">
         {replies && (replies.comparable.length + replies.toVerify.length + replies.otherGrades.length + replies.history.length + replies.awaitingPrice.length > 0 || replies.notSuitable > 0) && (
           <Section
+            id="offers"
             flush
             title={t("Quotes and alternatives")}
             description={t("What the suppliers you asked answered about this product: what can be compared, what is still to verify, who has not quoted yet")}

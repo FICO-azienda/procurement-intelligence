@@ -86,6 +86,7 @@ export function Section({
   children,
   className,
   flush,
+  id,
 }: {
   title: ReactNode;
   description?: ReactNode;
@@ -94,9 +95,11 @@ export function Section({
   className?: string;
   /** Content touches the card edges (tables). */
   flush?: boolean;
+  /** An anchor other pages can link to. */
+  id?: string;
 }) {
   return (
-    <section className={cx("rounded-lg border border-rule bg-canvas", className)}>
+    <section id={id} className={cx("scroll-mt-20 rounded-lg border border-rule bg-canvas", className)}>
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 px-5 pt-4 pb-3">
         <div className="min-w-0">
           <h2 className="text-[14px] font-semibold tracking-[-0.005em]">{title}</h2>

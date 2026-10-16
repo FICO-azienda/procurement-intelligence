@@ -17,6 +17,7 @@ import { basePrice, isPriced, priceChange, supplierMetrics, supplierOrderStats, 
 import { countryName } from "@/lib/countries";
 import { KIND_LABEL } from "@/lib/catalog/kinds";
 import { getDataset, getIntel, getLearning, getSpend, getT } from "@/lib/data";
+import { pendingAcross } from "@/lib/replies/pending";
 import { SourceTag } from "@/components/import/labels";
 import * as f from "@/lib/format";
 import { lowerFirst } from "@/lib/i18n";
@@ -74,6 +75,9 @@ export default async function SupplierPage({ params }: PageProps<"/suppliers/[id
     })
     .filter((r) => r.product)
     .sort((a, b) => a.product.name.localeCompare(b.product.name));
+
+  // Offers from other companies for what this supplier sells, still to verify: named, compared nowhere.
+  const waiting = pendingAcross(m.productIds, intel.pending);
 
   // The way to the company's answers to requests for quotation, when it is the same company.
   const answered = (await readReplyPointers(await getDb(), t)).suppliers.get(supplier.id) ?? [];
@@ -292,6 +296,16 @@ export default async function SupplierPage({ params }: PageProps<"/suppliers/[id
           ))}
           {stats.priceIncreases > 0 && (
             <li>{t.n(stats.priceIncreases, "{n} product has gone up in price over 12 months.", "{n} products have gone up in price over 12 months.")}</li>
+          )}
+          {waiting.offers > 0 && (
+            <li>
+              {t.n(waiting.offers, "Other companies sent {n} offer for its products, still to verify ({products}).", "Other companies sent {n} offers for its products, still to verify ({products}).", {
+                products: t.n(waiting.products.length, "{n} product", "{n} products"),
+              })}{" "}
+              <Link href={`/products/${waiting.products[0]}#offers`} className="font-medium text-ledger hover:underline">
+                {t("See the offers received")}
+              </Link>
+            </li>
           )}
         </ul>
       </Section>
