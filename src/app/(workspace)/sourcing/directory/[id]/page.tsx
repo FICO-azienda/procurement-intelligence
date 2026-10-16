@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { connection } from "next/server";
 import { SupplierActions } from "@/components/markets/directory";
 import { Crumbs, PageHeader, Section, cx } from "@/components/ui";
+import { CompanyLink } from "@/components/companies/company-link";
 import { getDb } from "@/db";
 import { catalogueTree } from "@/lib/catalog/tree";
 import { countryName, flagOf } from "@/lib/countries";
@@ -64,6 +65,7 @@ export default async function DirectorySupplierPage({ params }: PageProps<"/sour
             <span>{t(ROLE_LABEL[s.role])}</span>
             <span title={t(STATUS_MEANING[s.status])} className="inline-flex h-[22px] items-center rounded-full bg-ledger-wash px-2 text-[12px] font-medium text-ledger">{t(STATUS_LABEL[s.status])}</span>
             {s.links.current && <span className="font-medium text-ink">{t("your supplier today")}</span>}
+            <CompanyLink t={t} kind="directory" id={s.id} />
           </span>
         }
       />

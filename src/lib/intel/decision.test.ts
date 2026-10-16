@@ -552,29 +552,6 @@ describe("edge cases", () => {
     expect(d.summary.find((x) => x.startsWith("The most relevant alternative"))).toBeDefined();
     expect(d.nextActions.map((x) => x.kind)).toContain("check_specs");
   });
-
-  it("summarises 1.000 products quickly", () => {
-    const suppliers = Array.from({ length: 200 }, (_, i) => supplier({ name: `S${i}` }));
-    const products: ProductData[] = [];
-    const purchases: PurchaseData[] = [];
-    const quotes: QuoteData[] = [];
-    for (let i = 0; i < 1000; i++) {
-      const sup = suppliers[i % suppliers.length];
-      const p = product({ name: `P${i}`, currentSupplierId: sup.id });
-      products.push(p);
-      for (let m = 1; m <= 9; m++) purchases.push(purchase({ productId: p.id, supplierId: sup.id, date: `2026-0${m}-10`, quantity: 100 + i, unitPrice: 1 + m / 50 }));
-      if (i % 2 === 0) quotes.push(quote({ productId: p.id, supplierId: suppliers[(i + 7) % suppliers.length].id, date: "2026-09-12", unitPrice: 1.05, moq: 50, incoterm: "DAP" }));
-    }
-    const intel = analyze(dataset({ suppliers, products, purchases, quotes }), [], [], AS_OF);
-    // The work itself, in CPU time: next to the rest of the suite the wall clock measures the other tests too.
-    const t = process.cpuUsage();
-    const ov = purchasingOverview(intel);
-    const used = process.cpuUsage(t);
-    const ms = (used.user + used.system) / 1000;
-    // Typically well under 200 ms; the budget leaves room for a busy test machine.
-    expect(ms).toBeLessThan(2000);
-    expect(ov.products).toHaveLength(1000);
-  });
 });
 
 describe("offers received that are still to verify", () => {

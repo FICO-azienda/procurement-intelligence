@@ -18,11 +18,16 @@ export async function generateMetadata(): Promise<Metadata> {
   return { title: (await getT())("Suppliers") };
 }
 
-export default async function SuppliersPage() {
+export default async function SuppliersPage({ searchParams }: PageProps<"/suppliers">) {
+  const sp = await searchParams;
   const [data, intel, spend, t] = await Promise.all([getDataset(), getIntel(), getSpend(), getT()]);
   const EXPLAIN = explain(t);
   // A company that answered a request and whose offer is being compared is not a supplier: it is listed with the replies.
-  const rows = intel.suppliers.filter((x) => replyCompanyIdOf(x.supplier.id) == null).sort((a, b) => b.metrics.annualSpend - a.metrics.annualSpend || a.supplier.name.localeCompare(b.supplier.name));
+  const all = intel.suppliers.filter((x) => replyCompanyIdOf(x.supplier.id) == null).sort((a, b) => b.metrics.annualSpend - a.metrics.annualSpend || a.supplier.name.localeCompare(b.supplier.name));
+  // Who supplies what the catalogue is made of, apart from banks, utilities and services (lib/catalog/kinds.ts).
+  const view = sp.kind === "catalogue" || sp.kind === "other" ? sp.kind : "all";
+  const catalogue = (x: (typeof all)[number]) => x.metrics.productIds.length > 0 || x.metrics.quotedProductIds.length > 0;
+  const rows = all.filter((x) => view === "all" || (view === "catalogue" ? catalogue(x) : !catalogue(x)));
   // Records that may be the same company under two names: for the user to merge or keep apart.
   const resolution = await readResolution(await getDb(), t);
   const record = (id: string) => {
@@ -33,7 +38,31 @@ export default async function SuppliersPage() {
 
   return (
     <>
-      <PageHeader title={t("Suppliers")} meta={t("Who you buy from, and who has given you a quote.")} actions={rows.length > 0 ? <ExportLink href="/export/suppliers" className="px-1" /> : undefined} />
+      <PageHeader
+        title={t("Suppliers")}
+        meta={t("Who you buy from, and who has given you a quote.")}
+        actions={
+          <>
+            <ButtonLink href="/companies">{t("All companies and their roles")}</ButtonLink>
+            {all.length > 0 && <ExportLink href="/export/suppliers" className="px-1" />}
+          </>
+        }
+      />
+      {all.length > 0 && (
+        <nav aria-label={t("What they supply")} className="mb-4 flex flex-wrap gap-2 text-[13px]">
+          {(
+            [
+              ["all", t("All"), all.length],
+              ["catalogue", t("Materials, components and packaging"), all.filter(catalogue).length],
+              ["other", t("Services, transport, utilities and other spend"), all.filter((x) => !catalogue(x)).length],
+            ] as const
+          ).map(([key, label, n]) => (
+            <Link key={key} href={key === "all" ? "/suppliers" : `/suppliers?kind=${key}`} className={view === key ? "rounded-full bg-night px-3 py-1 text-white" : "rounded-full bg-wash px-3 py-1 text-ink-2 hover:bg-rule"}>
+              {label} · {n}
+            </Link>
+          ))}
+        </nav>
+      )}
       {resolution.suggestions.length > 0 && (
         <Section className="mb-5" title={t("These suppliers may be the same company")} description={t("Merging reads one record as the other: both stay on file with their invoices, and it can be undone.")} flush>
           <ul className="border-t border-rule">

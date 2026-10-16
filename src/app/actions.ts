@@ -56,6 +56,7 @@ import { workspacePrincipal } from "@/server/session";
 import { referenceRate } from "@/server/fx";
 import { DestinationError, removeDestination, saveDestination, type DestinationField } from "@/server/destinations";
 import { ensureWorkspaceOrg } from "@/server/orgs";
+import { CompanyError, addCompanyContact, keepCompaniesInSync, relateCompanies, removeCompanyContact, undoCompanyRelation } from "@/server/companies";
 import { setupCompany } from "@/server/setup";
 import type { SetupErrors, SetupField } from "@/lib/setup";
 import { summarise, type PlanSummary } from "@/lib/replies/plan";
@@ -93,6 +94,8 @@ const invalid = (t: T, errors: FieldErrors): FormState => ({
 
 function refresh() {
   revalidatePath("/", "layout");
+  // A write may have brought a record of a company not on file yet: its company follows (server/companies.ts).
+  keepCompaniesInSync();
   // A write may have created a supplier that a VAT number proves to be one already on file (server/suppliers.ts)…
   keepSuppliersResolved();
   // …and may change what a price could be negotiated to: the history of the estimates follows (server/negotiation.ts).
@@ -1658,4 +1661,44 @@ export async function removeDestinationAction(id: string): Promise<SimpleResult>
   const denied = await refuse("company.manage");
   if (denied) return denied;
   return reply((db, actor) => removeDestination(db, id, actor));
+}
+
+// ---------------- Companies and their roles ----------------
+
+async function company(run: (db: Awaited<ReturnType<typeof getDb>>, actor: Actor, t: T) => Promise<unknown>): Promise<SimpleResult> {
+  const t = await getT();
+  try {
+    await run(await getDb(), await actorOf(), t);
+    refresh();
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof CompanyError) return { ok: false, error: err.message };
+    console.error("[companies]", err);
+    return { ok: false, error: t("Something went wrong.") };
+  }
+}
+
+/** A person says what two companies are to each other: the same, of one group, one controlled by or distributing the other, or two companies. */
+export async function relateCompaniesAction(aId: string, bId: string, relation: string, note: string | null): Promise<SimpleResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
+  return company((db, actor, t) => relateCompanies(db, aId, bId, relation, note, actor, t));
+}
+
+export async function undoCompanyRelationAction(relationId: string): Promise<SimpleResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
+  return company((db, actor, t) => undoCompanyRelation(db, relationId, actor, t));
+}
+
+export async function addCompanyContactAction(companyId: string, v: { name?: string | null; role?: string | null; email?: string | null; phone?: string | null; note?: string | null }): Promise<SimpleResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
+  return company((db, actor, t) => addCompanyContact(db, companyId, v, actor, t));
+}
+
+export async function removeCompanyContactAction(contactId: string): Promise<SimpleResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
+  return company((db, actor, t) => removeCompanyContact(db, contactId, actor, t));
 }

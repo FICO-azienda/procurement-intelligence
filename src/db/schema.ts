@@ -65,6 +65,8 @@ export const suppliers = pgTable("suppliers", {
    * clearing this. Null: the record stands for itself.
    */
   mergedIntoId: uuid("merged_into_id").references((): AnyPgColumn => suppliers.id, { onDelete: "set null" }),
+  /** The company this record is a role of (companies): set by `syncCompanies`, by an identifier or a person's word. */
+  companyId: uuid("company_id").references((): AnyPgColumn => companies.id, { onDelete: "set null" }),
   contactName: text("contact_name"),
   email: text("email"),
   phone: text("phone"),
@@ -524,6 +526,8 @@ export const supplierCandidates = pgTable(
     notes: text("notes"),
     status: text("status").notNull().default("discovered"),
     supplierId: uuid("supplier_id").references(() => suppliers.id, { onDelete: "set null" }),
+    /** The company this record is a role of (companies): set by `syncCompanies`, by an identifier or a person's word. */
+    companyId: uuid("company_id").references((): AnyPgColumn => companies.id, { onDelete: "set null" }),
     /** manufacturer | distributor | wholesaler; null: the source does not say. */
     companyType: text("company_type"),
     /** The title of the page it was found on. */
@@ -914,6 +918,8 @@ export const marketSuppliers = pgTable("market_suppliers", {
   checkedAt: date("checked_at"),
   /** The research file it was last loaded from. */
   sourceFile: text("source_file"),
+  /** The company this record is a role of (companies): set by `syncCompanies`, by an identifier or a person's word. */
+  companyId: uuid("company_id").references((): AnyPgColumn => companies.id, { onDelete: "set null" }),
   ...timestamps,
 });
 
@@ -957,6 +963,8 @@ export const rfqSuppliers = pgTable("rfq_suppliers", {
   /** The date its data was last checked, and the file that brought it. */
   checkedAt: date("checked_at"),
   sourceFile: text("source_file"),
+  /** The company this record is a role of (companies): set by `syncCompanies`, by an identifier or a person's word. */
+  companyId: uuid("company_id").references((): AnyPgColumn => companies.id, { onDelete: "set null" }),
   ...timestamps,
 });
 
@@ -1213,6 +1221,8 @@ export const organizations = pgTable("organizations", {
   orderTermsVersion: text("order_terms_version"),
   orderTermsAcceptedAt: timestamp("order_terms_accepted_at", { withTimezone: true }),
   orderTermsAcceptedBy: text("order_terms_accepted_by"),
+  /** The company this record is a role of (companies): set by `syncCompanies`, by an identifier or a person's word. */
+  companyId: uuid("company_id").references((): AnyPgColumn => companies.id, { onDelete: "set null" }),
   ...timestamps,
 });
 
@@ -1549,3 +1559,76 @@ export type QuoteRecord = typeof quotes.$inferSelect;
 export type ImportSession = typeof importSessions.$inferSelect;
 export type ImportItemRecord = typeof importItems.$inferSelect;
 export type DocumentRecord = typeof documents.$inferSelect;
+
+// ---------------- Companies: one record per legal entity ----------------
+
+/**
+ * A company, whatever part of the app names it (lib/companies/, server/companies.ts): a supplier on the invoices, a
+ * candidate for a product, a company of a market directory, a company that answered a request, a company registered
+ * on the portal are roles of one company, each kept in its own table with its own data and pointing here with
+ * `company_id`. Records are tied to a company by themselves only on the same VAT number or tax code; anything else
+ * (a site, a name) is a proposal a person settles. A company said to be another is a pointer, never a rewrite.
+ */
+export const companies = pgTable(
+  "companies",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    /** Every other way its records write its name. */
+    otherNames: jsonb("other_names").$type<string[]>().notNull().default([]),
+    vatNumber: text("vat_number"),
+    taxCode: text("tax_code"),
+    /** The identifiers as compared: digits and letters only, without the country prefix (`vatKey`). */
+    vatKey: text("vat_key"),
+    taxKey: text("tax_key"),
+    country: text("country"),
+    city: text("city"),
+    website: text("website"),
+    /** Its own web domain, never a mailbox anyone can have (`domainOf`). */
+    domain: text("domain"),
+    /** A person said it is the same company as another: read as that one; clearing it takes it back. */
+    mergedIntoId: uuid("merged_into_id").references((): AnyPgColumn => companies.id, { onDelete: "set null" }),
+    ...timestamps,
+  },
+  (t) => [index("companies_vat_idx").on(t.vatKey), index("companies_tax_idx").on(t.taxKey), index("companies_domain_idx").on(t.domain)],
+);
+
+/**
+ * What a person said about two companies: the same company (the second is then merged into the first), two companies
+ * of one group, one controlled by the other, one distributing the other, or simply two different companies (not to be
+ * proposed again). Never a merge by itself except "same_company"; taken back with `undone_at`, the row kept.
+ */
+export const companyRelations = pgTable("company_relations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  aId: uuid("a_id")
+    .notNull()
+    .references(() => companies.id, { onDelete: "cascade" }),
+  bId: uuid("b_id")
+    .notNull()
+    .references(() => companies.id, { onDelete: "cascade" }),
+  /** same_company | same_group | subsidiary_of | distributor_of | different */
+  relation: text("relation").notNull(),
+  note: text("note"),
+  decidedBy: text("decided_by").notNull(),
+  decidedByType: text("decided_by_type").notNull().default("user"),
+  undoneAt: timestamp("undone_at", { withTimezone: true }),
+  undoneBy: text("undone_by"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** A person to talk to at a company, with where it was read: written by a person or read from a document, never made up. */
+export const companyContacts = pgTable("company_contacts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  companyId: uuid("company_id")
+    .notNull()
+    .references(() => companies.id, { onDelete: "cascade" }),
+  name: text("name"),
+  role: text("role"),
+  email: text("email"),
+  phone: text("phone"),
+  note: text("note"),
+  /** manual | invoice | reply | directory | research */
+  source: text("source").notNull().default("manual"),
+  createdBy: text("created_by"),
+  ...timestamps,
+});

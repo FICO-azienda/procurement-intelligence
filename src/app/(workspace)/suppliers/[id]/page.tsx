@@ -13,6 +13,7 @@ import { LEVEL_LABEL } from "@/lib/negotiation/engine";
 import { BASIS_LABEL, type MatchBasis } from "@/lib/suppliers/resolve";
 import { canonicalSupplierId, readResolution, supplierIdentity, supplierRelationship } from "@/server/suppliers";
 import { Basis, Crumbs, Delta, Disclosure, Empty, PageHeader, Section, SupplierStatusBadge, Table, Td, Th, rowClass } from "@/components/ui";
+import { CompanyLink } from "@/components/companies/company-link";
 import { basePrice, isPriced, priceChange, supplierMetrics, supplierOrderStats, todayISO } from "@/lib/analytics";
 import { countryName } from "@/lib/countries";
 import { KIND_LABEL } from "@/lib/catalog/kinds";
@@ -92,6 +93,7 @@ export default async function SupplierPage({ params }: PageProps<"/suppliers/[id
           <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <span>{[supplier.city, country].filter(Boolean).join(", ") || "—"}</span>
             <SupplierStatusBadge status={m.status} />
+            <CompanyLink t={t} kind="supplier" id={supplier.id} />
           </span>
         }
         actions={

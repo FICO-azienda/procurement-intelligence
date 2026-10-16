@@ -9,6 +9,7 @@ import { ReplyStatusPills } from "@/components/replies/pills";
 import { AttributionFix, CompanyLinkDecision, DocumentForm, RemoveDocument, VerifyDocument } from "@/components/replies/offer-controls";
 import { CompanyEdit, ThreadUpdate } from "@/components/replies/replies";
 import { Crumbs, Disclosure, PageHeader, Section } from "@/components/ui";
+import { CompanyLink } from "@/components/companies/company-link";
 import { getDb } from "@/db";
 import { marketSuppliers, products, rfqSuppliers, suppliers } from "@/db/schema";
 import { todayISO } from "@/lib/analytics";
@@ -134,6 +135,7 @@ export default async function ReplyCompanyPage({ params }: PageProps<"/sourcing/
             {c.country && <span>{`${flagOf(c.country) ?? ""} ${countryName(c.country, t.locale)}`.trim()}</span>}
             {c.companyType && <span>{c.companyType}</span>}
             <ReplyStatusPills statuses={[...new Set(all)]} t={t} />
+            <CompanyLink t={t} kind="reply" id={c.id} />
           </span>
         }
       />
