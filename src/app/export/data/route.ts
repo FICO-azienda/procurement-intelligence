@@ -7,16 +7,14 @@
  */
 import { connection } from "next/server";
 import { getDb } from "@/db";
-import { workspaceAccess } from "@/lib/auth/cookie";
+import { routeAccess } from "@/server/guard";
 import { dump } from "@/server/transfer";
-import { workspacePrincipal } from "@/server/session";
 
 export async function GET() {
   await connection();
-  if (workspaceAccess() === "login") {
-    const who = await workspacePrincipal();
-    if (!who || !who.permissions.includes("company.manage")) return new Response("Only an admin of the workspace can take the data out.", { status: 403 });
-  }
+  // The whole of the data, accounts included: only who manages the company (on its own computer, whoever sits at it).
+  const access = await routeAccess("company.manage");
+  if (access.response) return access.response;
   const db = await getDb();
   const lines = dump(db);
   const encoder = new TextEncoder();

@@ -1,4 +1,5 @@
 /** Serves an original uploaded file ("View source"). */
+import { routeAccess } from "@/server/guard";
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { documents } from "@/db/schema";
@@ -6,6 +7,9 @@ import { unwrapSigned } from "@/lib/import/extract/p7m";
 import { getStorage } from "@/lib/storage";
 
 export async function GET(_req: Request, ctx: RouteContext<"/documents/[id]">) {
+  // A signed-in person of the buyer — any one to read; the permission named to download.
+  const access = await routeAccess(null);
+  if (access.response) return access.response;
   const { id } = await ctx.params;
   if (!/^[0-9a-f-]{36}$/i.test(id)) return new Response("Not found", { status: 404 });
   const db = await getDb();

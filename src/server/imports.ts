@@ -42,7 +42,7 @@ import { MAX_FILE_BYTES } from "@/lib/import/files";
 import { productGroupKey, supplierGroupKey } from "@/lib/import/groups";
 import { matchProduct, matchSupplier, type MatchContext, type MatchResult } from "@/lib/import/match";
 import { readSupplierRows } from "./suppliers";
-import { companyKey, productKey, tidy } from "@/lib/import/normalize/text";
+import { companyKey, productKey, tidy, vatKey } from "@/lib/import/normalize/text";
 import { normalizeUnit } from "@/lib/import/normalize/units";
 import type { CurrentData, DraftItem, ExtractedData, Issue, ItemData, RecordType } from "@/lib/import/types";
 import { uniqueSku } from "@/lib/sku";
@@ -602,10 +602,15 @@ async function openItems(db: DB, sessionId: string) {
 // ======================= Resolutions (user decisions) =======================
 
 export type SupplierDecision =
-  | { type: "use"; supplierId: string }
+  /** `otherVatConfirmed`: the person was told the two VAT numbers differ and said they are one company all the same. */
+  | { type: "use"; supplierId: string; otherVatConfirmed?: boolean }
   | { type: "create"; name: string; country: string | null; vatNumber: string | null };
 
-export async function resolveSupplier(db: DB, sessionId: string, groupKey: string, decision: SupplierDecision, opts: { defer?: boolean } = {}) {
+/** Two VAT numbers that are both written and differ: two legal entities, unless a person says otherwise in so many words. */
+const OTHER_VAT: Msg = "The file's VAT number is {here}; {name} has {there}: they are two different companies, unless you know otherwise.";
+export const VAT_CONFLICT = "vat_conflict";
+
+export async function resolveSupplier(db: DB, sessionId: string, groupKey: string, decision: SupplierDecision, opts: { defer?: boolean } = {}): Promise<{ error?: string; params?: Record<string, string>; code?: string } | void> {
   const items = (await openItems(db, sessionId)).filter((i) => supplierGroupKey(i.data as ItemData) === groupKey);
   if (!items.length) return;
   const sample = items[0].data as ItemData;
@@ -624,9 +629,15 @@ export async function resolveSupplier(db: DB, sessionId: string, groupKey: strin
     supplierId = decision.supplierId;
     const suggested = (items[0].supplierMatch as MatchResult | null)?.id;
     resolution = suggested === supplierId ? "confirmed" : "chosen";
-    // Learn: the name as written in this document now means this supplier.
     const [target] = await db.select().from(suppliers).where(eq(suppliers.id, supplierId));
     if (!target) return;
+    const here = vatKey(sample.supplierVat), there = vatKey(target.vatNumber);
+    if (here.length >= 8 && there.length >= 8 && here !== there) {
+      // Never by a click that did not see it: the person is told, and says so.
+      if (!decision.otherVatConfirmed) return { error: OTHER_VAT, params: { here: sample.supplierVat!, name: target.name, there: target.vatNumber! }, code: VAT_CONFLICT };
+      resolution = "confirmed_other_vat";
+    }
+    // Learn: the name as written in this document now means this supplier.
     const names = [...new Set(items.map((i) => tidy((i.data as ItemData).supplierName)).filter(Boolean))];
     for (const alias of names) {
       if (alias.toLowerCase() === target.name.toLowerCase()) continue;

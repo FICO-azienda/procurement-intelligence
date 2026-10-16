@@ -118,5 +118,17 @@ export function countryFromIso(code: string | null | undefined): string | null {
   return iso ? (BY_ISO.get(iso)?.en ?? iso) : null;
 }
 
+/**
+ * The country a VAT number names by its own prefix ("TR8390012345" → Turkey,
+ * "EL…" → Greece), only when the prefix is a country we list. A number with no
+ * letters in front says nothing, and nothing is guessed from it.
+ */
+export function countryOfVat(vat: string | null | undefined): string | null {
+  const m = /^\s*([A-Za-z]{2})\s*\d/.exec(vat ?? "");
+  if (!m) return null;
+  const iso = m[1].toUpperCase() === "EL" ? "GR" : m[1].toUpperCase();
+  return BY_ISO.get(iso)?.en ?? null;
+}
+
 /** The first, most common countries, to suggest while typing. */
 export const countrySuggestions = (locale: Locale) => COUNTRIES.slice(0, 13).map((c) => c[locale]);

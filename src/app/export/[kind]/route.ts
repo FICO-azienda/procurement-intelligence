@@ -1,10 +1,14 @@
 /** CSV exports: /export/products · suppliers · opportunities · product-dataset · price-history?product= · comparison?product= */
+import { routeAccess } from "@/server/guard";
 import { getDataset, getIntel, getT } from "@/lib/data";
 import { datasetRows } from "@/lib/dataset/profile";
 import { getPriorityDataset } from "@/server/product-data";
 import { comparisonCsv, opportunitiesCsv, priceHistoryCsv, productsCsv, suppliersCsv, toCsv } from "@/lib/intel/csv";
 
 export async function GET(req: Request, ctx: RouteContext<"/export/[kind]">) {
+  // A signed-in person of the buyer — any one to read; the permission named to download.
+  const access = await routeAccess("data.export");
+  if (access.response) return access.response;
   const { kind } = await ctx.params;
   const productId = new URL(req.url).searchParams.get("product");
   const [data, intel, t] = await Promise.all([getDataset(), getIntel(), getT()]);

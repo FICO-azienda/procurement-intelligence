@@ -1,4 +1,5 @@
 /** The whole of a market directory as a workbook: /export/market/<market>. A copy to work on offline — the database stays the source. */
+import { routeAccess } from "@/server/guard";
 import { connection } from "next/server";
 import { getDb } from "@/db";
 import { todayISO } from "@/lib/analytics";
@@ -8,6 +9,9 @@ import { marketWorkbook } from "@/server/markets";
 
 export async function GET(_req: Request, ctx: RouteContext<"/export/market/[market]">) {
   await connection();
+  // A signed-in person of the buyer — any one to read; the permission named to download.
+  const access = await routeAccess("data.export");
+  if (access.response) return access.response;
   const { market } = await ctx.params;
   if (!marketOf(market)) return new Response("Not found", { status: 404 });
   const bytes = await marketWorkbook(await getDb(), market, await getT());

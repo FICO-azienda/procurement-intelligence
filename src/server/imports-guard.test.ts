@@ -6,13 +6,17 @@
  */
 import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
+import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { DB } from "@/db";
 import * as schema from "@/db/schema";
-import type { Issue } from "@/lib/import/types";
-import { acknowledge, approveSession, createAllNew, createUpload, decideDuplicate, discardSession, getSession, getSessionItems, inbox } from "./imports";
+import { readDataset } from "@/lib/data";
+import { buildGroups } from "@/lib/import/groups";
+import type { MatchResult } from "@/lib/import/match";
+import type { Issue, ItemData } from "@/lib/import/types";
+import { acknowledge, approveSession, createAllNew, createUpload, decideDuplicate, discardSession, getSession, getSessionItems, inbox, resolveSupplier, supplierGroupKey } from "./imports";
 
 const bytes = (rows: string[]) => new TextEncoder().encode(rows.join("\n"));
 const HEAD = "Data;Fornitore;Partita IVA;Descrizione;Quantità;UM;Prezzo;Fattura;Riga";
@@ -119,4 +123,35 @@ describe("setting a file aside", () => {
     const [done] = (await db.select().from(schema.importSessions)).filter((s) => s.recordsImported > 0);
     expect((await discardSession(db, done.id)).error).toContain("already imported");
   });
+});
+
+describe("two companies with almost the same name and two VAT numbers", () => {
+  it("are never linked by a click that did not see it, and a person's yes despite it is kept as such", async () => {
+    const { sessionId } = await createUpload(db, { name: "altra-societa.csv", bytes: bytes([HEAD, "10/09/2026;Mock Cere S.r.l.;IT00000000027;Paraffina mock 52/54;100;kg;1,52;ALT-1;1"]) }, "auto", { autoMap: true });
+    const [item] = await getSessionItems(db, sessionId);
+    const [onFile] = await db.select().from(schema.suppliers).where(eq(schema.suppliers.vatNumber, "IT00000000019"));
+    // Not recognised by itself: a different VAT number is a question.
+    expect(item.supplierId).toBeNull();
+    const [group] = buildGroups(
+      [{ data: item.data as ItemData, status: item.status, supplierId: item.supplierId, supplierMatch: item.supplierMatch as MatchResult | null, supplierResolution: item.supplierResolution, productId: item.productId, productMatch: item.productMatch as MatchResult | null, productResolution: item.productResolution }],
+      await readDataset(db),
+    ).suppliers;
+    // Proposed, with the reason and the two numbers said before any click.
+    expect([group.state, group.targetId]).toEqual(["suggested", onFile.id]);
+    expect(group.reason).toContain("different VAT number");
+    expect(group.conflict).toContain("IT00000000027");
+    const key = supplierGroupKey(item.data as ItemData);
+
+    // A link sent without the person having said so is refused, and nothing changes.
+    const refused = await resolveSupplier(db, sessionId, key, { type: "use", supplierId: onFile.id });
+    expect(refused).toMatchObject({ code: "vat_conflict", params: { here: "IT00000000027", there: "IT00000000019" } });
+    expect((await getSessionItems(db, sessionId))[0].supplierId).toBeNull();
+
+    // Said in so many words: linked, and recorded as linked despite the VAT number.
+    expect(await resolveSupplier(db, sessionId, key, { type: "use", supplierId: onFile.id, otherVatConfirmed: true })).toBeUndefined();
+    const [after] = await getSessionItems(db, sessionId);
+    expect([after.supplierId, after.supplierResolution]).toEqual([onFile.id, "confirmed_other_vat"]);
+    // The supplier on file keeps its own VAT number.
+    expect((await db.select().from(schema.suppliers).where(eq(schema.suppliers.id, onFile.id)))[0].vatNumber).toBe("IT00000000019");
+  }, 60_000);
 });

@@ -7,9 +7,9 @@
  * Future: AI/email/document ingestion will produce *proposed* changes that a
  * user approves; the approved change then calls these same write functions.
  */
+import { refuse } from "@/server/guard";
 import { and, count, eq, ne } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { getDb } from "@/db";
 import { clearAll, seedDemo } from "@/db/seed";
@@ -125,6 +125,8 @@ const str = (n: number | null) => (n == null ? null : String(n));
 // ---------------- Suppliers ----------------
 
 export async function saveSupplier(_: FormState, formData: FormData): Promise<FormState> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   const t = await getT();
   const parsed = supplierInput.safeParse(formObject(formData));
   if (!parsed.success) return invalid(t, fieldErrors(parsed.error, t));
@@ -154,8 +156,9 @@ export async function saveSupplier(_: FormState, formData: FormData): Promise<Fo
  * it is never deleted — the database would take its invoice lines with it.
  */
 export async function deleteSupplier(id: string): Promise<SimpleResult | void> {
+  const denied = await refuse("company.manage");
+  if (denied) return denied;
   const t = await getT();
-  if (!(await mayManageData())) return { ok: false, error: t(NOT_ALLOWED) };
   const db = await getDb();
   const [row] = await db.select().from(suppliers).where(eq(suppliers.id, id));
   if (!row) return { ok: false, error: t("This record is no longer on file.") };
@@ -178,6 +181,8 @@ export async function deleteSupplier(id: string): Promise<SimpleResult | void> {
 // ---------------- Products ----------------
 
 export async function saveProduct(_: FormState, formData: FormData): Promise<FormState> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   const t = await getT();
   const parsed = productInput.safeParse(formObject(formData));
   if (!parsed.success) return invalid(t, fieldErrors(parsed.error, t));
@@ -208,8 +213,9 @@ export async function saveProduct(_: FormState, formData: FormData): Promise<For
 
 /** A product with purchases or quotes on file is never deleted (see `deleteSupplier`): merge it or leave it. */
 export async function deleteProduct(id: string): Promise<SimpleResult | void> {
+  const denied = await refuse("company.manage");
+  if (denied) return denied;
   const t = await getT();
-  if (!(await mayManageData())) return { ok: false, error: t(NOT_ALLOWED) };
   const db = await getDb();
   const [row] = await db.select().from(products).where(eq(products.id, id));
   if (!row) return { ok: false, error: t("This record is no longer on file.") };
@@ -232,6 +238,8 @@ export async function deleteProduct(id: string): Promise<SimpleResult | void> {
 // ---------------- Purchases ----------------
 
 export async function savePurchase(_: FormState, formData: FormData): Promise<FormState> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   const t = await getT();
   const parsed = purchaseInput.safeParse(formObject(formData));
   if (!parsed.success) return invalid(t, fieldErrors(parsed.error, t));
@@ -283,8 +291,8 @@ export async function savePurchase(_: FormState, formData: FormData): Promise<Fo
 
 /** A line taken off the purchases is written whole in the change log first: who took it off, when, and everything it said. */
 export async function deletePurchase(id: string): Promise<SimpleResult> {
-  const t = await getT();
-  if (!(await mayManageData())) return { ok: false, error: t(NOT_ALLOWED) };
+  const denied = await refuse("company.manage");
+  if (denied) return denied;
   const db = await getDb();
   const [row] = await db.select().from(purchases).where(eq(purchases.id, id));
   if (!row) return { ok: true };
@@ -299,6 +307,8 @@ export async function deletePurchase(id: string): Promise<SimpleResult> {
 // ---------------- Quotes ----------------
 
 export async function saveQuote(_: FormState, formData: FormData): Promise<FormState> {
+  const denied = await refuse("sourcing.manage");
+  if (denied) return denied;
   const t = await getT();
   const parsed = quoteInput.safeParse(formObject(formData));
   if (!parsed.success) return invalid(t, fieldErrors(parsed.error, t));
@@ -335,8 +345,8 @@ export async function saveQuote(_: FormState, formData: FormData): Promise<FormS
 }
 
 export async function deleteQuote(id: string): Promise<SimpleResult> {
-  const t = await getT();
-  if (!(await mayManageData())) return { ok: false, error: t(NOT_ALLOWED) };
+  const denied = await refuse("company.manage");
+  if (denied) return denied;
   const db = await getDb();
   const [row] = await db.select().from(quotes).where(eq(quotes.id, id));
   if (!row) return { ok: true };
@@ -354,6 +364,8 @@ export type QuickCreated = { ok: true; id: string; name: string } | { ok: false;
 
 /** A supplier created without leaving the purchase or quote being entered. */
 export async function quickCreateSupplier(input: { name: string; country: string; email?: string }): Promise<QuickCreated> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   const name = input.name.trim();
   const country = input.country.trim();
   const email = input.email?.trim() || null;
@@ -376,6 +388,8 @@ export async function quickCreateSupplier(input: { name: string; country: string
 
 /** A product created without leaving the purchase or quote being entered. */
 export async function quickCreateProduct(input: { name: string; unit: string; category?: string }): Promise<QuickCreated & { unit?: string }> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   const name = input.name.trim();
   const unit = input.unit.trim();
   const t = await getT();
@@ -419,6 +433,9 @@ export interface QuickAddProposal {
  * the normal form, where the user checks and confirms.
  */
 export async function interpretPurchase(text: string): Promise<QuickAddProposal> {
+  // It only reads, but its proposal opens a form that writes: whoever may not write gets nothing to fill in.
+  const denied = await refuse("data.edit");
+  if (denied) return { supplierId: null, supplierText: null, productId: null, productText: null, quantity: null, unitPrice: null, currency: null, date: null, notes: [denied.error] };
   const parsed = parseQuickPurchase(text, todayISO());
   const t = await getT();
   const db = await getDb();
@@ -475,6 +492,8 @@ export async function interpretPurchase(text: string): Promise<QuickAddProposal>
 // ---------------- Company settings ----------------
 
 export async function saveSettings(_: FormState, formData: FormData): Promise<FormState> {
+  const denied = await refuse("company.manage");
+  if (denied) return denied;
   const text = (k: string) => {
     const v = formData.get(k);
     return typeof v === "string" && v.trim() ? v.trim() : null;
@@ -500,6 +519,8 @@ export async function saveSettings(_: FormState, formData: FormData): Promise<Fo
 
 /** The language of the interface. Saved with the company settings; every page follows it. */
 export async function setLanguage(language: string): Promise<SimpleResult> {
+  const denied = await refuse(null);
+  if (denied) return denied;
   if (!isLocale(language)) return { ok: false, error: "Unknown language." };
   try {
     const db = await getDb();
@@ -519,16 +540,19 @@ export async function setLanguage(language: string): Promise<SimpleResult> {
  * company's own, both are refused here — whatever the page shows, whoever calls them (server/data-guard.ts).
  */
 export async function clearAllData(): Promise<SimpleResult> {
+  const denied = await refuse("company.manage");
+  if (denied) return denied;
   return wipe(false);
 }
 
 export async function loadDemoData(): Promise<SimpleResult> {
+  const denied = await refuse("company.manage");
+  if (denied) return denied;
   return wipe(true);
 }
 
 async function wipe(thenDemo: boolean): Promise<SimpleResult> {
   const t = await getT();
-  if (!(await mayManageData())) return { ok: false, error: t(NOT_ALLOWED) };
   try {
     const db = await getDb();
     if ((await dataState(db)) === "real") return { ok: false, error: t(REAL_DATA_KEPT) };
@@ -549,6 +573,8 @@ export type SimpleResult = { ok: boolean; error?: string };
 
 /** What a product is for the company's spend: decides whether it is in the catalogue or in the other spend. */
 export async function setProductKind(productId: string, kind: ProductKind): Promise<SimpleResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   const t = await getT();
   if (!isProductKind(kind)) return { ok: false, error: t("Something went wrong.") };
   try {
@@ -581,6 +607,8 @@ const mergeFailed = (t: T, err: unknown): SimpleResult => {
  * back. What the match rests on is worked out here, not taken from the page.
  */
 export async function mergeSuppliersAction(mergeId: string, keepId: string): Promise<SimpleResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   const t = await getT();
   try {
     const db = await getDb();
@@ -595,6 +623,8 @@ export async function mergeSuppliersAction(mergeId: string, keepId: string): Pro
 
 /** The user says two supplier records are two companies: the pair is not proposed again. */
 export async function keepSuppliersSeparateAction(a: string, b: string): Promise<SimpleResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   const t = await getT();
   try {
     const db = await getDb();
@@ -609,6 +639,8 @@ export async function keepSuppliersSeparateAction(a: string, b: string): Promise
 
 /** Takes a merge back: the record stands for itself again, with every purchase and quote it always had. */
 export async function undoSupplierMergeAction(supplierId: string): Promise<SimpleResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   const t = await getT();
   try {
     await undoSupplierMerge(await getDb(), supplierId);
@@ -631,6 +663,8 @@ const sourcingFailed = (t: T, err: unknown): SourcingResult => {
 
 /** A possible supplier found by the user: kept with where it was found, to review like any other. */
 export async function addCandidateAction(productId: string, input: Record<string, string>): Promise<SourcingResult> {
+  const denied = await refuse("sourcing.manage");
+  if (denied) return denied;
   const t = await getT();
   const parsed = candidateInput.safeParse(input);
   if (!parsed.success) return { ok: false, errors: fieldErrors(parsed.error, t) };
@@ -644,6 +678,8 @@ export async function addCandidateAction(productId: string, input: Record<string
 }
 
 export async function updateCandidateAction(id: string, patch: { status?: string; technicalCompatibility?: string | null; notes?: string | null }): Promise<SourcingResult> {
+  const denied = await refuse("sourcing.manage");
+  if (denied) return denied;
   const t = await getT();
   try {
     await updateCandidate(await getDb(), id, {
@@ -660,6 +696,8 @@ export async function updateCandidateAction(id: string, patch: { status?: string
 
 /** The whole basket at once: "quote requested" for every supplier a request was prepared for. */
 export async function setCandidatesStatusAction(ids: string[], status: string): Promise<SourcingResult> {
+  const denied = await refuse("sourcing.manage");
+  if (denied) return denied;
   const t = await getT();
   if (!isCandidateStatus(status)) return { ok: false, error: t("Something went wrong.") };
   try {
@@ -672,6 +710,8 @@ export async function setCandidatesStatusAction(ids: string[], status: string): 
 }
 
 export async function deleteCandidateAction(id: string): Promise<SourcingResult> {
+  const denied = await refuse("sourcing.manage");
+  if (denied) return denied;
   const t = await getT();
   try {
     await deleteCandidate(await getDb(), id);
@@ -684,6 +724,8 @@ export async function deleteCandidateAction(id: string): Promise<SourcingResult>
 
 /** A market reference typed from a report or a public source, with who published it and when. */
 export async function addBenchmarkAction(productId: string, unit: string, input: Record<string, string>): Promise<SourcingResult> {
+  const denied = await refuse("sourcing.manage");
+  if (denied) return denied;
   const t = await getT();
   const parsed = benchmarkInput.safeParse(input);
   if (!parsed.success) return { ok: false, errors: fieldErrors(parsed.error, t) };
@@ -697,6 +739,8 @@ export async function addBenchmarkAction(productId: string, unit: string, input:
 }
 
 export async function deleteBenchmarkAction(id: string): Promise<SourcingResult> {
+  const denied = await refuse("sourcing.manage");
+  if (denied) return denied;
   const t = await getT();
   try {
     await deleteBenchmark(await getDb(), id);
@@ -709,6 +753,8 @@ export async function deleteBenchmarkAction(id: string): Promise<SourcingResult>
 
 /** The user says these requests were sent: who was asked, for what, when. Nothing is sent by the app. */
 export async function markRequestsSentAction(items: { supplierName: string; candidateIds: string[]; productIds: string[]; kind: string; destination?: string | null }[]): Promise<SourcingResult> {
+  const denied = await refuse("sourcing.manage");
+  if (denied) return denied;
   const t = await getT();
   try {
     const db = await getDb();
@@ -726,6 +772,8 @@ export async function markRequestsSentAction(items: { supplierName: string; cand
  * source is connected; without it the quote is kept and left out of EUR comparisons.
  */
 export async function recordCandidateQuoteAction(candidateId: string, input: Record<string, string>, original: string): Promise<SourcingResult> {
+  const denied = await refuse("sourcing.manage");
+  if (denied) return denied;
   const freight = (input.freightPerUnit ?? "").trim() ? parseNumber(input.freightPerUnit) : null;
   const t = await getT();
   const parsed = candidateQuoteInput.safeParse(input);
@@ -753,6 +801,8 @@ export async function recordCandidateQuoteAction(candidateId: string, input: Rec
 
 /** What the product is called and described as to someone who is not its current supplier: the company's own words. */
 export async function saveRfqSpecAction(productId: string, input: { rfqName: string; technical: string; application: string }): Promise<SourcingResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   const t = await getT();
   try {
     await saveRfqSpec(await getDb(), productId, { rfqName: input.rfqName, technical: input.technical, application: input.application });
@@ -765,6 +815,8 @@ export async function saveRfqSpecAction(productId: string, input: { rfqName: str
 
 /** A technical data sheet kept with the product, to attach to requests. Stored as it is. */
 export async function uploadProductDocumentAction(productId: string, formData: FormData): Promise<SourcingResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   const t = await getT();
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) return { ok: false, error: t("Choose a file.") };
@@ -780,6 +832,8 @@ export async function uploadProductDocumentAction(productId: string, formData: F
 }
 
 export async function removeProductDocumentAction(id: string): Promise<SourcingResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   const t = await getT();
   try {
     await removeProductDocument(await getDb(), id);
@@ -792,6 +846,8 @@ export async function removeProductDocumentAction(id: string): Promise<SourcingR
 
 /** Puts products in the live pilot, or takes them out: the first real round of requests is for these. */
 export async function setPilotAction(productIds: string[], on: boolean): Promise<SourcingResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   const t = await getT();
   try {
     await setPilot(await getDb(), productIds, on);
@@ -804,6 +860,8 @@ export async function setPilotAction(productIds: string[], on: boolean): Promise
 
 /** Transport, duty and other costs of a quote, as the user knows or estimates them. Empty means not known — never zero. */
 export async function saveTrueCostInputsAction(quoteId: string, input: Record<string, string>): Promise<SourcingResult> {
+  const denied = await refuse("sourcing.manage");
+  if (denied) return denied;
   const t = await getT();
   const errors: FieldErrors = {};
   const number = (key: string) => {
@@ -826,6 +884,8 @@ export async function saveTrueCostInputsAction(quoteId: string, input: Record<st
 
 /** The month a reference is about ("2026-09"): its exchange rate becomes that month's average at the next research. */
 export async function setBenchmarkMonthAction(id: string, month: string): Promise<SourcingResult> {
+  const denied = await refuse("sourcing.manage");
+  if (denied) return denied;
   const t = await getT();
   if (month && !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return { ok: false, error: t("Write the month as year-month, like 2026-09.") };
   try {
@@ -855,6 +915,8 @@ const DATA_ERROR: Record<string, Msg> = {
  * empty level takes the correction back, and the software's estimate returns.
  */
 export async function saveJudgementAction(productId: string, key: string, level: string, reason: string): Promise<SourcingResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   const t = await getT();
   if (!isJudgementKey(key) || (level !== "" && !isLevel(level))) return { ok: false, error: t("Something went wrong.") };
   try {
@@ -868,6 +930,8 @@ export async function saveJudgementAction(productId: string, key: string, level:
 
 /** A field of the product's data, typed by a person. Empty clears it. */
 export async function saveDataFieldAction(productId: string, field: string, raw: string): Promise<SourcingResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   const t = await getT();
   if (!isFieldKey(field)) return { ok: false, error: t("Something went wrong.") };
   try {
@@ -882,6 +946,8 @@ export async function saveDataFieldAction(productId: string, field: string, raw:
 
 /** The software's estimate, confirmed as it is: it becomes a confirmed value, the estimate is kept with it. */
 export async function confirmDataFieldAction(productId: string, field: string): Promise<SourcingResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   const t = await getT();
   if (!isFieldKey(field)) return { ok: false, error: t("Something went wrong.") };
   try {
@@ -896,6 +962,8 @@ export async function confirmDataFieldAction(productId: string, field: string): 
 
 /** A document already in the app (an invoice, a quote), linked to the product — not copied. */
 export async function linkProductDocumentAction(productId: string, documentId: string, type: string): Promise<SourcingResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   const t = await getT();
   try {
     await linkProductDocument(await getDb(), productId, documentId, type);
@@ -909,6 +977,8 @@ export async function linkProductDocumentAction(productId: string, documentId: s
 
 /** A new document for the product, with what kind it is. The same file twice is stored once. */
 export async function uploadProductFileAction(productId: string, formData: FormData): Promise<SourcingResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   const t = await getT();
   const file = formData.get("file");
   const type = String(formData.get("type") ?? "");
@@ -933,6 +1003,8 @@ export async function uploadProductFileAction(productId: string, formData: FormD
  * and references; it never changes a purchase, a price or a supplier.
  */
 export async function runResearchAction(productId: string): Promise<SourcingResult & { outcome?: ResearchOutcome }> {
+  const denied = await refuse("sourcing.manage");
+  if (denied) return denied;
   const t = await getT();
   try {
     const outcome = await runResearch(await getDb(), productId, undefined, t);
@@ -945,6 +1017,8 @@ export async function runResearchAction(productId: string): Promise<SourcingResu
 
 /** What researching the priority products would take — searches, providers, estimated cost — before anything is started. */
 export async function planResearchAction(): Promise<SourcingResult & { plan?: PlanView }> {
+  const denied = await refuse("sourcing.manage");
+  if (denied) return denied;
   const t = await getT();
   try {
     const { review } = await getMarketViews();
@@ -956,6 +1030,8 @@ export async function planResearchAction(): Promise<SourcingResult & { plan?: Pl
 
 /** Research done outside the app: read the file and say what it would load; load it only when `confirm` is set. */
 export async function importResearchAction(raw: string, confirm: boolean): Promise<SourcingResult & { outcome?: ImportOutcome }> {
+  const denied = await refuse("sourcing.manage");
+  if (denied) return denied;
   const t = await getT();
   const parsed = parseResearchFile(raw);
   if (!parsed.ok) return { ok: false, error: parsed.error === "not_json" ? t("This is not a research file: it has to be JSON, in the format shown below.") : t("The file can't be read — {detail}", { detail: `${parsed.where}: ${t.any(parsed.message)}` }) };
@@ -970,16 +1046,21 @@ export async function importResearchAction(raw: string, confirm: boolean): Promi
 
 /** The research files kept on this computer, and the content of one: read only — loading goes through the same check and confirmation. */
 export async function listResearchFilesAction(): Promise<ResearchFileInfo[]> {
+  if (await refuse(null)) return [];
   return listResearchFiles();
 }
 
 export async function readResearchFileAction(name: string): Promise<{ ok: boolean; raw?: string }> {
+  const denied = await refuse(null);
+  if (denied) return denied;
   const raw = await readResearchFile(name);
   return raw == null ? { ok: false } : { ok: true, raw };
 }
 
 /** A candidate becomes a supplier on file: the user's decision, never the research's. */
 export async function convertCandidateAction(id: string): Promise<SourcingResult & { supplierId?: string }> {
+  const denied = await refuse("sourcing.manage");
+  if (denied) return denied;
   const t = await getT();
   try {
     const { supplierId } = await convertCandidate(await getDb(), id);
@@ -991,6 +1072,8 @@ export async function convertCandidateAction(id: string): Promise<SourcingResult
 }
 
 export async function setCustomsCodeAction(productId: string, code: string, confirmed: boolean): Promise<SourcingResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   const t = await getT();
   const digits = code.replace(/[\s.]/g, "");
   if (digits && !/^\d{4,10}$/.test(digits)) return { ok: false, error: t("A customs code is 4 to 10 digits.") };
@@ -1004,6 +1087,8 @@ export async function setCustomsCodeAction(productId: string, code: string, conf
 }
 
 export async function setResearchClassAction(productId: string, productClass: string): Promise<SourcingResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   const t = await getT();
   try {
     await setResearchClass(await getDb(), productId, productClass || null);
@@ -1027,6 +1112,8 @@ const mapperFailed = (t: T, err: unknown): SimpleResult => {
  * with the user's own answer (a subcategory, or a kind of spend) and names.
  */
 export async function confirmMappingsAction(input: { productIds?: string[]; answer?: string; names?: Record<string, string> } = {}): Promise<SimpleResult & { confirmed?: number }> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   const t = await getT();
   try {
     const { confirmed } = await confirmMappings(await getDb(), { ...input, t });
@@ -1039,6 +1126,8 @@ export async function confirmMappingsAction(input: { productIds?: string[]; answ
 
 /** Several products are the same one: they become one, under the name given. */
 export async function mergeProductsAction(productIds: string[], name: string): Promise<SimpleResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   const t = await getT();
   try {
     await mergeProducts(await getDb(), productIds, name, t);
@@ -1051,6 +1140,8 @@ export async function mergeProductsAction(productIds: string[], name: string): P
 
 /** Several products are versions of one: filed under the same macro product, each kept as it is. */
 export async function confirmVariantsAction(productIds: string[], name: string, variantBy: string): Promise<SimpleResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   const t = await getT();
   if (!isVariantBy(variantBy)) return { ok: false, error: t("Say what changes between them.") };
   try {
@@ -1064,6 +1155,8 @@ export async function confirmVariantsAction(productIds: string[], name: string, 
 
 /** A merge of two products taken back: what moved goes back, the merged product is listed again. */
 export async function undoProductMergeAction(mergeId: string): Promise<SimpleResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   const t = await getT();
   try {
     await undoProductMerge(await getDb(), mergeId, t);
@@ -1076,6 +1169,8 @@ export async function undoProductMergeAction(mergeId: string): Promise<SimpleRes
 
 /** Several merges taken back together: the ones the invoices say put two products in one. */
 export async function undoProductMergesAction(mergeIds: string[]): Promise<SimpleResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   const t = await getT();
   try {
     await undoProductMerges(await getDb(), mergeIds, t);
@@ -1088,6 +1183,8 @@ export async function undoProductMergesAction(mergeIds: string[]): Promise<Simpl
 
 /** They look alike but are different products: remembered, not asked again. */
 export async function keepSeparateAction(productIds: string[]): Promise<SimpleResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   const t = await getT();
   try {
     await keepSeparate(await getDb(), productIds);
@@ -1100,6 +1197,8 @@ export async function keepSeparateAction(productIds: string[]): Promise<SimpleRe
 
 /** Name, category, family and variant written by the user on the product's page. */
 export async function saveMappingAction(productId: string, edit: MappingEdit): Promise<SimpleResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   const t = await getT();
   if (!edit.name.trim()) return { ok: false, error: t("A product needs a name.") };
   if (!isProductKind(edit.kind)) return { ok: false, error: t("Something went wrong.") };
@@ -1121,11 +1220,14 @@ const marketFailed = (t: T, err: unknown): SimpleResult => {
 
 /** The research files of the directories kept on this computer. */
 export async function listMarketFilesAction(): Promise<{ name: string; modified: string }[]> {
+  if (await refuse(null)) return [];
   return listMarketFiles();
 }
 
 /** Checks one of them; with `confirm`, loads it. The check alone writes nothing. */
 export async function loadMarketFileAction(name: string, confirm: boolean): Promise<SimpleResult & { outcome?: MarketImport }> {
+  const denied = await refuse("sourcing.manage");
+  if (denied) return denied;
   const t = await getT();
   try {
     const raw = await readMarketFile(name);
@@ -1140,6 +1242,8 @@ export async function loadMarketFileAction(name: string, confirm: boolean): Prom
 
 /** How far along the user says a company of a directory is. */
 export async function setMarketStatusAction(id: string, status: string): Promise<SimpleResult> {
+  const denied = await refuse("sourcing.manage");
+  if (denied) return denied;
   const t = await getT();
   try {
     await setMarketStatus(await getDb(), id, status);
@@ -1152,6 +1256,8 @@ export async function setMarketStatusAction(id: string, status: string): Promise
 
 /** A company of a directory as a candidate for one of the buyer's products: on the user's click, to review like any other. */
 export async function makeCandidateAction(id: string, productId: string): Promise<SimpleResult> {
+  const denied = await refuse("sourcing.manage");
+  if (denied) return denied;
   const t = await getT();
   try {
     await makeCandidate(await getDb(), id, productId, t);
@@ -1183,30 +1289,42 @@ async function arrange(change: (db: Awaited<ReturnType<typeof getDb>>, t: T) => 
 
 /** A new category, or a new subcategory of `parent`. */
 export async function createCategoryAction(name: string, parent: string | null = null): Promise<SimpleResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   return arrange((db, t) => createCategory(db, name, parent, t));
 }
 
 /** Another name for a category or a subcategory: its products follow. */
 export async function renameCategoryAction(place: CategoryPlace, name: string): Promise<SimpleResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   return arrange((db, t) => renameCategory(db, place, name, t));
 }
 
 /** A subcategory and its products under another category. */
 export async function moveSubcategoryAction(place: { category: string; subcategory: string }, toCategory: string): Promise<SimpleResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   return arrange((db, t) => moveSubcategory(db, place, toCategory, t));
 }
 
 /** Products filed in another place by the user; `null` puts them back among the ones to classify. */
 export async function moveProductsAction(productIds: string[], to: CategoryPlace | null): Promise<SimpleResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   return arrange((db, t) => moveProducts(db, productIds, to, t));
 }
 
 export async function reorderCategoryAction(place: CategoryPlace, direction: "up" | "down"): Promise<SimpleResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   return arrange((db, t) => reorderCategory(db, place, direction === "up" ? "up" : "down", t));
 }
 
 /** Takes an empty category or subcategory off the list. Products are never deleted from here. */
 export async function deleteCategoryAction(place: CategoryPlace): Promise<SimpleResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   return arrange((db, t) => deleteCategory(db, place, t));
 }
 
@@ -1215,6 +1333,8 @@ export async function deleteCategoryAction(place: CategoryPlace): Promise<Simple
  * store the decision and a snapshot of the numbers at that moment.
  */
 export async function setOpportunityStatus(key: string, status: OpportunityStatus, note?: string | null): Promise<SimpleResult> {
+  const denied = await refuse("decision.make");
+  if (denied) return denied;
   const t = await getT();
   if (!OPPORTUNITY_STATUSES.includes(status)) return { ok: false, error: t("Unknown status.") };
   try {
@@ -1273,6 +1393,8 @@ export async function saveOffer(
   productId: string,
   input: { comparability: "auto" | "comparable" | "partial" | "not"; note: string; specs: string },
 ): Promise<SimpleResult> {
+  const denied = await refuse("sourcing.manage");
+  if (denied) return denied;
   try {
     const db = await getDb();
     const values = {
@@ -1295,6 +1417,8 @@ export async function saveOffer(
 
 /** Decision on a price flagged as a possible anomaly (null = undecided again). */
 export async function reviewPrice(purchaseId: string, decision: "confirmed" | "excluded" | null): Promise<SimpleResult> {
+  const denied = await refuse("data.edit");
+  if (denied) return denied;
   try {
     const db = await getDb();
     await db.update(purchases).set({ priceReview: decision, updatedAt: new Date() }).where(eq(purchases.id, purchaseId));
@@ -1315,6 +1439,7 @@ const replyFailed = (t: T, err: unknown): SimpleResult => {
 
 /** The files of replies kept on this computer. */
 export async function listReplyFilesAction(): Promise<{ name: string; modified: string }[]> {
+  if (await refuse(null)) return [];
   return listReplyFiles();
 }
 
@@ -1323,6 +1448,8 @@ export async function listReplyFilesAction(): Promise<{ name: string; modified: 
  * The check alone writes nothing: it says what the load would do.
  */
 export async function loadReplyFileAction(source: { name: string; raw?: string }, confirm: boolean): Promise<SimpleResult & { outcome?: PlanSummary; loaded?: boolean }> {
+  const denied = await refuse("sourcing.manage");
+  if (denied) return denied;
   const t = await getT();
   try {
     const raw = source.raw ?? (await readReplyFile(source.name));
@@ -1343,20 +1470,16 @@ export async function loadReplyFileAction(source: { name: string; raw?: string }
  * setting the `pi_actor` cookie in its own browser before it touches anything: what it does is then recorded as the
  * assistant's, never as the person's.
  */
-const NOT_ALLOWED: Msg = "Only a person who manages the company's data can do this.";
 
 /**
  * Deleting and clearing are for whoever manages the company's data: on the company's own computer the person at it,
  * on a server a signed-in person with that permission — never any signed-in member.
  */
-async function mayManageData(): Promise<boolean> {
-  const who = await workspacePrincipal();
-  return !!who && who.permissions.includes("company.manage");
-}
-
+/** Who is doing it, as the session says: the signed-in person, an assistant that says so, or — on the company's own computer — the user named in Settings. */
 async function actorOf(): Promise<Actor> {
-  if ((await cookies()).get("pi_actor")?.value === "assistant") return { type: "ai", id: "assistant" };
-  return { type: "user", id: (await getSettings()).userName };
+  const who = await workspacePrincipal();
+  if (who?.actorType === "ai") return { type: "ai", id: "assistant" };
+  return { type: "user", id: who?.userId ? who.name : (await getSettings()).userName };
 }
 
 type ReplyDone = SimpleResult;
@@ -1375,30 +1498,42 @@ async function reply(run: (db: Awaited<ReturnType<typeof getDb>>, actor: Actor, 
 
 /** Someone corrects who a company is. */
 export async function updateReplyCompanyAction(id: string, patch: Partial<Record<CompanyField, string | null>>): Promise<SimpleResult> {
+  const denied = await refuse("sourcing.manage");
+  if (denied) return denied;
   return reply((db, actor, t) => updateReplyCompany(db, id, patch, actor, t));
 }
 
 /** Someone says what happened in a conversation, and where it stands now. */
 export async function updateReplyThreadAction(threadId: string, update: ThreadUpdate): Promise<SimpleResult> {
+  const denied = await refuse("sourcing.manage");
+  if (denied) return denied;
   return reply((db, actor, t) => updateReplyThread(db, threadId, update, actor, t));
 }
 
 /** An offer is tied to one of the buyer's products as an alternative to verify — never as an equivalent. */
 export async function linkOfferAction(offerId: string, productId: string, v: { compatibility?: string; note?: string | null } = {}): Promise<SimpleResult> {
+  const denied = await refuse("sourcing.manage");
+  if (denied) return denied;
   return reply((db, actor, t) => linkOffer(db, offerId, productId, { compatibility: isCompatibility(v.compatibility) ? v.compatibility : undefined, note: v.note }, actor, t));
 }
 
 export async function unlinkOfferAction(offerId: string): Promise<SimpleResult> {
+  const denied = await refuse("sourcing.manage");
+  if (denied) return denied;
   return reply((db, actor, t) => unlinkOffer(db, offerId, actor, t));
 }
 
 /** "It is not for this product": the app stops proposing the two together. */
 export async function declineSuggestionAction(offerId: string, productId: string): Promise<SimpleResult> {
+  const denied = await refuse("sourcing.manage");
+  if (denied) return denied;
   return reply((db, actor, t) => declineSuggestion(db, offerId, productId, actor, t));
 }
 
 /** How far an offer is the product bought, with the reason. */
 export async function setOfferCompatibilityAction(offerId: string, compatibility: string, note: string | null): Promise<SimpleResult> {
+  const denied = await refuse("sourcing.manage");
+  if (denied) return denied;
   return reply(async (db, actor, t) => {
     if (!isCompatibility(compatibility)) throw new ReplyError(t("Something went wrong."));
     await setOfferCompatibility(db, offerId, { compatibility, note }, actor, t);
@@ -1407,16 +1542,22 @@ export async function setOfferCompatibilityAction(offerId: string, compatibility
 
 /** An offer is turned down, or taken up again. */
 export async function decideOfferAction(offerId: string, rejected: boolean, note: string | null): Promise<SimpleResult> {
+  const denied = await refuse("decision.make");
+  if (denied) return denied;
   return reply((db, actor, t) => decideOffer(db, offerId, { rejected, note }, actor, t));
 }
 
 /** What it costs to bring the goods to the plant, as stated. */
 export async function saveLandedAction(offerId: string, input: unknown, destinationId: string | null): Promise<SimpleResult> {
+  const denied = await refuse("sourcing.manage");
+  if (denied) return denied;
   return reply((db, actor, t) => saveLanded(db, offerId, { input, destinationId }, actor, t));
 }
 
 /** A document of a conversation: named, linked, or uploaded — only an upload is a copy on file. */
 export async function addReplyDocumentAction(form: FormData): Promise<SimpleResult> {
+  const denied = await refuse("sourcing.manage");
+  if (denied) return denied;
   return reply(async (db, actor, t) => {
     const threadId = String(form.get("threadId") ?? "");
     const kind = String(form.get("kind") ?? "other");
@@ -1428,16 +1569,22 @@ export async function addReplyDocumentAction(form: FormData): Promise<SimpleResu
 }
 
 export async function removeReplyDocumentAction(id: string): Promise<SimpleResult> {
+  const denied = await refuse("sourcing.manage");
+  if (denied) return denied;
   return reply((db, actor) => removeReplyDocument(db, id, actor));
 }
 
 /** A person checked a document of a conversation, or takes the check back. */
 export async function verifyReplyDocumentAction(id: string, verified: boolean): Promise<SimpleResult> {
+  const denied = await refuse("sourcing.manage");
+  if (denied) return denied;
   return reply((db, actor, t) => verifyReplyDocument(db, id, verified, actor, t));
 }
 
 /** What to ask the company about an offer — more information, or a price still valid — is written down. Nothing is sent. */
 export async function requestFromSupplierAction(offerId: string, v: { kind: "information" | "price"; productId?: string | null; what: string; followUpOn?: string | null }): Promise<SimpleResult> {
+  const denied = await refuse("sourcing.manage");
+  if (denied) return denied;
   return reply((db, actor, t) => requestFromSupplier(db, offerId, { kind: v.kind === "price" ? "price" : "information", productId: v.productId ?? null, what: String(v.what ?? ""), followUpOn: v.followUpOn ?? null }, actor, t));
 }
 
@@ -1447,6 +1594,8 @@ export async function requestFromSupplierAction(offerId: string, v: { kind: "inf
  * source has one — nothing is made up in its place.
  */
 export async function referenceRateAction(currency: string, date: string): Promise<{ ok: boolean; error?: string; rate?: number; date?: string; source?: string }> {
+  const denied = await refuse("sourcing.manage");
+  if (denied) return denied;
   const t = await getT();
   const found = await referenceRate(String(currency ?? ""), String(date ?? ""));
   if (!found) return { ok: false, error: t("No official reference rate was found for {currency} on that day: enter the rate yourself, with its source and date.", { currency: String(currency ?? "").toUpperCase() }) };
@@ -1455,6 +1604,8 @@ export async function referenceRateAction(currency: string, date: string): Promi
 
 /** What a record of another part of the app is to this company: the same, of the same group, another — or undecided again. */
 export async function decideCompanyLinkAction(replyId: string, where: string, id: string, relation: string | null): Promise<SimpleResult> {
+  const denied = await refuse("sourcing.manage");
+  if (denied) return denied;
   return reply(async (db, actor, t) => {
     if (where !== "supplier" && where !== "candidate" && where !== "directory") throw new ReplyError(t("Something went wrong."));
     if (relation !== null && relation !== "same" && relation !== "group" && relation !== "different" && relation !== "later") throw new ReplyError(t("Something went wrong."));
@@ -1464,6 +1615,8 @@ export async function decideCompanyLinkAction(replyId: string, where: string, id
 
 /** An event was attributed to the wrong actor: attributed again, with the evidence. */
 export async function correctAttributionAction(eventId: string, actorType: string, evidence: string): Promise<SimpleResult> {
+  const denied = await refuse("company.manage");
+  if (denied) return denied;
   return reply(async (db, actor, t) => {
     if (!isActorType(actorType)) throw new ReplyError(t("Something went wrong."));
     await correctAttribution(db, eventId, actorType, evidence, actor);
@@ -1472,9 +1625,13 @@ export async function correctAttributionAction(eventId: string, actorType: strin
 
 /** A delivery destination: a new one, or the fields of one on file. */
 export async function saveDestinationAction(v: Partial<Record<DestinationField, string | null>> & { id?: string | null; isDefault?: boolean; confirmed?: boolean }): Promise<SimpleResult> {
+  const denied = await refuse("company.manage");
+  if (denied) return denied;
   return reply((db, actor, t) => saveDestination(db, v, actor, t));
 }
 
 export async function removeDestinationAction(id: string): Promise<SimpleResult> {
+  const denied = await refuse("company.manage");
+  if (denied) return denied;
   return reply((db, actor) => removeDestination(db, id, actor));
 }

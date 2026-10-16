@@ -147,9 +147,9 @@ export function compareSuppliers(a: SupplierRecord, b: SupplierRecord, t: T = en
     if (!sameName && !alias) return null;
     confidence = "low";
   } else if (sameDomain) {
-    // A domain is the company's own, but a group can share one: it decides alone only when the names agree too.
-    confidence = named ? "high" : "medium";
-    automatic = named && !countryConflict;
+    // A domain is the company's own, but the companies of one group often share it: a strong proposal, never a merge by
+    // itself. Only a VAT number or a tax code merges without asking.
+    confidence = named && !countryConflict ? "high" : "medium";
   } else if (sameName || alias) confidence = countryConflict ? "low" : "medium";
   else if (similar) confidence = samePhone ? "medium" : "low";
   else return null;

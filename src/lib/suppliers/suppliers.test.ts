@@ -51,9 +51,11 @@ describe("the hierarchy", () => {
     expect(compareSuppliers(record("Mock Wax Italia Srl", { vatNumber: "01234567890" }), record("Mock Wax Financial Services Italia Srl", { vatNumber: "09876543210" }))).toBeNull();
   });
 
-  it("a shared domain decides alone only when the names agree", () => {
+  it("a shared domain is a strong proposal, never a merge by itself: the companies of one group share a site", () => {
     const a = record("Mock Wax GmbH", { website: "mock-wax.example" });
-    expect(compareSuppliers(a, record("MOCK WAX", { email: "info@mock-wax.example" }))).toMatchObject({ confidence: "high", automatic: true, basis: ["domain", "name"] });
+    expect(compareSuppliers(a, record("MOCK WAX", { email: "info@mock-wax.example" }))).toMatchObject({ confidence: "high", automatic: false, basis: ["domain", "name"] });
+    // Two legal entities of one group on one site: proposed, and the two VAT numbers keep them apart.
+    expect(compareSuppliers(record("Mock Group AG", { website: "mock-group.example", vatNumber: "CHE111111111" }), record("Mock Group Italia S.r.l.", { website: "mock-group.example", vatNumber: "IT22222222222" }))).toBeNull();
     expect(compareSuppliers(a, record("Other Trading Ltd", { website: "www.mock-wax.example" }))).toMatchObject({ confidence: "medium", automatic: false, basis: ["domain"] });
   });
 

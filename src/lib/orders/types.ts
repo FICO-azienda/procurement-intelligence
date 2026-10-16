@@ -39,14 +39,24 @@ export const ORDER_TERMS_VERSION = "pilot-draft-1";
 export const SIDES = ["buyer", "supplier"] as const;
 export type Side = (typeof SIDES)[number];
 
+/**
+ * What a person may do. Reading the workspace needs only a session: a member
+ * with no permission at all is someone who looks and changes nothing. Every
+ * write of the workspace names one of these (server/guard.ts).
+ */
 export const PERMISSIONS = {
-  buyer: ["order.send", "channel.manage", "company.manage"],
+  buyer: ["data.edit", "data.import", "sourcing.manage", "decision.make", "data.export", "order.send", "channel.manage", "company.manage"],
   supplier: ["order.respond", "terms.edit", "company.manage"],
 } as const;
 export type Permission = (typeof PERMISSIONS)[Side][number];
 export const isPermission = (v: unknown): v is Permission => typeof v === "string" && ([...PERMISSIONS.buyer, ...PERMISSIONS.supplier] as string[]).includes(v);
 
 export const PERMISSION_LABEL: Record<Permission, Msg> = {
+  "data.edit": "Change products, suppliers, purchases and the catalogue",
+  "data.import": "Import files and confirm what they bring",
+  "sourcing.manage": "Research suppliers, record requests, replies and offers",
+  "decision.make": "Take purchasing decisions",
+  "data.export": "Download exports of the data",
   "order.send": "Send, cancel and confirm orders",
   "channel.manage": "Invite suppliers and tie their articles to products",
   "order.respond": "Accept, change and decline orders",

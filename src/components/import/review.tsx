@@ -138,17 +138,30 @@ function GroupRow({ sessionId, kind, group: g, options }: { sessionId: string; k
   const { pending, error, run, t } = useAction();
   const [choosing, setChoosing] = useState(false);
   const [choice, setChoice] = useState(g.targetId ?? "");
+  // Two VAT numbers that differ: the link waits for a second, explicit yes (from the suggestion or from a choice).
+  const [sameDespiteVat, setSameDespiteVat] = useState<string | null>(null);
   const create = useSheet();
   const supplier = kind === "supplier";
   const lines = t.n(g.lines, "{n} line", "{n} lines");
 
-  const use = (id: string) =>
-    run(() =>
-      kind === "supplier"
-        ? resolveSupplierAction(sessionId, g.key, { type: "use", supplierId: id })
-        : resolveProductAction(sessionId, g.key, { type: "use", productId: id }),
-      () => setChoosing(false),
+  const use = (id: string, otherVatConfirmed = false) =>
+    run(
+      async () => {
+        if (kind !== "supplier") return resolveProductAction(sessionId, g.key, { type: "use", productId: id });
+        const res = await resolveSupplierAction(sessionId, g.key, { type: "use", supplierId: id, otherVatConfirmed });
+        if (!res.ok && "code" in res && res.code === "vat_conflict") setSameDespiteVat(id);
+        return res;
+      },
+      () => {
+        setChoosing(false);
+        setSameDespiteVat(null);
+      },
     );
+  const confirmSame = sameDespiteVat && (
+    <button type="button" disabled={pending} className={buttonClass("secondary", "sm")} onClick={() => use(sameDespiteVat, true)}>
+      {t("Confirm: one company despite the two VAT numbers")}
+    </button>
+  );
 
   const chooser = (
     <div className="flex flex-wrap items-center gap-2">
@@ -198,7 +211,7 @@ function GroupRow({ sessionId, kind, group: g, options }: { sessionId: string; k
           <span className="text-ink-4">→</span>
           <span className="font-medium">{g.targetName}</span>
           <span className="text-[12px] text-ink-3">
-            {g.resolution === "created" ? t("created now") : g.resolution === "auto" ? t("recognised") : t("confirmed by you")} · {lines}
+            {g.resolution === "created" ? t("created now") : g.resolution === "auto" ? t("recognised") : g.resolution === "confirmed_other_vat" ? t("linked by you despite another VAT number") : t("confirmed by you")} · {lines}
           </span>
           <div className="ml-auto">
             {choosing ? (
@@ -211,6 +224,7 @@ function GroupRow({ sessionId, kind, group: g, options }: { sessionId: string; k
           </div>
         </div>
         <ErrorLine error={error} />
+        {confirmSame && <div className="mt-2">{confirmSame}</div>}
       </li>
     );
   }
@@ -231,13 +245,36 @@ function GroupRow({ sessionId, kind, group: g, options }: { sessionId: string; k
         {suggested && (
           <>
             <dt className="text-ink-3">{t("We think it is")}</dt>
-            <dd className="font-medium">{g.targetName}</dd>
+            <dd>
+              <span className="font-medium">{g.targetName}</span>
+              {g.reason && <span className="block text-[12.5px] text-ink-3">{t("Why we think so: {why}", { why: g.reason })}</span>}
+            </dd>
           </>
         )}
       </dl>
+      {suggested && g.conflict && (
+        <p role="alert" className="mt-2.5 rounded-md border border-caution/30 bg-caution-wash px-3 py-2 text-[13px] text-ink">
+          <span className="font-semibold">{t("Two VAT numbers")}: </span>
+          {g.conflict}
+        </p>
+      )}
       <div className="mt-3.5 flex flex-wrap items-center gap-2">
         {choosing ? (
           chooser
+        ) : suggested && g.conflict ? (
+          <>
+            <button type="button" className={buttonClass("primary", "sm")} onClick={create.show}>
+              <Plus size={13} /> {t("Create a new company")}
+            </button>
+            {confirmSame || (
+              <button type="button" disabled={pending} className={buttonClass("secondary", "sm")} onClick={() => setSameDespiteVat(g.targetId!)}>
+                {t("They are the same company")}
+              </button>
+            )}
+            <button type="button" className={buttonClass("ghost", "sm")} onClick={() => setChoosing(true)}>
+              {t("Choose another")}
+            </button>
+          </>
         ) : suggested ? (
           <>
             <button type="button" disabled={pending} className={buttonClass("primary", "sm")} onClick={() => use(g.targetId!)}>
@@ -261,8 +298,9 @@ function GroupRow({ sessionId, kind, group: g, options }: { sessionId: string; k
           </>
         )}
       </div>
-      {!choosing && <p className="mt-2 text-[12px] text-ink-4">{t("Your answer is remembered: next time this name is recognised by itself.")}</p>}
+      {!choosing && <p className="mt-2 text-[12px] text-ink-3">{t("Your answer is remembered: next time this name is recognised by itself.")}</p>}
       <ErrorLine error={error} />
+      {confirmSame && !(suggested && g.conflict && !choosing) && <div className="mt-2">{confirmSame}</div>}
       {sheet}
     </li>
   );

@@ -3,6 +3,7 @@
  * decision ("ABC S.r.l. is ABC Srl") is taken once for all its lines.
  */
 import type { Dataset } from "../analytics";
+import { countryOfVat } from "../countries";
 import { en, type T } from "../i18n";
 import type { MatchResult } from "./match";
 import { suggestSku } from "../sku";
@@ -45,6 +46,8 @@ export interface MatchGroup {
   targetName: string | null;
   confidence: number | null;
   reason: string | null;
+  /** Something the person must know before saying yes: two VAT numbers that differ. */
+  conflict: string | null;
   resolution: string | null;
   alternatives: { id: string; name: string; confidence: number }[];
   /** Prefill for "Create new". */
@@ -56,6 +59,15 @@ export function buildGroups(items: GroupItem[], data: Dataset, t: T = en) {
   const supplierName = (id: string | null) => data.suppliers.find((s) => s.id === id)?.name ?? null;
   const productName = (id: string | null) => data.products.find((p) => p.id === id)?.name ?? null;
 
+  /** The file's VAT number and the proposed supplier's, when both are written and differ. */
+  const otherVat = (vat: string | null | undefined, target: string | null): string | null => {
+    const s = target ? data.suppliers.find((x) => x.id === target) : null;
+    const here = vatKey(vat);
+    const there = vatKey(s?.vatNumber);
+    return s && here.length >= 8 && there.length >= 8 && here !== there
+      ? t("The file's VAT number is {here}; {name} has {there}: they are two different companies, unless you know otherwise.", { here: vat!, name: s.name, there: s.vatNumber! })
+      : null;
+  };
   const suppliers = new Map<string, MatchGroup>();
   for (const i of open) {
     const key = supplierGroupKey(i.data);
@@ -77,11 +89,13 @@ export function buildGroups(items: GroupItem[], data: Dataset, t: T = en) {
       targetName: supplierName(target),
       confidence: state === "matched" ? null : (m?.confidence ?? null),
       reason: m?.reason ? t.any(m.reason) : null,
+      conflict: otherVat(i.data.supplierVat, target),
       resolution: i.supplierResolution,
       alternatives: (m?.alternatives ?? []).map((a) => ({ id: a.id, name: supplierName(a.id) ?? "", confidence: a.confidence })),
       create: {
         name: tidy(i.data.supplierName),
-        country: i.data.supplierCountry ?? "",
+        // The country the file states, else the one the VAT number's prefix names (TR… → Turkey); empty when neither says.
+        country: i.data.supplierCountry ?? countryOfVat(i.data.supplierVat) ?? "",
         vatNumber: i.data.supplierVat ?? "",
       },
     });
@@ -109,6 +123,7 @@ export function buildGroups(items: GroupItem[], data: Dataset, t: T = en) {
       targetName: productName(target),
       confidence: state === "matched" ? null : (m?.confidence ?? null),
       reason: m?.reason ? t.any(m.reason) : null,
+      conflict: null,
       resolution: i.productResolution,
       alternatives: (m?.alternatives ?? []).map((a) => ({ id: a.id, name: productName(a.id) ?? "", confidence: a.confidence })),
       create: {

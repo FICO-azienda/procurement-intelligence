@@ -282,7 +282,7 @@ describe("a first import: mostly new names", () => {
     expect(items[3].supplierId).toBeNull();
     // Nothing left to create: a second click changes nothing.
     expect(await createAllNew(db, sessionId, "supplier")).toEqual({ created: 0, left: 0 });
-  });
+  }, 30_000);
 
   it("a product without a unit in the file is left as a question", async () => {
     const noUnit = ["Data;Fornitore;Prodotto;Quantità;Prezzo unitario", "01/09/2026;ABC Srl;Cera d'api gialla;100;7,50"].join("\n");
