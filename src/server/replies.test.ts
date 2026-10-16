@@ -23,6 +23,7 @@ import {
 } from "./replies";
 import { readSettings } from "@/lib/data";
 import { offerIdOf, replyCompanyIdOf } from "@/lib/replies/bridge";
+import { offerRow } from "@/lib/replies/rows";
 import { purchasingOverview } from "@/lib/intel/decision";
 import { readNegotiations } from "./negotiation";
 import { readPortfolioScope } from "./portfolio";
@@ -517,5 +518,40 @@ describe("what was there before", () => {
     expect(await db.select().from(schema.quotes)).toEqual([]);
     expect(await db.select().from(schema.supplierCandidates)).toHaveLength(1);
     expect((await db.select().from(schema.products)).map((p) => p.name).sort()).toEqual(["Mock paraffin 58/60", "Wick 12"]);
+  });
+});
+
+describe("an offer quoted per tonne for a product bought by the kilo", () => {
+  it("is comparable once validated and whole to the plant: set against the price per kilo, on the kilos bought, its price kept as quoted", async () => {
+    const tonne = mockFile((f) => {
+      f.metadata.snapshot_date = "2026-04-05";
+      f.suppliers = [{ ...f.suppliers[0], verified_at: "2026-04-05", source_email_url: "https://mail.example/thread/30" }];
+      f.quotations = [{ supplier_id: "MOCK-WAX-1", product: "MOCK TONNE", grade: "58/60", category: "Paraffin", unit_price: 1620, unit: "t", currency: "EUR", quantity: 20, moq: 20, incoterm: "DAP", destination: "Mocktown", melting_point: "58–60°C", validity: "31/12/2099" }];
+      f.excluded = [];
+    });
+    await importReplies(db, tonne, { file: "mock-replies-tonne.json" });
+    const offer = (await company("Mock Wax Kimya A.Ş.")).threads.flatMap((th) => th.offers).find((o) => o.productName === "MOCK TONNE")!;
+    expect([offer.unitPrice, offer.unit]).toEqual([1620, "t"]);
+    await linkOffer(db, offer.id, ids.paraffin, {}, ME);
+    await setOfferCompatibility(db, offer.id, { compatibility: "validated", note: "Same grade, sample tested 05/04" }, ME);
+    // Turkey is outside the customs area: duty and clearance are stated, per tonne like the price.
+    await saveLanded(db, offer.id, { input: { duty: { amount: 0, per: "percent", status: "confirmed", source: "A.TR certificate", date: "2026-04-05" }, clearance: { amount: 10, per: "unit", currency: "EUR", status: "confirmed", source: "forwarder", date: "2026-04-05" } } }, ME);
+
+    const v = (await readProductOffers(db, ids.paraffin))!.comparable.find((x) => x.offer.id === offer.id)!;
+    expect([v.group, v.landed.total, v.factor]).toEqual(["comparable", 1630, 1000]);
+    expect(v.perProductUnit).toBeCloseTo(1.63, 6);
+    // Into the analysis per kilo, its quantities in kilos; the price as quoted stays in words.
+    const crossed = (await readComparableOffers(db)).find((o) => o.offerId === offer.id)!;
+    expect(crossed).toMatchObject({ quantity: 20000, moq: 20000, quoted: "1620 EUR/t DAP Mocktown" });
+    expect(crossed.landedPerUnit).toBeCloseTo(1.63, 6);
+    // On the product's page: per kilo against the 1,60 paid, and the minimum order read in tonnes against the kilos bought.
+    const r = offerRow(v, { id: ids.paraffin, unit: "kg" }, { price: 1.6, annualQuantity: 10000 }, "2026-04-05");
+    expect(r.price).toContain("/t");
+    expect(r.compare).toMatchObject({ lower: false });
+    expect(r.compare!.perUnit).toContain("/kg");
+    expect(r.compare!.limit).toContain("20 t");
+
+    // Taken out again, so that what follows reads the file as before.
+    await decideOffer(db, offer.id, { rejected: true, note: "Test of the unit only" }, ME);
   });
 });

@@ -2,8 +2,10 @@
  * Database connection.
  *
  * - No DATABASE_URL  → local embedded Postgres (PGlite) stored in .data/pglite.
- *   A brand-new local database is filled with demo data once; after that it is
- *   never re-seeded automatically (so clearing demo data sticks).
+ *   A brand-new database starts empty: the company says who it is on its first
+ *   start, and loads the demo itself if it only wants to look around. Only the
+ *   public read-only demo (NEXT_PUBLIC_STATIC_DEMO) or SEED_DEMO=1 fills a new
+ *   database with the demo, once.
  * - DATABASE_URL set → any Postgres (e.g. Supabase). Same schema/migrations.
  *   Never auto-seeded.
  *
@@ -119,6 +121,6 @@ async function connect(): Promise<DB> {
   // Data already on file: a copy before any change of structure reaches it.
   if (!isNew) await backupBeforeMigrations(db, dataRoot(), migrationsFolder);
   await migratePglite(db, { migrationsFolder });
-  if (isNew) await seedDemo(db);
+  if (isNew && (process.env.NEXT_PUBLIC_STATIC_DEMO === "1" || process.env.SEED_DEMO === "1")) await seedDemo(db);
   return db;
 }

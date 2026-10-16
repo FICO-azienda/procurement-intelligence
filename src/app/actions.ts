@@ -55,6 +55,9 @@ import { DataGuardError, REAL_DATA_KEPT, dataState } from "@/server/data-guard";
 import { workspacePrincipal } from "@/server/session";
 import { referenceRate } from "@/server/fx";
 import { DestinationError, removeDestination, saveDestination, type DestinationField } from "@/server/destinations";
+import { ensureWorkspaceOrg } from "@/server/orgs";
+import { setupCompany } from "@/server/setup";
+import type { SetupErrors, SetupField } from "@/lib/setup";
 import { summarise, type PlanSummary } from "@/lib/replies/plan";
 import { isActorType, isCompatibility, isDocumentKind, type Actor, type CompanyField } from "@/lib/replies/types";
 import { MarketError, importMarketFile, listMarketFiles, makeCandidate, readMarketFile, setMarketStatus, type MarketImport } from "@/server/markets";
@@ -509,12 +512,33 @@ export async function saveSettings(_: FormState, formData: FormData): Promise<Fo
   try {
     const db = await getDb();
     await db.insert(settings).values({ id: 1, ...values }).onConflictDoUpdate({ target: settings.id, set: values });
+    // The company's organisation (sign-in, invitations) carries the name it gave itself.
+    await ensureWorkspaceOrg(db);
   } catch (err) {
     console.error("[save settings]", err);
     return { ok: false, error: t("We couldn't save your settings. Nothing was changed — please try again.") };
   }
   refresh();
   return done();
+}
+
+/**
+ * The first start: who the company is, before anything is imported (lib/setup.ts). Field by field what is wrong,
+ * or saved in one go — the company's facts, its language, and its town of delivery as a destination to confirm.
+ */
+export async function setupCompanyAction(v: Partial<Record<SetupField, string | null>>): Promise<{ ok: boolean; error?: string; errors?: SetupErrors }> {
+  const denied = await refuse("company.manage");
+  if (denied) return denied;
+  const t = await getT();
+  try {
+    const res = await setupCompany(await getDb(), v, await actorOf(), t);
+    if (res.errors) return { ok: false, errors: res.errors };
+  } catch (err) {
+    console.error("[setup]", err);
+    return { ok: false, error: t("We couldn't save your settings. Nothing was changed — please try again.") };
+  }
+  refresh();
+  return { ok: true };
 }
 
 /** The language of the interface. Saved with the company settings; every page follows it. */

@@ -15,8 +15,7 @@
  */
 import { categorize } from "../catalog/taxonomy";
 import { en, type T } from "../i18n";
-import { normalizeKey } from "../import/normalize/text";
-import { conversionFactor, normalizeUnit } from "../import/normalize/units";
+import { normalizeUnit, unitsPer } from "../import/normalize/units";
 import type { Compatibility, ReplyOffer } from "./types";
 
 export interface MatchProduct {
@@ -49,11 +48,6 @@ export function rangesIn(text: string | null | undefined): Range[] {
 
 const say = ([a, b]: Range) => `${a}–${b}`;
 
-/** Two units that measure the same thing and convert exactly: t and kg, ml and l. Pieces, boxes and rolls never convert. */
-function alike(a: string, b: string): boolean {
-  const [x, y] = [normalizeUnit(a), normalizeUnit(b)];
-  return !!x && !!y && x !== y && conversionFactor(x, y) != null;
-}
 
 export function suggestFor(offer: Pick<ReplyOffer, "productName" | "grade" | "category" | "unit" | "specs" | "declinedProductIds">, products: MatchProduct[], t: T = en): Suggestion[] {
   const kind = categorize([offer.productName, offer.grade, offer.category].filter(Boolean).join(" "))?.sub.key ?? null;
@@ -63,8 +57,10 @@ export function suggestFor(offer: Pick<ReplyOffer, "productName" | "grade" | "ca
   const stated = declared.length ? declared : rangesIn([offer.grade, offer.productName].filter(Boolean).join(" "));
   const out: Suggestion[] = [];
   for (const p of products) {
-    const sameUnit = normalizeKey(p.unit) === normalizeKey(offer.unit);
-    if (p.subKey !== kind || (!sameUnit && !alike(offer.unit, p.unit)) || offer.declinedProductIds.includes(p.id)) continue;
+    // The same unit written two ways ("pz", "pcs") is the same unit; t and kg, or "1.000 pz" and pieces, convert exactly. Boxes and rolls never do.
+    const factor = unitsPer(offer.unit, p.unit);
+    const sameUnit = factor === 1 && normalizeUnit(offer.unit) === normalizeUnit(p.unit);
+    if (p.subKey !== kind || factor == null || offer.declinedProductIds.includes(p.id)) continue;
     const same = sameUnit
       ? t("Same kind of product and same unit as {product}.", { product: p.name })
       : t("Same kind of product as {product}, quoted per {unit} where you buy per {productUnit}: the price stays as written.", { product: p.name, unit: offer.unit, productUnit: p.unit });

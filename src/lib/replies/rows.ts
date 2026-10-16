@@ -78,6 +78,10 @@ interface ViewLike {
   group: OfferGroup;
   shortfalls: (keyof typeof SHORTFALL_LABEL)[];
   landed: Landed;
+  /** How many of the product's units one unit of the offer holds. */
+  factor: number | null;
+  /** The complete cost to the plant per unit of the product. */
+  perProductUnit: number | null;
 }
 
 export function offerRow(v: ViewLike, product: { id: string; unit: string }, current: { price: number | null; annualQuantity: number | null }, today: string, t: T = en): OfferRow {
@@ -85,14 +89,16 @@ export function offerRow(v: ViewLike, product: { id: string; unit: string }, cur
   const validity = validityText(o, today, t);
   const delivery = deliveryOf(o.incoterm, o.destination, t);
   let compare: OfferRow["compare"] = null;
-  if (v.group === "comparable" && v.landed.total != null && current.price != null) {
-    const s = savingOf({ currentCost: current.price, alternativeCost: v.landed.total, annualVolume: current.annualQuantity, minimum: o.moq ?? o.quantity });
+  // Set against the price paid per the product's own unit: a price per tonne is read per kilo here, and stays as quoted on the row.
+  if (v.group === "comparable" && v.perProductUnit != null && v.factor && current.price != null) {
+    const minimum = o.moq ?? o.quantity;
+    const s = savingOf({ currentCost: current.price, alternativeCost: v.perProductUnit, annualVolume: current.annualQuantity, minimum: minimum != null ? minimum * v.factor : null });
     compare = {
       current: `${f.price(current.price)}/${product.unit}`,
       perUnit: `${f.price(Math.abs(s.perUnit))}/${product.unit}`,
       pct: s.pct != null ? f.pct(Math.abs(s.pct) * 100) : null,
       annual: s.annual != null ? f.money(Math.round(Math.abs(s.annual))) : null,
-      limit: s.overMinimum ? t("It asks for {minimum} at a time, more than the {volume} you buy in a year: the yearly figure cannot be had as it stands.", { minimum: f.quantity(o.moq ?? o.quantity, o.unit), volume: f.quantity(current.annualQuantity, product.unit) }) : null,
+      limit: s.overMinimum ? t("It asks for {minimum} at a time, more than the {volume} you buy in a year: the yearly figure cannot be had as it stands.", { minimum: f.quantity(minimum, o.unit), volume: f.quantity(current.annualQuantity, product.unit) }) : null,
       lower: s.perUnit > 0,
     };
   }

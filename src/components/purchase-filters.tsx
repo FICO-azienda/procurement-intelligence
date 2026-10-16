@@ -38,6 +38,8 @@ export function PurchaseFilters({ tree, suppliers }: { tree: CategoryTree; suppl
   const resolved = useMemo(() => resolve(tree, selection, t), [tree, selection, t]);
 
   function go(next: URLSearchParams, before?: () => void) {
+    // Another filter is another list: it starts from its first page.
+    next.delete("page");
     const query = next.toString();
     startTransition(() => {
       before?.();

@@ -137,7 +137,9 @@ export function rfqText(input: RfqRequestInput, t: T = en): RfqDraft {
   const many = input.lines.length > 1;
   const names = input.lines.map((l) => l.productName);
   const title = many ? t("{n} products", { n: input.lines.length }) : (names[0] ?? "");
-  const sign = [t("Thank you, and best regards"), ...(input.userName ? [input.userName] : []), input.companyName];
+  // A workspace that has not said its name signs with nobody's: no company is named in its place.
+  const company = input.companyName.trim();
+  const sign = [t("Thank you, and best regards"), ...(input.userName ? [input.userName] : []), ...(company ? [company] : [])];
   if (input.kind === "follow_up") {
     return {
       supplierName: input.supplierName,
@@ -161,9 +163,13 @@ export function rfqText(input: RfqRequestInput, t: T = en): RfqDraft {
       ? input.previousDate
         ? t("Further to our request of {date}, we would also like your quotation for the following.", { date: f.date(input.previousDate) })
         : t("Further to our earlier request, we would also like your quotation for the following.")
-      : many
-        ? t("{company} is looking for a supplier of the products below and would like to receive your quotation.", { company: input.companyName })
-        : t("{company} is looking for a supplier of the product below and would like to receive your quotation.", { company: input.companyName }),
+      : !company
+        ? many
+          ? t("We are looking for a supplier of the products below and would like to receive your quotation.")
+          : t("We are looking for a supplier of the product below and would like to receive your quotation.")
+        : many
+          ? t("{company} is looking for a supplier of the products below and would like to receive your quotation.", { company })
+          : t("{company} is looking for a supplier of the product below and would like to receive your quotation.", { company }),
     "",
     ...input.lines.flatMap((line, i) => [...lineText(line, many ? i + 1 : null, t), ...(many ? [""] : [])]),
     ...(many ? [] : [""]),

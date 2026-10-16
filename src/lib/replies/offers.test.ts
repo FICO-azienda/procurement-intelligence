@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { isPublic, publicOnly } from "../negotiation/data-class";
 import { landedCost, readLandedInput, type LandedInput } from "./landed";
 import { rangesIn, suggestFor, type MatchProduct } from "./match";
-import { OFFER_DATA_CLASS, groupOf, offerState, savingOf, shortfallsOf, supersededIds } from "./offers";
+import { OFFER_DATA_CLASS, groupOf, offerState, savingOf, shortfallsOf, supersededIds, unitFactorOf } from "./offers";
 import type { ReplyOffer } from "./types";
 
 const offer = (o: Partial<ReplyOffer> = {}): ReplyOffer => ({
@@ -41,15 +41,27 @@ describe("proposing a product for an offer", () => {
     expect(suggestFor(offer({ specs: {} }), [paraffin])).toMatchObject([{ compatibility: "not_analyzed" }]);
   });
 
-  it("proposes an offer quoted per tonne for a product bought by the kilo, keeps its price as written, and leaves it short of comparable", () => {
+  it("proposes an offer quoted per tonne for a product bought by the kilo, and keeps its price as written", () => {
     const perTonne = offer({ productName: "Mock paraffin 52/54 slabs", grade: "52/54", specs: {}, unit: "t", unitPrice: 1520 });
     const [s] = suggestFor(perTonne, [paraffin]);
     expect(s).toMatchObject({ productId: "p1", compatibility: "possible" });
     expect(s.reasons.join(" ")).toContain("quoted per t where you buy per kg");
     expect(perTonne.unitPrice).toBe(1520);
-    // Proposed is not comparable: a price per tonne is never set against a price per kilo.
-    expect(shortfallsOf(perTonne, { compatibility: "validated", productUnit: "kg", landed: { complete: true }, today: TODAY, linked: true })).toContain("unit");
-    expect(groupOf(perTonne, { state: "validated", compatibility: "validated", productUnit: "kg", landed: { complete: true }, today: TODAY, linked: true })).not.toBe("comparable");
+    // Proposed is not comparable: it still needs a person's link, validation and its cost to the plant.
+    expect(groupOf(perTonne, { state: "technical_review", compatibility: "possible", productUnit: "kg", landed: { complete: true }, today: TODAY, linked: false })).toBe("to_verify");
+  });
+
+  it("reads the same unit written two ways as one unit, and a count of a unit for what it holds", () => {
+    const wick: MatchProduct = { id: "w1", name: "Mock wick 30 mm", unit: "pcs", subKey: "wick" };
+    const perPiece = offer({ productName: "Stoppino mock cotone 30 mm", grade: null, category: "Stoppini", specs: {}, unit: "pz", unitPrice: 0.02 });
+    expect(suggestFor(perPiece, [wick])[0].reasons.join(" ")).toContain("Same kind of product and same unit");
+    const perThousand = offer({ productName: "Stoppino mock cotone 30 mm", grade: null, category: "Stoppini", specs: {}, unit: "1.000 pz", unitPrice: 18 });
+    expect(suggestFor(perThousand, [wick])[0].reasons.join(" ")).toContain("quoted per 1.000 pz where you buy per pcs");
+    expect([unitFactorOf("pz", "pcs"), unitFactorOf("1.000 pz", "pcs"), unitFactorOf("t", "kg"), unitFactorOf("box", "pcs")]).toEqual([1, 1000, 1000, null]);
+    // A support for wicks is not a wick, whatever the category's name says after it.
+    expect(suggestFor(offer({ productName: "Supporto SM/2", grade: null, category: "Supporti per stoppini", specs: {}, unit: "pz" }), [wick])).toEqual([]);
+    // A box holds what each product puts in it: never converted, never proposed for pieces.
+    expect(suggestFor(offer({ productName: "Stoppino mock cotone 30 mm", grade: null, category: "Stoppini", specs: {}, unit: "box" }), [wick])).toEqual([]);
   });
 
   it("proposes nothing across kinds or units, nothing a person declined, and never an equivalence", () => {
@@ -146,7 +158,10 @@ describe("an offer's life", () => {
     expect(groupOf(offer(), { ...yes, landed: { complete: false }, state: "commercial_review" })).toBe("to_verify");
     expect(groupOf(offer({ validUntil: "2026-06-01" }), { ...yes, state: "expired" })).toBe("to_verify");
     expect(groupOf(offer({ validUntil: null }), yes)).toBe("to_verify");
-    expect(groupOf(offer({ unit: "t" }), yes)).toBe("to_verify");
+    // Quoted per tonne for a product bought by the kilo: one converts exactly into the other, and the price stays as quoted.
+    expect(groupOf(offer({ unit: "t" }), yes)).toBe("comparable");
+    expect(groupOf(offer({ unit: "pcs" }), yes)).toBe("to_verify");
+    expect(shortfallsOf(offer({ unit: "pcs" }), { ...yes })).toEqual(["unit"]);
     // Another grade is never in the ranking, however complete its figures.
     expect(groupOf(offer(), { ...yes, compatibility: "not_equivalent", state: "not_comparable" })).toBe("other_grade");
     expect(groupOf(offer(), { ...yes, state: "superseded" })).toBe("history");

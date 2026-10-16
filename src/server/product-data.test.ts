@@ -86,9 +86,12 @@ describe("what is already known", () => {
     const p = await profile();
     // With a specification, the invoice name without the supplier's code is a usable description — to confirm.
     expect(p.fields.neutral_name).toMatchObject({ status: "estimated", confirmable: true });
-    expect(p.readiness.sourcing.level).toBe("ready");
+    // A request can be prepared with it; ready only once a person confirmed the description too.
+    expect(p.readiness.sourcing).toMatchObject({ level: "partial", missing: ["neutral_name"] });
     expect(p.readiness.true_cost).toMatchObject({ level: "partial", missing: ["delivery_basis", "freight_included"] });
     expect(dataReadiness(p)).toBe("partial");
+    await confirmDataField(db, productId, "neutral_name");
+    expect((await profile()).readiness.sourcing).toMatchObject({ level: "ready", missing: [] });
   });
 });
 

@@ -13,7 +13,7 @@ import { Notifications, type Notice } from "@/components/shell/notifications";
 import { SignOut } from "@/components/shell/sign-out";
 import { StaticDemoGuard, StaticDemoView } from "@/components/shell/static-demo";
 import { Sidebar } from "@/components/sidebar";
-import { APP_NAME, COMPANY_NAME } from "@/lib/config";
+import { APP_NAME } from "@/lib/config";
 import { getDataset, getIntel, getSettings, getT } from "@/lib/data";
 import { coverageOf, todayISO } from "@/lib/analytics";
 import * as f from "@/lib/format";
@@ -98,7 +98,7 @@ async function shell() {
     return { t, review, products, suppliers, categories, notices, company, orders, demo: data.purchases.some((p) => p.source === "demo"), coverage: coverageOf(data.purchases, todayISO()) };
   } catch (err) {
     console.error("[shell]", err);
-    return { t, review: 0, products: [], suppliers: [], categories: [], notices: [], orders: null, coverage: null, company: { companyName: COMPANY_NAME, country: null, vatNumber: null, userName: null, language: t.locale, configured: false }, demo: false };
+    return { t, review: 0, products: [], suppliers: [], categories: [], notices: [], orders: null, coverage: null, company: { companyName: "", country: null, vatNumber: null, userName: null, language: t.locale, configured: false }, demo: false };
   }
 }
 
@@ -118,7 +118,9 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
   if (signIn && !person) redirect("/login");
   const s = await shell();
   const t = s.t;
+  // Who is at the app: the person signed in, else the name given in Settings. The company is named only once it said its name.
   const userName = person?.name ?? s.company.userName;
+  const companyLabel = s.company.configured ? s.company.companyName : s.demo ? t("Demo data") : t("Your company");
   return (
     <html lang={t.locale} className={`${geistSans.variable} ${geistMono.variable}`}>
       <body className="min-h-dvh">
@@ -126,7 +128,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
         <StaticDemoGuard />
         <EntryProvider products={s.products} suppliers={s.suppliers} categories={s.categories}>
           <div className="md:grid md:min-h-dvh md:grid-cols-[216px_minmax(0,1fr)] print:block">
-            <Sidebar reviewCount={s.review} company={s.company.companyName} orders={s.orders} />
+            <Sidebar reviewCount={s.review} company={companyLabel} orders={s.orders} />
             <main className="min-w-0">
               {s.demo && (
                 <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5 bg-ledger-wash px-4 py-1.5 text-center text-[12.5px] text-ink-2 print:hidden">
@@ -156,11 +158,11 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
                 {/* Who is using the app: the way to Settings. */}
                 <Link href="/settings" className="hidden min-w-0 items-center gap-2.5 rounded-md py-1 pr-2 pl-1 transition-colors hover:bg-wash sm:flex" aria-label={t("Company and settings")}>
                   <span aria-hidden className="grid size-7 shrink-0 place-items-center rounded-full bg-night text-[11px] font-semibold text-white">
-                    {initials(userName ?? s.company.companyName)}
+                    {initials(userName || companyLabel) || "·"}
                   </span>
                   <span className="hidden min-w-0 leading-tight lg:block">
-                    <span className="block max-w-[150px] truncate text-[13px] font-medium">{userName ?? s.company.companyName}</span>
-                    <span className="block max-w-[150px] truncate text-[11.5px] text-ink-3">{s.demo ? t("Demo data") : userName ? s.company.companyName : t("Settings")}</span>
+                    <span className="block max-w-[150px] truncate text-[13px] font-medium">{userName || companyLabel}</span>
+                    <span className="block max-w-[150px] truncate text-[11.5px] text-ink-3">{s.demo ? t("Demo data") : userName && s.company.configured ? s.company.companyName : t("Settings")}</span>
                   </span>
                 </Link>
                 {signIn && <SignOut />}

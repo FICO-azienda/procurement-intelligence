@@ -11,6 +11,7 @@
 import type { Msg } from "../i18n";
 import type { PriceDataClass } from "../negotiation/data-class";
 import { normalizeKey, productKey } from "../import/normalize/text";
+import { unitsPer } from "../import/normalize/units";
 import type { Landed } from "./landed";
 import { validityOf, type Compatibility, type ReplyOffer } from "./types";
 
@@ -83,9 +84,16 @@ export function groupOf(o: Pick<ReplyOffer, "validUntil" | "unit">, known: { sta
   if (known.state === "rejected" || known.state === "superseded") return "history";
   if (known.compatibility === "not_equivalent") return "other_grade";
   const valid = validityOf(o.validUntil, known.today) === "open";
-  const sameUnit = normalizeKey(o.unit) === normalizeKey(known.productUnit);
-  return known.linked && known.compatibility === "validated" && valid && sameUnit && !!known.landed?.complete ? "comparable" : "to_verify";
+  return known.linked && known.compatibility === "validated" && valid && unitFactorOf(o.unit, known.productUnit) != null && !!known.landed?.complete ? "comparable" : "to_verify";
 }
+
+/**
+ * How many of the product's units one unit of the offer holds: "pz" and "pcs"
+ * are one unit written two ways (1), a tonne holds 1000 kg, "1.000 pz" holds
+ * 1000 pieces. The price stays as quoted; this only sets it against the
+ * price paid per the product's unit. Null: the two do not convert exactly.
+ */
+export const unitFactorOf = (offerUnit: string, productUnit: string): number | null => unitsPer(offerUnit, productUnit);
 
 /** Why an offer is not comparable yet: what is still short, in the order to work on it. */
 export type Shortfall = "not_linked" | "compatibility" | "validity_unknown" | "expired" | "unit" | "landed";
@@ -94,7 +102,7 @@ export const SHORTFALL_LABEL: Record<Shortfall, Msg> = {
   compatibility: "Technical equivalence not validated",
   validity_unknown: "Validity not stated",
   expired: "Offer expired",
-  unit: "Quoted in another unit",
+  unit: "Quoted in a unit that does not convert into the product's",
   landed: "Cost to your plant incomplete",
 };
 
@@ -104,7 +112,7 @@ export function shortfallsOf(o: Pick<ReplyOffer, "validUntil" | "unit">, known: 
     ...(known.linked ? [] : (["not_linked"] as const)),
     ...(known.compatibility === "validated" ? [] : (["compatibility"] as const)),
     ...(validity === "expired" ? (["expired"] as const) : validity === "unknown" ? (["validity_unknown"] as const) : []),
-    ...(normalizeKey(o.unit) === normalizeKey(known.productUnit) ? [] : (["unit"] as const)),
+    ...(unitFactorOf(o.unit, known.productUnit) != null ? [] : (["unit"] as const)),
     ...(known.landed?.complete ? [] : (["landed"] as const)),
   ];
 }

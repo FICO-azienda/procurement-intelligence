@@ -33,14 +33,16 @@ export const directOrderOn = cache(async (): Promise<boolean> => {
 export const workspacePrincipal = cache(async (): Promise<Principal | null> => {
   const jar = await cookies();
   const db = await getDb();
-  if (workspaceAccess() === "login") {
-    const secret = authSecret();
-    return secret ? principalOf(db, unseal(jar.get(WORKSPACE_COOKIE)?.value, secret), "buyer") : null;
-  }
-  const [org, company] = await Promise.all([ensureWorkspaceOrg(db), readSettings(db)]);
   // An assistant operating the app says so with a cookie of its own: what it does is never recorded as the person's.
   const assistant = jar.get("pi_actor")?.value === "assistant";
-  return { side: "buyer", orgId: org.id, orgName: org.name, userId: null, name: assistant ? "assistant" : (company.userName ?? company.companyName), permissions: [...PERMISSIONS.buyer], actorType: assistant ? "ai" : "user" };
+  if (workspaceAccess() === "login") {
+    const secret = authSecret();
+    const who = secret ? await principalOf(db, unseal(jar.get(WORKSPACE_COOKIE)?.value, secret), "buyer") : null;
+    // Signed in as a person, still never written as that person: an assistant's doing is the assistant's.
+    return who && assistant ? { ...who, actorType: "ai" } : who;
+  }
+  const [org, company] = await Promise.all([ensureWorkspaceOrg(db), readSettings(db)]);
+  return { side: "buyer", orgId: org.id, orgName: org.name, userId: null, name: assistant ? "assistant" : company.userName || company.companyName || "user", permissions: [...PERMISSIONS.buyer], actorType: assistant ? "ai" : "user" };
 });
 
 /** The supplier's person signed in to the portal, or null. */

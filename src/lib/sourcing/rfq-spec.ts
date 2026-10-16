@@ -58,6 +58,8 @@ export interface RfqSpec {
   deliveryCountry: string | null;
   documents: number;
   readiness: Readiness;
+  /** What a person confirmed: the neutral description (written or confirmed) and the specification (written, or a document attached). */
+  confirmed: { name: boolean; spec: boolean };
   /** Exactly what is missing, in words. */
   missing: string[];
 }
@@ -72,15 +74,26 @@ export function rfqSpec(input: RfqSpecInput, t: T = en): RfqSpec {
   const removed = [...tokens.filter((x) => isCode(x, codes)), ...separate(input.name, { names: input.knownSuppliers ?? [] }).codes.filter((c) => /^\d{4,}$/.test(c))];
   const suggested = tokens.filter((x) => !isCode(x, codes)).join(" ").trim() || null;
   const terms = suggested ? productTerms({ name: suggested, companyName: input.companyName }) : { words: [], specs: [] };
-  const attributes = [...attributesOf(input.name).map((a) => ({ label: ATTRIBUTE_LABEL[a.key] as string, value: a.value })), ...Object.entries(input.specs ?? {}).map(([label, value]) => ({ label, value }))];
-  const specOk = !!input.technical?.trim() || attributes.length > 0 || terms.specs.length > 0 || input.documents > 0;
+  const fromName = attributesOf(input.name).map((a) => ({ label: ATTRIBUTE_LABEL[a.key] as string, value: a.value }));
+  const attributes = [...fromName, ...Object.entries(input.specs ?? {}).map(([label, value]) => ({ label, value }))];
+  // What a person wrote or attached is a specification; a grade or a size read from the name is a proposal until someone confirms it.
+  const confirmedSpec = !!input.technical?.trim() || Object.keys(input.specs ?? {}).length > 0 || input.documents > 0;
+  const readSpec = fromName.length > 0 || terms.specs.length > 0;
+  const specOk = confirmedSpec || readSpec;
   // The name read from the invoice is safe to send only when it says what the thing is and carries its specification.
   const suggestedOk = !!suggested && terms.words.length > 0 && specOk;
   const rfqName = input.rfqName?.trim() || null;
   const neutralSource: RfqSpec["neutralSource"] = rfqName ? "yours" : suggestedOk ? "suggested" : "missing";
+  const read = [...fromName.map((a) => a.value), ...terms.specs];
   const missing = [
     ...(neutralSource === "missing" ? [removed.length || !terms.words.length ? t("A neutral description: “{name}” is how the current supplier writes it, and another supplier can't know what it means.", { name: input.name }) : t("A neutral description of what the product is.")] : []),
-    ...(!specOk ? [t("The technical specification: what another supplier needs to know to quote the same thing.")] : []),
+    // Ready is said only of what a person confirmed: a description read from the invoice name is a proposal.
+    ...(neutralSource === "suggested" ? [t("Confirm the neutral description: “{name}” is read from the invoice name, nobody confirmed it yet.", { name: suggested! })] : []),
+    ...(!specOk
+      ? [t("The technical specification: what another supplier needs to know to quote the same thing.")]
+      : !confirmedSpec
+        ? [t("Confirm the technical specification: “{read}” is read from the name, nobody confirmed it yet.", { read: [...new Set(read)].join(", ") })]
+        : []),
     ...(!input.annualQuantity ? [t("The annual volume: there are no purchases in the last 12 months.")] : []),
     ...(!input.deliveryCountry ? [t("Where it has to be delivered: set your country in Settings.")] : []),
   ];
@@ -100,6 +113,7 @@ export function rfqSpec(input: RfqSpecInput, t: T = en): RfqSpec {
     deliveryCountry: input.deliveryCountry,
     documents: input.documents,
     readiness: neutralSource === "missing" ? "not_ready" : missing.length ? "partial" : "ready",
+    confirmed: { name: neutralSource === "yours", spec: confirmedSpec },
     missing,
   };
 }

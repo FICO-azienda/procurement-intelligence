@@ -20,6 +20,7 @@ import {
   updateSessionFieldsAction,
   type ActionResult,
 } from "@/app/(workspace)/import/actions";
+import { countryName } from "@/lib/countries";
 import * as f from "@/lib/format";
 import { said, type Msg } from "@/lib/i18n";
 import { rich } from "@/lib/i18n/rich";
@@ -308,7 +309,8 @@ function GroupRow({ sessionId, kind, group: g, options }: { sessionId: string; k
 
 function CreateForm({ kind, group, sessionId, close }: { kind: "supplier" | "product"; group: MatchGroup; sessionId: string; close: () => void }) {
   const { pending, error, run, t } = useAction();
-  const [v, setV] = useState<Record<string, string>>(group.create);
+  // A country is shown in the reader's language; "Italy" and "Italia" are read as the same place when saved.
+  const [v, setV] = useState<Record<string, string>>(() => (group.create.country ? { ...group.create, country: countryName(group.create.country, t.locale) } : group.create));
   const set = (k: string) => (e: { target: { value: string } }) => setV((p) => ({ ...p, [k]: e.target.value }));
   const submit = () =>
     run(

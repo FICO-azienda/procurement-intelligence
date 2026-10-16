@@ -25,7 +25,7 @@ import {
   supplierProducts,
   suppliers, deliveryDestinations } from "@/db/schema";
 import { supplierMetrics, todayISO, type Dataset, type SourceDoc } from "./analytics";
-import { COMPANY_NAME, OWN_COMPANY_NAMES, OWN_VAT_NUMBERS } from "./config";
+import { OWN_COMPANY_NAMES, OWN_VAT_NUMBERS } from "./config";
 import { DEFAULT_LOCALE, en, isLocale, translator, type Locale, type T } from "./i18n";
 import { purchasingOverview, type PurchasingOverview } from "./intel/decision";
 import { analyze, type Intel, type OpportunityState } from "./intel/engine";
@@ -295,7 +295,7 @@ export interface CompanySettings {
   holdingRatePct: number | null;
   /** Language of the interface. */
   language: Locale;
-  /** False until the company has been named in Settings (the name then comes from the app defaults). */
+  /** False until the company has said who it is (first start or Settings); until then the name is empty — no company is named in the code. */
   configured: boolean;
 }
 
@@ -304,7 +304,7 @@ export async function readSettings(db: DB): Promise<CompanySettings> {
   // The destination requests name: the default one of the delivery destinations, else the town written before they existed.
   const destination = destinations.find((d) => d.isDefault) ?? (destinations.length === 1 ? destinations[0] : null);
   return {
-    companyName: row?.companyName?.trim() || COMPANY_NAME,
+    companyName: row?.companyName?.trim() || "",
     country: row?.country ?? null,
     deliveryPlace: (destination ? (destination.province ? `${destination.city} (${destination.province})` : destination.city) : row?.deliveryPlace?.trim()) || null,
     vatNumber: row?.vatNumber ?? null,
@@ -319,7 +319,7 @@ export async function readSettings(db: DB): Promise<CompanySettings> {
 /** Our own names and VAT numbers, so a document never takes us for the supplier. */
 export function ownCompany(s: CompanySettings) {
   return {
-    names: [...new Set([s.companyName, ...OWN_COMPANY_NAMES])],
+    names: [...new Set([s.companyName, ...OWN_COMPANY_NAMES].filter(Boolean))],
     vats: [...new Set([...(s.vatNumber ? [s.vatNumber] : []), ...OWN_VAT_NUMBERS])],
   };
 }

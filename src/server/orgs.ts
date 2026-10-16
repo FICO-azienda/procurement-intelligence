@@ -21,7 +21,6 @@ import { randomInt } from "node:crypto";
 import { and, asc, eq, isNull, ne } from "drizzle-orm";
 import type { DB } from "@/db";
 import { authSessions, notifications, orgInvites, orgMembers, organizations, rfqSuppliers, settings, suppliers, tradeRelationships, users } from "@/db/schema";
-import { COMPANY_NAME } from "@/lib/config";
 import { en, type T } from "@/lib/i18n";
 import { orgGaps, type OrgFacts, type OrgRequirement } from "@/lib/orders/ready";
 import { ORDER_CONFIG, ORDER_TERMS_VERSION, PERMISSIONS, permissionsOf, type Permission, type Principal, type Role } from "@/lib/orders/types";
@@ -51,7 +50,8 @@ export function must(who: Principal, side: Principal["side"], permission: Permis
 /** The organisation of the company this installation is the workspace of: made once, then kept the same as Settings. */
 export async function ensureWorkspaceOrg(db: DB): Promise<{ id: string; name: string }> {
   const [[row], [own]] = await Promise.all([db.select().from(settings).limit(1), db.select().from(organizations).where(eq(organizations.isWorkspace, true))]);
-  const name = row?.companyName?.trim() || COMPANY_NAME;
+  // No company is named in the code: until the buyer says who it is, its organisation has no name.
+  const name = row?.companyName?.trim() || "";
   const facts = { name, vatNumber: row?.vatNumber ?? null, country: row?.country ?? null };
   if (!own) {
     const [made] = await db.insert(organizations).values({ kind: "buyer", isWorkspace: true, ...facts }).returning({ id: organizations.id });
@@ -276,6 +276,8 @@ const refWhere = (ref: RecordRef) => (ref.kind === "supplier" ? eq(orgInvites.su
  */
 export async function inviteCompany(db: DB, who: Principal, ref: RecordRef, email: string, t: T = en): Promise<{ inviteId: string; token: string; expiresAt: string }> {
   must(who, "buyer", "channel.manage", t);
+  // The company invited must know who invites it: a workspace that has not said its name invites nobody.
+  if (!who.orgName.trim()) throw new OrgError(t("Write your company's name in Settings first: the company you invite needs to know who invites it."));
   const to = emailKey(email);
   if (!isEmail(to)) throw new OrgError(t("This does not look like an email address."));
   const [record] = ref.kind === "supplier" ? await db.select({ name: suppliers.name }).from(suppliers).where(eq(suppliers.id, ref.id)) : await db.select({ name: rfqSuppliers.name }).from(rfqSuppliers).where(eq(rfqSuppliers.id, ref.id));

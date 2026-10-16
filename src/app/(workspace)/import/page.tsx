@@ -8,9 +8,11 @@ import { ImportStatusBadge, fileKindLabel } from "@/components/import/labels";
 import { ImportAllButton } from "@/components/import/review";
 import { ImportUploader, WriteInWords } from "@/components/import/uploader";
 import { ButtonLink, Disclosure, PageHeader, Table, Td, Th, cx, rowClass } from "@/components/ui";
-import { getDataset, getT } from "@/lib/data";
+import { SetupStep } from "@/components/setup-step";
+import { getDataset, getSettings, getT } from "@/lib/data";
 import { rich } from "@/lib/i18n/rich";
 import { dataState } from "@/server/data-guard";
+import { readDestinations } from "@/server/destinations";
 import { inbox, listSessions } from "@/server/imports";
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -22,8 +24,10 @@ const when = (d: Date) => d.toLocaleString("it-IT", { day: "2-digit", month: "2-
 export default async function ImportPage() {
   await connection();
   const db = await getDb();
-  const [sessions, data, box, t] = await Promise.all([listSessions(db), getDataset(), inbox(db), getT()]);
+  const [sessions, data, box, t, settings] = await Promise.all([listSessions(db), getDataset(), inbox(db), getT(), getSettings()]);
   const demoPurchases = data.purchases.filter((p) => p.source === "demo").length;
+  // Nothing is imported before the company said who it is: its own name and VAT number on an invoice are never the supplier.
+  if (!settings.configured && demoPurchases === 0) return <SetupStep t={t} settings={settings} hasDestination={(await readDestinations(db)).length > 0} empty={(await dataState(db)) === "empty"} />;
   const counts = [
     t.n(data.products.length, "{n} product", "{n} products"),
     t.n(data.suppliers.length, "{n} supplier", "{n} suppliers"),

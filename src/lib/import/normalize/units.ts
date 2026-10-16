@@ -79,6 +79,35 @@ export function conversionFactor(from: string, to: string): number | null {
 }
 
 /**
+ * A priced unit as a supplier writes it: "kg", "pz", or a count of a unit —
+ * "1.000 pz", "1,000 pcs", "100 m", "per 1000 pcs". The multiple is a whole
+ * count, so "1.000" and "1,000" are both a thousand (nobody prices a
+ * thousandth of a piece); "1,5 kg" is not a priced unit and is not read.
+ * Null when the unit is not one we know.
+ */
+export function readUnit(raw: string | null | undefined): { code: string; multiple: number } | null {
+  const plain = normalizeUnit(raw);
+  if (plain) return { code: plain, multiple: 1 };
+  const m = /^\s*(?:per\s+|\/\s*)?(\d{1,3}(?:[.,'\s]\d{3})+|\d+)\s*([^\d\s.,].*)$/i.exec(raw ?? "");
+  if (!m) return null;
+  const multiple = Number(m[1].replace(/[.,'\s]/g, ""));
+  const code = normalizeUnit(m[2]);
+  return code && multiple > 0 ? { code, multiple } : null;
+}
+
+/**
+ * How many of `to` one priced `from` holds: 1 t holds 1000 kg, "1.000 pz"
+ * holds 1000 pcs, "pz" holds 1 pcs. Null when the two do not convert
+ * exactly — boxes and rolls never do, their content differs per product.
+ */
+export function unitsPer(from: string | null | undefined, to: string | null | undefined): number | null {
+  const [a, b] = [readUnit(from), readUnit(to)];
+  if (!a || !b) return null;
+  const factor = conversionFactor(a.code, b.code);
+  return factor == null ? null : (a.multiple * factor) / b.multiple;
+}
+
+/**
  * Splits "2.000 kg" or "25kg" into number text and unit. Returns the input as
  * number text when no known unit is attached.
  */

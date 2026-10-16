@@ -118,6 +118,11 @@ export function countryFromIso(code: string | null | undefined): string | null {
   return iso ? (BY_ISO.get(iso)?.en ?? iso) : null;
 }
 
+/** The countries listed, named in the reader's language and in its order: what a form offers to choose from (anything else can be typed). */
+export function countryChoices(locale: Locale): string[] {
+  return COUNTRIES.map((c) => c[locale]).sort((a, b) => a.localeCompare(b, locale));
+}
+
 /**
  * The country a VAT number names by its own prefix ("TR8390012345" → Turkey,
  * "EL…" → Greece), only when the prefix is a country we list. A number with no

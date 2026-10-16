@@ -448,9 +448,18 @@ describe("requests and answers", () => {
 describe("the product, as described to a supplier who does not know it", () => {
   const base = { rfqName: null, technical: null, application: null, specs: null, supplierCodes: [] as string[], knownSuppliers: ["Mocksup S.p.A."], companyName: "Mock Candle Co.", unit: "kg", annualQuantity: 270_000, typicalOrderQuantity: 20_000, deliveryCountry: "Italy", documents: 0 };
 
-  it("a name that says what the thing is and carries its grade is ready, without the supplier's name", () => {
+  it("a name that says what the thing is and carries its grade can be sent without the supplier's name — and is ready only once a person confirmed it", () => {
     const spec = rfqSpec({ ...base, name: "Paraffina MOCKSUP 52/54 (XXF)" });
-    expect(spec).toMatchObject({ neutralName: "Paraffina 52/54", neutralSource: "suggested", readiness: "ready", missing: [] });
+    // Read from the invoice name: a proposal. The request can be prepared, and it says what nobody confirmed.
+    expect(spec).toMatchObject({ neutralName: "Paraffina 52/54", neutralSource: "suggested", readiness: "partial" });
+    expect(spec.missing).toEqual([
+      "Confirm the neutral description: “Paraffina 52/54” is read from the invoice name, nobody confirmed it yet.",
+      "Confirm the technical specification: “52/54” is read from the name, nobody confirmed it yet.",
+    ]);
+    // The description confirmed, the grade still read from the name: not ready yet.
+    expect(rfqSpec({ ...base, name: "Paraffina MOCKSUP 52/54 (XXF)", rfqName: "Paraffina 52/54" }).readiness).toBe("partial");
+    // Both said by a person: ready.
+    expect(rfqSpec({ ...base, name: "Paraffina MOCKSUP 52/54 (XXF)", rfqName: "Paraffina 52/54", specs: { "Melting point": "52–54 °C" } })).toMatchObject({ readiness: "ready", missing: [] });
   });
 
   it("a supplier's own code is never sent: the product is not ready until someone describes it", () => {
@@ -468,7 +477,7 @@ describe("the product, as described to a supplier who does not know it", () => {
   it("a described product with something missing is partially ready, and says exactly what", () => {
     const spec = rfqSpec({ ...base, name: "Paraffina 52/54", annualQuantity: null, deliveryCountry: null });
     expect(spec.readiness).toBe("partial");
-    expect(spec.missing).toEqual(["The annual volume: there are no purchases in the last 12 months.", "Where it has to be delivered: set your country in Settings."]);
+    expect(spec.missing.slice(2)).toEqual(["The annual volume: there are no purchases in the last 12 months.", "Where it has to be delivered: set your country in Settings."]);
     expect(rfqSpec({ ...base, name: "ART. LC TR. Contenitori per ceri" }).readiness).toBe("not_ready");
     // A data sheet attached counts as the specification.
     expect(rfqSpec({ ...base, name: "ART. LC TR. Contenitori per ceri", rfqName: "Plastic container for votive candles", documents: 1 }).readiness).toBe("ready");

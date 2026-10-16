@@ -18,6 +18,9 @@ export async function generateMetadata(): Promise<Metadata> {
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
 
+/** Rows per page: the totals and the filters read every purchase, the page shows these many. */
+const PURCHASES_PAGE = 50;
+
 export default async function PurchasesPage({ searchParams }: PageProps<"/purchases">) {
   const sp = await searchParams;
   const q = one(sp.q).toLowerCase();
@@ -49,6 +52,17 @@ export default async function PurchasesPage({ searchParams }: PageProps<"/purcha
 
   const total = rows.filter(isPriced).reduce((s, p) => s + baseTotal(p), 0);
   const unpriced = rows.filter((p) => !isPriced(p)).length;
+  // One page of the rows is sent to the browser; the count and the total above are of all of them.
+  const pages = Math.max(1, Math.ceil(rows.length / PURCHASES_PAGE));
+  const page = Math.min(pages, Math.max(1, Math.floor(Number(one(sp.page)) || 1)));
+  const shown = rows.slice((page - 1) * PURCHASES_PAGE, page * PURCHASES_PAGE);
+  const pageHref = (n: number) => {
+    const next = new URLSearchParams();
+    for (const [k, v] of Object.entries(sp)) if (k !== "page" && one(v)) next.set(k, one(v));
+    if (n > 1) next.set("page", String(n));
+    const query = next.toString();
+    return query ? `/purchases?${query}` : "/purchases";
+  };
 
   return (
     <>
@@ -98,7 +112,7 @@ export default async function PurchasesPage({ searchParams }: PageProps<"/purcha
                 </tr>
               </thead>
               <tbody>
-                {rows.map((p) => {
+                {shown.map((p) => {
                   const prod = l.product(p.productId);
                   return (
                     <tr key={p.id} className={rowClass()}>
@@ -137,7 +151,28 @@ export default async function PurchasesPage({ searchParams }: PageProps<"/purcha
               </tbody>
             </Table>
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-rule bg-well px-5 py-3 text-[13px]">
-              <span className="text-ink-3">{t.n(rows.length, "{n} purchase", "{n} purchases")}</span>
+              <span className="text-ink-3">
+                {pages > 1 ? t("{from}–{to} of {total}", { from: f.number((page - 1) * PURCHASES_PAGE + 1), to: f.number((page - 1) * PURCHASES_PAGE + shown.length), total: t.n(rows.length, "{n} purchase", "{n} purchases") }) : t.n(rows.length, "{n} purchase", "{n} purchases")}
+              </span>
+              {pages > 1 && (
+                <nav aria-label={t("Pages")} className="flex items-center gap-1.5">
+                  {page > 1 ? (
+                    <Link href={pageHref(page - 1)} scroll={false} className="rounded-md px-2 py-1 font-medium text-ledger hover:bg-wash">
+                      ← {t("Previous")}
+                    </Link>
+                  ) : (
+                    <span className="px-2 py-1 text-ink-4">← {t("Previous")}</span>
+                  )}
+                  <span className="num px-1 text-ink-3">{t("page {page} of {pages}", { page, pages })}</span>
+                  {page < pages ? (
+                    <Link href={pageHref(page + 1)} scroll={false} className="rounded-md px-2 py-1 font-medium text-ledger hover:bg-wash">
+                      {t("Next|page")} →
+                    </Link>
+                  ) : (
+                    <span className="px-2 py-1 text-ink-4">{t("Next|page")} →</span>
+                  )}
+                </nav>
+              )}
               <span>
                 {unpriced > 0 && <span className="mr-3 text-caution">{t("{n} in other currencies not included (no exchange rate)", { n: unpriced })}</span>}
                 <span className="text-ink-3">{t("Total")} </span>

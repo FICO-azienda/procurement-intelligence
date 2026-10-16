@@ -260,6 +260,12 @@ export default async function OfferPage({ params }: PageProps<"/sourcing/replies
             <span className="font-semibold">{t("True landed cost")}</span>
             <span className="num font-semibold">{landed.total != null ? `${f.price(landed.total)}/${o.unit}${landed.estimated ? ` · ${t("includes estimates")}` : ""}` : t("Incomplete: {what} missing", { what: landed.missing.map((k) => t(LANDED_LABEL[k]).toLowerCase()).join(", ") })}</span>
           </div>
+          {/* Quoted per another unit than the product's: the same cost per the product's unit, the one set against the price paid. */}
+          {page.product && page.view?.perProductUnit != null && page.view.factor != null && page.view.factor !== 1 && (
+            <p className="-mt-1.5 mb-3 text-right text-[12.5px] text-ink-3">
+              {t("= {amount}/{unit}, the unit you buy {product} in", { amount: f.price(page.view.perProductUnit), unit: page.product.unit, product: page.product.name })}
+            </p>
+          )}
           {landed.partial && (
             <p className="mb-3 rounded-md bg-wash px-3 py-2 text-[13px] text-ink-2">
               <span className="font-semibold text-caution">{t("True landed cost incomplete")}.</span>{" "}

@@ -412,8 +412,8 @@ export function productProfile(input: ProfileInput, t: T = en): ProductProfile {
     const missing = keys.filter((k) => !has(k));
     return { level: missing.length === 0 ? "ready" : missing.length === keys.length || critical.some((k) => !has(k)) ? "not_ready" : "partial", missing, other: [] };
   };
-  const specKnown = !!rfq.technical || rfq.attributes.length > 0 || rfq.figures.length > 0 || rfq.documents > 0;
-  const sourcingMissing: FieldKey[] = [...(rfq.neutralSource === "missing" ? ["neutral_name" as const] : []), ...(!specKnown ? ["technical_spec" as const] : []), ...(quantities.annual == null ? ["annual_volume" as const] : [])];
+  // What sourcing still needs from a person: a description and a specification read from the name are proposals to confirm (rfq-spec.ts).
+  const sourcingMissing: FieldKey[] = [...(!rfq.confirmed.name ? ["neutral_name" as const] : []), ...(!rfq.confirmed.spec ? ["technical_spec" as const] : []), ...(quantities.annual == null ? ["annual_volume" as const] : [])];
   const readiness: Record<Dimension, ReadinessCheck> = {
     identity: level(["neutral_name", "category", "current_supplier"]),
     technical: { ...level(["technical_spec", "application", "datasheet"]), level: has("technical_spec") || has("datasheet") ? (has("technical_spec") && has("application") && has("datasheet") ? "ready" : "partial") : "not_ready" },

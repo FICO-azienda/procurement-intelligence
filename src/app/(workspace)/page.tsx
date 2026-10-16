@@ -10,8 +10,12 @@ import * as f from "@/lib/format";
 import type { Msg, T } from "@/lib/i18n";
 import { DATA_GAPS, DECISION_STATUS, isDataGap, type PurchasingOverview } from "@/lib/intel/decision";
 import { explain } from "@/lib/intel/explain";
+import { SetupStep } from "@/components/setup-step";
 import { ago, recentActivity } from "@/server/activity";
+import { dataState } from "@/server/data-guard";
+import { readDestinations } from "@/server/destinations";
 import { attentionCount, inbox } from "@/server/imports";
+import { workspacePrincipal } from "@/server/session";
 
 function greeting(): Msg {
   const hour = Number(new Date().toLocaleString("en-GB", { hour: "2-digit", hour12: false, timeZone: TIME_ZONE }));
@@ -27,11 +31,15 @@ export default async function OverviewPage() {
   const [data, ov, company, spend, t] = await Promise.all([getDataset(), getOverview(), getSettings(), getSpend(), getT()]);
   const EXPLAIN = explain(t);
   const db = await getDb();
-  const [toReview, waiting, activity] = await Promise.all([attentionCount(db), inbox(db), recentActivity(db, 4, t)]);
+  const [toReview, waiting, activity, who, destinations] = await Promise.all([attentionCount(db), inbox(db), recentActivity(db, 4, t), workspacePrincipal(), readDestinations(db)]);
   const tot = ov.totals;
   const gaps = DATA_GAPS.reduce((n, s) => n + tot.byStatus[s], 0);
-  const firstName = company.userName?.split(/\s+/)[0];
+  // The person signed in is greeted by their own name; on the company's own computer, by the name given in Settings.
+  const firstName = (who?.userId ? who.name : company.userName)?.split(/\s+/)[0];
+  const demo = data.purchases.some((p) => p.source === "demo");
 
+  // The first start: who the company is comes before anything is imported.
+  if (!company.configured && !demo && data.products.length === 0) return <SetupStep t={t} settings={company} hasDestination={destinations.length > 0} empty={(await dataState(db)) === "empty"} />;
   if (data.products.length === 0) return <FirstSteps t={t} waiting={waiting.files.length} toReview={toReview} suppliers={data.suppliers.length} company={company.companyName} configured={company.configured} />;
 
   return (
@@ -42,6 +50,14 @@ export default async function OverviewPage() {
           {firstName && `, ${firstName}`}
         </h1>
         <p className="mt-1.5 text-[13.5px] text-ink-3">{t("Here is where your purchasing stands — last 12 months, as of {date}.", { date: f.date(ov.asOf) })}</p>
+        {!company.configured && !demo && (
+          <p role="note" className="mt-3 rounded-md bg-caution-wash px-3 py-2 text-[13px] text-ink-2">
+            {t("Your company has not said who it is yet: without its name and VAT number, your own company on an invoice could be taken for a supplier.")}{" "}
+            <Link href="/setup" className="font-medium text-ledger hover:underline">
+              {t("Tell us who you are")}
+            </Link>
+          </p>
+        )}
       </header>
 
       <div className="grid grid-cols-1 gap-6 @5xl:grid-cols-[minmax(0,1fr)_272px]">
@@ -313,7 +329,7 @@ function Tick({ children, warn }: { children: React.ReactNode; warn?: boolean })
  */
 function FirstSteps({ t, waiting, toReview, suppliers, company, configured }: { t: T; waiting: number; toReview: number; suppliers: number; company: string; configured: boolean }) {
   const steps: { done: boolean; label: string; detail?: string; href?: string }[] = [
-    { done: configured, label: t("Tell us about your company"), detail: configured ? company : t("Name, country, VAT number — one minute"), href: "/settings" },
+    { done: configured, label: t("Tell us about your company"), detail: configured ? company : t("Name, country, VAT number — one minute"), href: "/setup" },
     { done: waiting > 0 || suppliers > 0, label: t("Add your purchasing data"), detail: waiting > 0 ? t.n(waiting, "{n} file uploaded", "{n} files uploaded") : t("Invoices, spreadsheets or quotes") },
     { done: waiting > 0 && toReview === 0, label: t("Check what we recognised"), detail: toReview > 0 ? t("{n} to review", { n: toReview }) : t("A quick yes or no where we are not sure") },
     { done: false, label: t("See your first purchasing overview"), detail: t("What you pay, how prices moved, where to look") },

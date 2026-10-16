@@ -7,7 +7,8 @@
 import { refuse } from "@/server/guard";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
-import { getT } from "@/lib/data";
+import { getSettings, getT } from "@/lib/data";
+import { dataState } from "@/server/data-guard";
 import type { ProductKind } from "@/lib/catalog/kinds";
 import type { ItemData } from "@/lib/import/types";
 import * as catalog from "@/server/catalog";
@@ -50,9 +51,21 @@ export interface UploadResult {
  * says what it is: spreadsheets are spreadsheets, PDFs are read as the invoice
  * or quote they declare to be.
  */
+/**
+ * Nothing is read before the company said who it is (the first start, lib/setup.ts): without its own name and VAT
+ * number, the company on an invoice could be taken for the supplier. The demo, which names no company, is the exception.
+ */
+async function notSetUp(): Promise<string | null> {
+  const [settings, t] = await Promise.all([getSettings(), getT()]);
+  if (settings.configured || (await dataState(await getDb())) === "demo") return null;
+  return t("Before the first import, tell us who your company is (name, country, VAT number): your own name on an invoice is never the supplier.");
+}
+
 export async function uploadFiles(formData: FormData): Promise<UploadResult> {
   const denied = await refuse("data.import");
   if (denied) return { sessionIds: [], needsAttention: [], error: denied.error };
+  const first = await notSetUp();
+  if (first) return { sessionIds: [], needsAttention: [], error: first };
   const requested = String(formData.get("kind") ?? "auto") as svc.UploadKind;
   const files = formData.getAll("files").filter((f): f is File => f instanceof File && f.size >= 0);
   if (!files.length) return { sessionIds: [], needsAttention: [], error: (await getT())("Choose at least one file.") };
@@ -81,6 +94,8 @@ export async function uploadFiles(formData: FormData): Promise<UploadResult> {
 export async function uploadPasted(text: string): Promise<{ sessionId?: string; error?: string }> {
   const denied = await refuse("data.import");
   if (denied) return { error: denied.error };
+  const first = await notSetUp();
+  if (first) return { error: first };
   const clean = text.replace(/\r\n?/g, "\n").trim();
   const t = await getT();
   if (!clean) return { error: t("Paste at least one row.") };

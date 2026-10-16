@@ -18,7 +18,7 @@ export function SettingsForm({ settings }: { settings: CompanySettings }) {
       <FormError message={state.error} />
       <Grid>
         <Field label={t("Company name")} required error={e.companyName}>
-          <Input name="companyName" defaultValue={settings.configured ? settings.companyName : ""} placeholder={settings.companyName} aria-invalid={!!e.companyName} />
+          <Input name="companyName" defaultValue={settings.companyName} aria-invalid={!!e.companyName} />
         </Field>
         <Field label={t("Country")}>
           <Input name="country" defaultValue={settings.country ?? ""} placeholder={t("Italy")} />

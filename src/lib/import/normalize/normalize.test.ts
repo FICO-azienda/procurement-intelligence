@@ -3,7 +3,7 @@ import { currencyInText, normalizeCurrency } from "./currency";
 import { detectDateOrder, parseDate } from "./dates";
 import { detectDecimalStyle, parseNumber } from "./numbers";
 import { companyKey, codeKey, productKey, vatKey } from "./text";
-import { conversionFactor, normalizeUnit, splitQuantityAndUnit } from "./units";
+import { conversionFactor, normalizeUnit, readUnit, splitQuantityAndUnit, unitsPer } from "./units";
 
 describe("units", () => {
   it.each([
@@ -22,6 +22,29 @@ describe("units", () => {
     expect(conversionFactor("ml", "l")).toBe(0.001);
     expect(conversionFactor("kg", "pcs")).toBeNull();
     expect(conversionFactor("box", "pcs")).toBeNull();
+  });
+
+  it("reads a priced unit with its count, and nothing it cannot be sure of", () => {
+    expect(readUnit("kg")).toEqual({ code: "kg", multiple: 1 });
+    expect(readUnit("1.000 pz")).toEqual({ code: "pcs", multiple: 1000 });
+    expect(readUnit("1,000 pcs")).toEqual({ code: "pcs", multiple: 1000 });
+    expect(readUnit("per 1000 pcs")).toEqual({ code: "pcs", multiple: 1000 });
+    expect(readUnit("100 m")).toEqual({ code: "m", multiple: 100 });
+    expect(readUnit("1,5 kg")).toBeNull();
+    expect(readUnit("1000 scatole")).toEqual({ code: "box", multiple: 1000 });
+    expect(readUnit("12 xyz")).toBeNull();
+  });
+
+  it("says how many of one unit a priced unit holds, only when it converts exactly", () => {
+    expect(unitsPer("t", "kg")).toBe(1000);
+    expect(unitsPer("kg", "t")).toBe(0.001);
+    expect(unitsPer("pz", "pcs")).toBe(1);
+    expect(unitsPer("1.000 pz", "pcs")).toBe(1000);
+    expect(unitsPer("100 m", "m")).toBe(100);
+    expect(unitsPer("box", "pcs")).toBeNull();
+    // A count of boxes is that many boxes; boxes never become pieces.
+    expect(unitsPer("1000 scatole", "box")).toBe(1000);
+    expect(unitsPer("kg", "pcs")).toBeNull();
   });
 
   it("splits quantity and unit", () => {

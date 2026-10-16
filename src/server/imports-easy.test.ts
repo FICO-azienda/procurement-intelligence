@@ -223,11 +223,15 @@ describe("an electronic invoice (XML), plain or signed", () => {
       return [s.status, s.errorMessage];
     };
     expect(await failed("nota-credito.xml", xml.replace("<TipoDocumento>TD01</TipoDocumento>", "<TipoDocumento>TD04</TipoDocumento>"))).toEqual(["failed", "This is a credit note: it corrects an earlier invoice and is not a purchase, so it is not imported."]);
-    // Issued by us: a sale.
-    expect(await failed("vendita.xml", xml.replace("<Denominazione>ABC Srl</Denominazione>", "<Denominazione>Cereria Cicogna</Denominazione>").replace("<IdCodice>01234567890</IdCodice></IdFiscaleIVA>\n        <Anagrafica>", "<IdCodice>01234567890</IdCodice></IdFiscaleIVA>\n        <Anagrafica>"))).toEqual([
+    // Issued by us — the company named in Settings, never one named in the code: a sale.
+    const sale = xml.replace("<Denominazione>ABC Srl</Denominazione>", "<Denominazione>Cereria Cicogna</Denominazione>");
+    expect((await failed("vendita-senza-nome.xml", sale))[0]).not.toBe("failed");
+    await db.insert(schema.settings).values({ id: 1, companyName: "Cereria Cicogna" });
+    expect(await failed("vendita.xml", sale)).toEqual([
       "failed",
       "This invoice was issued by your own company: it is a sale, not a purchase. Only invoices received from suppliers are imported.",
     ]);
+    await db.delete(schema.settings);
     expect(await failed("ricevuta.xml", '<?xml version="1.0"?><ns2:FileMetadati xmlns:ns2="x"><NomeFile>a.xml</NomeFile></ns2:FileMetadati>')).toEqual(["failed", "This XML file is not an electronic invoice."]);
     expect(await failed("firma.xml.p7m", "this is not a signed file")).toEqual(["failed", "We couldn't open this signed file (.p7m). It may be damaged."]);
   });

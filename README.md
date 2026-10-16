@@ -11,7 +11,7 @@ npm install
 npm run dev
 ```
 
-Apri http://localhost:3100. Al primo avvio viene creato un database locale (`.data/pglite`) con i dati demo. L'app risponde solo da questo computer (vedi «Protezione dei dati»).
+Apri http://localhost:3100. Al primo avvio viene creato un database locale vuoto (`.data/pglite`) e l'app chiede chi è l'azienda: nome, paese, partita IVA, comune di consegna e lingua. Nel codice non c'è il nome di nessuna azienda. Nulla si importa prima di questo passo, perché nome e partita IVA servono a non scambiare mai la propria azienda per un fornitore. Chi vuole solo guardarsi intorno carica la demo con un clic (o avvia con `SEED_DEMO=1`). L'app risponde solo da questo computer (vedi «Protezione dei dati»).
 
 | Comando | Cosa fa |
 |---|---|
@@ -534,7 +534,7 @@ Un'installazione è lo **spazio di lavoro di un'azienda acquirente** (tutto ciò
 - **Due modi di usare lo spazio di lavoro**, scelti dove l'app viene avviata:
   - sul computer dell'azienda (predefinito): aperto a chi è seduto davanti, come sempre;
   - su un server raggiungibile da altri (`WORKSPACE_ACCESS=login` e `AUTH_SECRET` di almeno 32 caratteri): nessuna pagina, esportazione o azione risponde senza una persona dell'acquirente che ha effettuato l'accesso. **Mai mettere l'app su un server raggiungibile senza questa modalità.**
-- **Persone e ruoli**: una persona ha un solo account e può appartenere a più aziende, con un ruolo in ciascuna — amministratore (tutto ciò che il lato della sua azienda può fare) o membro (ciò che gli viene dato, voce per voce). Le persone dell'acquirente si creano in Impostazioni → «Persone della tua azienda»: va creato almeno un amministratore **prima** di attivare l'accesso.
+- **Persone e ruoli**: una persona ha un solo account e può appartenere a più aziende, con un ruolo in ciascuna — amministratore (tutto ciò che il lato della sua azienda può fare) o membro (ciò che gli viene dato, voce per voce: modificare i dati, importare, ricerca fornitori e offerte, decisioni d'acquisto, esportazioni, ordini, canale fornitori, dati dell'azienda e persone). Un membro senza voci può solo consultare. Ogni azione e ogni esportazione controlla il permesso sul server (`src/server/guard.ts`), e una sessione chiusa o revocata non apre più nulla, nemmeno con il vecchio cookie. Le persone dell'acquirente si creano in Impostazioni → «Persone della tua azienda»: va creato almeno un amministratore **prima** di attivare l'accesso.
 - **Un fornitore non diventa un account da solo**: un'azienda delle fatture, delle risposte ai preventivi o di un database di mercato si registra soltanto accettando un invito, il cui link viene inviato dall'acquirente (l'app non invia nulla). Di link, sessioni e password si conserva solo l'impronta.
 - **Verifica dell'email**: con un codice inviato all'indirizzo. L'invio passa da un adattatore attivato dall'ambiente; nessuno è attivo di default (`MAIL_MODE=file` + `MAIL_DIR` scrive i messaggi in una cartella, per sviluppo). Senza invio, nessun indirizzo risulta verificato.
 - **Limite dichiarato**: più aziende acquirenti nello stesso database non sono supportate. Ogni acquirente è un'installazione con i propri dati.

@@ -25,7 +25,7 @@ import { en, type T } from "@/lib/i18n";
 import { companyKey } from "@/lib/import/normalize/text";
 import { landedCost, readLandedInput, type Landed, type LandedInput } from "@/lib/replies/landed";
 import { categoryKeyOf, suggestFor, type MatchProduct, type Suggestion } from "@/lib/replies/match";
-import { groupOf, lineKey, offerState, shortfallsOf, supersededIds, type OfferGroup, type OfferState, type Shortfall } from "@/lib/replies/offers";
+import { groupOf, lineKey, offerState, shortfallsOf, supersededIds, unitFactorOf, type OfferGroup, type OfferState, type Shortfall } from "@/lib/replies/offers";
 import { elsewhereOf, planReplies, type CompanyDecision, type Elsewhere, type Records, type ReplyPlan, type StoredCompany } from "@/lib/replies/plan";
 import { parseReplyFile } from "@/lib/replies/read";
 import {
@@ -640,7 +640,12 @@ export interface OfferView {
   state: OfferState;
   group: OfferGroup;
   shortfalls: Shortfall[];
+  /** The cost to the plant per unit of the offer, as quoted ("per t", "per 1.000 pz"). */
   landed: Landed;
+  /** How many of the product's units one unit of the offer holds (1 t = 1000 kg). Null: they do not convert. */
+  factor: number | null;
+  /** The complete cost to the plant per unit of the product: what is set against the price paid. Null while incomplete or not convertible. */
+  perProductUnit: number | null;
   /** The destination the cost is worked out to, in a line. Null: none is set. */
   destination: string | null;
   /** When it was received, as far as it is known: its own date, else the day the answer was read. */
@@ -685,6 +690,7 @@ function viewOf(w: World, company: ReplyDossier, thread: ReplyThread, offer: Rep
   const awaitingSupplier = thread.status === "awaiting_reply";
   const state = offerState({ ...offer, compatibility }, { today: w.today, superseded: !!supersededBy, awaitingSupplier, landed });
   const known = { state, compatibility, productUnit: product.unit, landed, today: w.today, linked };
+  const factor = unitFactorOf(offer.unit, product.unit);
   return {
     offer,
     company: { id: company.id, name: company.name, country: company.country },
@@ -696,6 +702,8 @@ function viewOf(w: World, company: ReplyDossier, thread: ReplyThread, offer: Rep
     group: groupOf(offer, known),
     shortfalls: shortfallsOf(offer, known),
     landed,
+    factor,
+    perProductUnit: landed.total != null && factor ? landed.total / factor : null,
     destination: destination ? placeOf(destination) : null,
     receivedOn: offer.offeredOn ?? thread.messages.find((m) => m.kind === "reply")?.date ?? null,
     supersededBy,
@@ -767,19 +775,21 @@ export async function readComparableOffers(db: DB, t: T = en): Promise<BridgeOff
         const product = offer.productId ? w.products.find((p) => p.id === offer.productId) : null;
         if (!product) continue;
         const view = viewOf(w, company, thread, offer, product, superseded, t);
-        if (!view || view.group !== "comparable" || view.landed.total == null) continue;
+        if (!view || view.group !== "comparable" || view.perProductUnit == null || !view.factor) continue;
+        const factor = view.factor;
         out.push({
           offerId: offer.id,
           productId: product.id,
           company: { id: company.id, name: company.name, country: company.country, email: company.email, website: company.website },
           supplierId: same?.id ?? null,
           productName: [offer.productName, offer.grade].filter(Boolean).join(" "),
-          landedPerUnit: view.landed.total,
+          // In the product's own unit: a price per tonne is read per kilo, a quantity in tonnes as kilos. The price as quoted stays in `quoted`.
+          landedPerUnit: view.perProductUnit,
           estimated: view.landed.estimated,
           date: view.receivedOn ?? offer.createdAt.slice(0, 10),
           validUntil: offer.validUntil,
-          quantity: offer.quantity,
-          moq: offer.moq,
+          quantity: offer.quantity != null ? offer.quantity * factor : null,
+          moq: offer.moq != null ? offer.moq * factor : null,
           paymentTerms: offer.paymentTerms,
           quoted: `${offer.unitPrice} ${offer.currency}/${offer.unit}${offer.incoterm ? ` ${offer.incoterm}` : ""}${offer.destination ? ` ${offer.destination}` : ""}`,
         });

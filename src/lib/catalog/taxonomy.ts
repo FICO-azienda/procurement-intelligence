@@ -80,7 +80,7 @@ export const TAXONOMY: Category[] = [
     kind: "component",
     subs: [
       { key: "wick", label: "Wicks", noun: "Wick", words: [w("stoppin"), w("trecciolin"), w("tubolar")] },
-      { key: "wick_holder", label: "Wick holders and clips", noun: "Wick holder", words: [w("fondell"), w("fermagli")] },
+      { key: "wick_holder", label: "Wick holders and clips", noun: "Wick holder", words: [w("fondell"), w("fermagli"), w("support"), w("sustainer")] },
     ],
   },
   {
